@@ -16,9 +16,9 @@ It models the relationships that actually matter in a rice:
 
 ## Supported formats
 
-Lua, Python, Bash; CSS, SCSS; TOML, YAML, JSON/JSONC, INI; QML; Hyprland
-(`hyprlang`); plus a line-oriented fallback for bespoke WM configs (sway/i3,
-rofi `rasi`, polybar, kitty, dunst, and similar).
+Lua, Python, Bash, Fish; C++; CSS, SCSS; TOML, YAML, JSON/JSONC, INI; QML;
+Hyprland (`hyprlang`); plus a line-oriented fallback for bespoke WM configs
+(sway/i3, rofi `rasi`, polybar, kitty, dunst, and similar).
 
 ## Requirements
 
@@ -34,7 +34,7 @@ The `sqlite_fts5` build tag enables SQLite's FTS5 full-text engine.
 
 ## Usage
 
-The command surface is intentionally small: `init`, `status`, `help`.
+The command surface is intentionally small: `init`, `status`, `doctor`, `help`.
 
 ```sh
 # In your dotfiles repo (or ~/.config), set everything up:
@@ -44,22 +44,29 @@ prowl-agent init --no-ai --yes   # non-interactive
 # Inspect index state for this project, or list all initialized projects:
 prowl-agent status
 prowl-agent status --json
+
+# Diagnose rice health (cycles, keybind conflicts, dead scripts, broken commands):
+prowl-agent doctor
 ```
 
 `init` creates a per-folder `.prowl/` workspace (`config.toml`, `rules.toml`,
-`index.db`), runs the first index, registers the MCP server in `.mcp.json`,
+`index.db`), runs the first index, registers the MCP server (`.mcp.json`,
+`.cursor/mcp.json`, `.vscode/mcp.json`),
 writes agent instructions into `AGENTS.md`, and adds `.prowl/` to `.gitignore`.
 The index database and other backend state never leave `.prowl/`.
 
-The MCP server is launched by your coding agent through the generated `.mcp.json`
+The MCP server is launched by your coding agent through the generated config
 (it runs the hidden `prowl-agent serve` over stdio); you do not run it by hand.
+While running, it watches the rice and re-indexes changed files automatically, so
+agent context stays fresh.
 
 ## MCP tools
 
 `find_symbol`, `find_references`, `find_callers`, `find_callees`,
 `file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`, `similar_code`,
-`architecture_violations`, `repo_hotspots`, `status`, and `reindex`. Every result
-is deterministic and carries `file:line` provenance.
+`smart_search`, `architecture_violations`, `repo_hotspots`, `doctor`, `status`,
+and `reindex`. Structural results are deterministic and carry `file:line`
+provenance.
 
 ## Semantic search (opt-in)
 
@@ -78,9 +85,10 @@ internal/parse       Tree-sitter grammar loading and per-language extractors
 internal/graph       include / exec / resource resolution and role inference
 internal/index       ignore-aware walk and hash-based incremental indexing
 internal/store       SQLite schema, FTS5, sqlite-vec, graph reads (blast-radius CTE)
-internal/query       the 12 structural query ops
+internal/query       structural query ops + hybrid/semantic search
+internal/doctor      health diagnostics (cycles, conflicts, hotspots)
 internal/mcp         MCP stdio server
-internal/cli         init wizard, status, hidden serve, agent injection
+internal/cli         init wizard, status, doctor, hidden serve + file-watcher, injection
 internal/config      config.toml / rules.toml
 internal/workspace   .prowl/ workspace, global registry, gitignore wiring
 internal/assist      local Inferencer (Ollama) for the semantic layer

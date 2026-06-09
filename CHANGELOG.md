@@ -19,10 +19,10 @@ First working slice: a local-first ricing config-intelligence backend.
   resolution and dangling-reference detection.
 - **SQLite store**: files/symbols/resources/edges/chunks with FTS5 full-text
   search and a recursive-CTE blast-radius query (WAL mode).
-- **12 MCP tools**: `find_symbol`, `find_references`, `find_callers`,
+- **15 MCP tools**: `find_symbol`, `find_references`, `find_callers`,
   `find_callees`, `file_relations`, `blast_radius`, `entrypoints_for`,
-  `tests_for`, `similar_code`, `architecture_violations`, `repo_hotspots`,
-  `status` (plus `reindex`), served over stdio.
+  `tests_for`, `similar_code`, `smart_search`, `architecture_violations`,
+  `repo_hotspots`, `doctor`, `status` (plus `reindex`), served over stdio.
 - **Workspace**: per-folder `.prowl/`, global project registry (XDG), automatic
   `.gitignore` wiring, and agent injection (`.mcp.json` and `AGENTS.md`).
 - **Semantic search (opt-in)**: a local Ollama `Inferencer` (embed/generate),
@@ -30,6 +30,17 @@ First working slice: a local-first ricing config-intelligence backend.
   vector nearest-neighbor and full-text results (reciprocal rank fusion), with a
   full-text fallback when disabled. The setup wizard detects Ollama and reports
   model setup.
+- **Doctor**: `prowl-agent doctor` and a `doctor` MCP tool with deterministic
+  checks (cyclic includes, fan-in/out risk, oversized configs, duplicate
+  keybinds, broken commands, orphan scripts, dangling references, hardcoded
+  colors, rule-driven forbidden crossings, git-churn hotspots) and a 0-100 score.
+- **smart_search**: assist-augmented retrieval (query rewrite, hybrid search,
+  rerank) with a full-text fallback; a reranker was added to the local Inferencer.
+- **Live freshness**: the server watches the rice and re-indexes changed files
+  automatically (debounced) while serving.
+- **More inject targets**: Cursor (`.cursor/mcp.json`) and VS Code
+  (`.vscode/mcp.json`) alongside the generic `.mcp.json`.
+- **More languages**: C++ and Fish grammars and extractors.
 
 ### Notes
 

@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/prowl-agent/prowl-agent/internal/cli"
 )
 
 var version = "0.1.0-dev"
@@ -17,7 +19,7 @@ func main() {
 		SilenceErrors: true,
 		Version:       version,
 	}
-	// subcommands wired in later phases: init, status, serve
+	cli.Register(root, version)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

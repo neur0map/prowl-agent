@@ -1,0 +1,97 @@
+package cli
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/prowl-agent/prowl-agent/internal/store"
+)
+
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunInit(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := t.TempDir()
+	copyDir(t, filepath.Join("..", "..", "testdata", "rice-hypr"), root)
+
+	sum, err := RunInit(InitOptions{Root: root, AI: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Indexed != 11 {
+		t.Fatalf("indexed = %d, want 11", sum.Indexed)
+	}
+
+	// Workspace + index exist.
+	if _, err := os.Stat(filepath.Join(root, ".prowl", "index.db")); err != nil {
+		t.Fatalf("index.db missing: %v", err)
+	}
+	// .mcp.json registers prowl-agent.
+	mcpData, err := os.ReadFile(filepath.Join(root, ".mcp.json"))
+	if err != nil || !strings.Contains(string(mcpData), "prowl-agent") {
+		t.Fatalf(".mcp.json = %q err=%v", mcpData, err)
+	}
+	// AGENTS.md has the instruction block.
+	agents, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if !strings.Contains(string(agents), agentsMarker) {
+		t.Fatalf("AGENTS.md missing marker: %q", agents)
+	}
+	// .gitignore ignores .prowl/.
+	gi, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if !strings.Contains(string(gi), ".prowl/") {
+		t.Fatalf(".gitignore = %q", gi)
+	}
+	// Store actually populated.
+	s, err := store.Open(filepath.Join(root, ".prowl", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if c, _ := s.Counts(); c.Files != 11 {
+		t.Fatalf("indexed files = %d, want 11", c.Files)
+	}
+
+	// init is idempotent.
+	if _, err := RunInit(InitOptions{Root: root, AI: false}); err != nil {
+		t.Fatalf("re-init: %v", err)
+	}
+}
+
+func TestInjectMergePreservesServers(t *testing.T) {
+	root := t.TempDir()
+	existing := `{"mcpServers":{"other":{"command":"other","args":["x"]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Inject(root); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
+	got := string(data)
+	if !strings.Contains(got, "prowl-agent") || !strings.Contains(got, "other") {
+		t.Fatalf("merge lost a server: %s", got)
+	}
+}

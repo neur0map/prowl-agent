@@ -1,33 +1,27 @@
 # Prowl Agent
 
-Local-first ricing / dotfiles config-intelligence backend for coding agents.
+A local index that lets AI coding agents understand your Linux rice without re-reading the whole thing.
 
-Prowl Agent indexes a Linux rice (window-manager configs, bars, widgets, themes,
-scripts) into a persistent per-folder SQLite graph plus full-text index, and
-exposes precise, relationship-aware queries over the
-[Model Context Protocol](https://modelcontextprotocol.io). An agent asks Prowl
-Agent for bounded, cited context instead of re-reading the whole rice.
+[![build](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml/badge.svg)](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml)
+[![download](https://img.shields.io/github/v/release/neur0map/prowl-agent?include_prereleases&label=download)](https://github.com/neur0map/prowl-agent/releases/latest)
+![platform](https://img.shields.io/badge/platform-Linux-555)
 
-It models the relationships that actually matter in a rice:
+Coding agents burn a lot of tokens grepping and re-reading config files every time
+you ask them to tweak your bar, your keybinds, or a theme. Prowl Agent builds a
+small SQLite index of your dotfiles (configs, widgets, scripts, themes, colors) and
+serves it to the agent over the [Model Context Protocol](https://modelcontextprotocol.io).
+The agent asks a question and gets a short, exact answer with `file:line` links
+instead of a pile of grep hits.
 
-- **include trees**: `source=`, `include`, `@import`, `require()`, sway `include`
-- **exec / keybind chains**: `exec`/`exec-once`/autostart and `bind = ... exec <script>`
-- **shared resources**: colors, fonts, paths, and theme variables across files
+It knows how a rice is wired together:
 
-## Supported formats
-
-Lua, Python, Bash, Fish; C++; CSS, SCSS; TOML, YAML, JSON/JSONC, INI; QML;
-Hyprland (`hyprlang`); plus a line-oriented fallback for bespoke WM configs
-(sway/i3, rofi `rasi`, polybar, kitty, dunst, and similar).
-
-## Requirements
-
-Linux, Go 1.26+, and a C toolchain (cgo is required for Tree-sitter and SQLite).
+- include trees (`source=`, `include`, `@import`, `require()`)
+- exec and keybind chains (`exec-once`, `bind = ... exec script`)
+- shared colors, fonts, paths, and theme variables across files
 
 ## Install
 
-Download the latest Linux x86_64 binary from the rolling release (rebuilt on every
-push to `main`):
+Grab the latest Linux x86_64 build (rebuilt on every push to `main`):
 
 ```sh
 curl -fsSL -o ~/.local/bin/prowl-agent \
@@ -36,132 +30,106 @@ chmod +x ~/.local/bin/prowl-agent
 prowl-agent --version
 ```
 
-A `.sha256` is published alongside the binary. The build is cgo-linked and needs a
-recent glibc. Or build from source (below).
-
-## Build
+A `.sha256` sits next to the binary. It is cgo-linked, so it needs a recent glibc.
+To build from source instead, you need Go 1.26+ and a C toolchain:
 
 ```sh
 CGO_ENABLED=1 go build -tags sqlite_fts5 -o prowl-agent ./cmd/prowl-agent
 ```
 
-The `sqlite_fts5` build tag enables SQLite's FTS5 full-text engine.
+## Quick start
 
-## Usage
-
-The command surface is intentionally small: `init`, `status`, `doctor`, `help`.
+Run this once inside your dotfiles repo (or `~/.config`):
 
 ```sh
-# In your dotfiles repo (or ~/.config), set everything up:
-prowl-agent init                 # interactive setup wizard
-prowl-agent init --no-ai --yes   # non-interactive
-
-# Inspect index state for this project, or list all initialized projects:
-prowl-agent status
-prowl-agent status --json
-
-# Diagnose rice health (cycles, keybind conflicts, dead scripts, broken commands):
-prowl-agent doctor
+prowl-agent init                 # interactive setup
+prowl-agent init --no-ai --yes   # or non-interactive
 ```
 
-`init` creates a per-folder `.prowl/` workspace (`config.toml`, `rules.toml`,
-`index.db`), runs the first index, registers the MCP server (`.mcp.json`,
-`.cursor/mcp.json`, `.vscode/mcp.json`),
-writes agent instructions into `AGENTS.md`, and adds `.prowl/` to `.gitignore`.
-The index database and other backend state never leave `.prowl/`.
+That builds the index, registers the MCP server for Cursor, VS Code, and any
+MCP-compatible agent, and writes a short `AGENTS.md`. Everything lives in a local
+`.prowl/` folder that gets added to `.gitignore`. Nothing leaves your machine.
 
-The MCP server is launched by your coding agent through the generated config
-(it runs the hidden `prowl-agent serve` over stdio); you do not run it by hand.
-While running, it watches the rice and re-indexes changed files automatically, so
-agent context stays fresh.
+Two commands are handy day to day:
 
-## MCP tools
+```sh
+prowl-agent status   # what is indexed
+prowl-agent doctor   # broken includes, dead scripts, keybind clashes
+```
 
-`overview`, `clusters`, `find_symbol`, `find_references`, `find_callers`,
-`find_callees`, `file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`,
-`similar_code`, `smart_search`, `architecture_violations`, `repo_hotspots`,
-`doctor`, `status`,
-and `reindex`. Structural results are deterministic and carry `file:line`
-provenance.
+The agent launches the server itself through the generated config, watches your
+files, and re-indexes on save, so its answers stay current.
+
+## What the agent can ask
+
+Once it is running, the agent has tools to:
+
+- **find things** by name or meaning (`find_symbol`, `similar_code`, `smart_search`)
+- **follow connections** (`find_callers`, `find_callees`, `file_relations`, `entrypoints_for`)
+- **check impact** before a change (`blast_radius`, `repo_hotspots`)
+- **get the lay of the land** (`overview`, `clusters`)
+- **spot problems** (`doctor`, `architecture_violations`)
+
+Every answer is deterministic and comes with `file:line`, so the agent (and you)
+can verify it.
 
 ## Benchmarks
 
-Project: [github.com/neur0map/prowl-agent](https://github.com/neur0map/prowl-agent).
-Test repo: [neur0map/ryoku-arch](https://github.com/neur0map/ryoku-arch), a real
-Arch rice with **2814 tracked files** (2172 indexed, 111,977 symbols). Task: find
-the files that make up the plugin system. Tokens are bytes/4 (approx).
+We indexed three real, sizable rices and asked the same question on each: find the
+battery widget and the files around it.
 
-| metric | without prowl (`rg "plugin"`) | prowl structural (MCP) | prowl + local AI |
-|---|---|---|---|
-| Per-query latency | ~1.9 s (rescans) | 1-16 ms | 37 ms `similar_code`, 6.3 s `smart_search` |
-| Output to read | 288 KB / ~74k tokens | 0.4-12 KB / ~0.1-3k tokens | ~13 KB / ~3k tokens |
-| One-time index build | none | ~14 s | ~14 s + ~121 s embeddings |
-| Files returned | 121, unranked (5 homonyms) | typed, ranked subset | semantically ranked |
-| Finds C++/QML runtime (`shell/plugin/`) | no | yes (`clusters`) | yes |
-| Semantic match (no shared words) | no | no | yes ("music spectrum" finds `AudioVisualizer.qml`) |
-| Change impact (`blast_radius`) | no | yes (<1 ms) | yes |
+- [ryoku-arch](https://github.com/neur0map/ryoku-arch) (2172 files indexed)
+- [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) (732)
+- [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) (578)
 
-Structural search is ~95% fewer tokens and 100-1000x lower per-query latency than
-re-grepping. The local-AI layer adds meaning-based recall (files that share no
-keywords) for a one-time embed cost; see Semantic search below for model lifecycle.
+Averaged across the three:
 
-### Doctor accuracy
+| | ripgrep | Prowl Agent |
+|---|---|---|
+| to locate the feature | ~52 KB of raw matches (~13k tokens) | ~5.5 KB ranked answer (~1.4k tokens) |
+| per query | re-scans the repo (~60 ms here) | ~1 ms, already indexed |
+| what you get | every match, unranked, all meanings mixed in | typed and ranked, with `file:line` |
 
-`doctor` is tuned to keep false positives near zero. On ryoku-arch its report
-dropped from **2052 raw findings to 90** after: resolving bare commands against
-the repo's `bin/`, scoping checks to rice files (skipping migrations / installers
-/ CI / vendor), treating `~` / system / URL targets as runtime (not broken), only
-flagging repo-relative broken includes, and excluding data files from the size
-check. The remaining findings are real (broken theme imports, a monolithic
-`config.cpp` referencing 21 files, churn hotspots, hardcoded colors).
+That is about **10x less to read** than the grep hit list. And because the answer
+is ranked with `file:line`, the agent opens the two or three files that matter
+instead of the dozens that merely mention the word. Opening everything grep found
+would have meant ~2.7 MB on average (~710k tokens).
 
-## Semantic search (opt-in)
+<details>
+<summary>How we counted tokens</summary>
 
-The setup wizard can enable a local semantic layer (via Ollama). When enabled,
-chunk embeddings (`qwen3-embedding:0.6b` by default) are stored in `sqlite-vec`,
-and `similar_code` fuses vector nearest-neighbor search with full-text search
-(reciprocal rank fusion). A small assist model (`gemma3:4b` by default) stays a
-retrieval helper only: it never makes decisions and is never exposed as its own
-tool. Structural search works fully without any of this.
+Tokens are estimated as characters / 4, the usual rough rule. The ripgrep figure
+is the size of the hits it prints (one `path:line` per match). The "open
+everything" figure is the combined size of every file that contained the word,
+which is what an agent ends up reading to understand them. The Prowl figure is the
+size of the JSON its `find_symbol` tool returns. Same word, same machine, averaged
+over the three repos above. A broader semantic search (`similar_code`) returns
+about 12 KB (~3k tokens) on the same query.
 
-**Model lifecycle:** the model is not cold-started per query. `serve` embeds the
-index once at startup (warming the embed model), and Ollama keeps a model
-resident for a keep-alive window (default ~5 min) after each use. Measured here:
-first embed after idle ~2.4 s (model load), then warm embeds ~20 ms; the assist
-model (used only by `smart_search`) warms the same way. So a model cold-starts
-once per idle period, then stays hot during active MCP use. Set
-`OLLAMA_KEEP_ALIVE=-1` to keep it resident permanently.
+</details>
 
-## Architecture
+## Semantic search (optional)
 
-```
-cmd/prowl-agent      entry point (cobra)
-internal/parse       Tree-sitter grammar loading and per-language extractors
-internal/graph       include / exec / resource resolution and role inference
-internal/index       ignore-aware walk and hash-based incremental indexing
-internal/store       SQLite schema, FTS5, sqlite-vec, graph reads (blast-radius CTE)
-internal/query       structural query ops + hybrid/semantic search
-internal/doctor      health diagnostics (cycles, conflicts, hotspots)
-internal/mcp         MCP stdio server
-internal/cli         init wizard, status, doctor, hidden serve + file-watcher, injection
-internal/config      config.toml / rules.toml
-internal/workspace   .prowl/ workspace, global registry, gitignore wiring
-internal/assist      local Inferencer (Ollama) for the semantic layer
-```
+If you turn it on, `init` sets up a local semantic layer through
+[Ollama](https://ollama.com), with no cloud and no API keys. It stores embeddings
+in `sqlite-vec` so the agent can find files that mean the same thing even when they
+share no words (for example, "music spectrum" finds an `AudioVisualizer`). A small
+helper model can rewrite and re-rank queries, but it never makes decisions on its
+own. Structural search works fully without any of this.
 
-Indexing is incremental (only changed files are reparsed); graph resolution is
-global and idempotent, so the index stays correct as files change.
+The model warms up once when the server starts and stays loaded for a few minutes
+between queries, so it is not paying a cold start every time (about 2.4 s on the
+first query after idle, then around 20 ms).
 
-## Development
+## Supported formats
 
-Run the test suite:
+Lua, Python, Bash, Fish, C++, QML, CSS/SCSS, TOML, YAML, JSON/JSONC, INI, and
+Hyprland (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
+`rasi`, polybar, kitty, dunst, and similar).
 
-```sh
-CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
-```
+## More
 
-Commit hooks live in `.githooks/`. Enable them with:
+- [Architecture](docs/ARCHITECTURE.md): how indexing, the graph, and the server fit together
+- [Changelog](CHANGELOG.md)
 
-```sh
-git config core.hooksPath .githooks
-```
+Linux only. Built with Go, Tree-sitter, and SQLite.

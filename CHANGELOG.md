@@ -60,6 +60,10 @@ First working slice: a local-first ricing config-intelligence backend.
   scopes duplicate-keybind to WM configs, ignores self-cycles, and skips data
   files in the size check. On a 2172-file rice this cut raw findings from 2052 to
   ~90 (mostly real).
+- **Docs**: rewrote the README in a plainer, modern style, moved the
+  architecture write-up to `docs/ARCHITECTURE.md`, and re-ran the benchmarks
+  across three real rices (ryoku-arch, dots-hyprland, noctalia-shell) reporting
+  the average.
 
 ### Notes
 

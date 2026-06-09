@@ -8,6 +8,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -96,7 +97,16 @@ func newInitCmd() *cobra.Command {
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
 			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
 			if ai {
-				fmt.Fprintln(out, "AI-assist enabled (models configured; semantic index builds in an upcoming release).")
+				cfg := config.Default()
+				fmt.Fprintln(out, "AI-assist enabled. Default models:")
+				fmt.Fprintf(out, "  embed: %s  rerank: %s  assist: %s\n", cfg.AI.EmbedModel, cfg.AI.RerankModel, cfg.AI.AssistModel)
+				oll := assist.NewOllama(cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
+				if oll.Available(cmd.Context()) {
+					fmt.Fprintf(out, "  Ollama detected at %s. Pull models with: ollama pull %s\n", cfg.AI.OllamaURL, cfg.AI.EmbedModel)
+				} else {
+					fmt.Fprintf(out, "  Ollama not detected at %s. Install it (e.g. 'pacman -S ollama') to enable semantic search.\n", cfg.AI.OllamaURL)
+				}
+				fmt.Fprintln(out, "  (Semantic index builds in an upcoming release.)")
 			}
 			return nil
 		},

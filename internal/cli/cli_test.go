@@ -94,4 +94,13 @@ func TestInjectMergePreservesServers(t *testing.T) {
 	if !strings.Contains(got, "prowl-agent") || !strings.Contains(got, "other") {
 		t.Fatalf("merge lost a server: %s", got)
 	}
+	// Cursor and VS Code configs are written too.
+	cur, _ := os.ReadFile(filepath.Join(root, ".cursor", "mcp.json"))
+	if !strings.Contains(string(cur), "prowl-agent") {
+		t.Fatalf(".cursor/mcp.json missing prowl-agent: %s", cur)
+	}
+	vsc, _ := os.ReadFile(filepath.Join(root, ".vscode", "mcp.json"))
+	if !strings.Contains(string(vsc), "\"servers\"") || !strings.Contains(string(vsc), "prowl-agent") {
+		t.Fatalf(".vscode/mcp.json wrong shape: %s", vsc)
+	}
 }

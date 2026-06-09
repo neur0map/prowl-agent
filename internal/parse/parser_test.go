@@ -15,6 +15,8 @@ func TestParseAllGrammars(t *testing.T) {
 		"ini":      "[s]\na=1",
 		"hyprlang": "$x = 1",
 		"qml":      "import QtQuick\nItem { }",
+		"cpp":      "int main() { return 0; }",
+		"fish":     "function f\nend",
 	}
 	for lang, src := range cases {
 		tree, err := Parse(lang, []byte(src))

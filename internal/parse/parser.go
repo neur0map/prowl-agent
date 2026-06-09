@@ -6,7 +6,9 @@ import (
 	"unsafe"
 
 	"github.com/alexaandru/go-sitter-forest/bash"
+	"github.com/alexaandru/go-sitter-forest/cpp"
 	"github.com/alexaandru/go-sitter-forest/css"
+	"github.com/alexaandru/go-sitter-forest/fish"
 	"github.com/alexaandru/go-sitter-forest/hyprlang"
 	"github.com/alexaandru/go-sitter-forest/ini"
 	"github.com/alexaandru/go-sitter-forest/json"
@@ -34,6 +36,8 @@ var grammars = map[string]func() unsafe.Pointer{
 	"ini":      ini.GetLanguage,
 	"hyprlang": hyprlang.GetLanguage,
 	"qml":      qmljs.GetLanguage,
+	"cpp":      cpp.GetLanguage,
+	"fish":     fish.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

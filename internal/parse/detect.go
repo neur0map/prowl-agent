@@ -48,6 +48,10 @@ func Detect(relPath string, head []byte) string {
 		return "ini"
 	case ".qml":
 		return "qml"
+	case ".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx":
+		return "cpp"
+	case ".fish":
+		return "fish"
 	case ".conf":
 		return "generic"
 	}
@@ -79,6 +83,8 @@ func shebangLang(head []byte) string {
 		return "python"
 	case strings.Contains(s, "lua"):
 		return "lua"
+	case strings.Contains(s, "fish"):
+		return "fish"
 	}
 	return ""
 }

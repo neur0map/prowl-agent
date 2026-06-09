@@ -24,6 +24,10 @@ func TestDetect(t *testing.T) {
 		{"picom.conf", "", "generic"},
 		{"scripts/noext", "#!/usr/bin/env bash\n", "bash"},
 		{"scripts/pyrun", "#!/usr/bin/python3\n", "python"},
+		{"widgets/bar.cpp", "", "cpp"},
+		{"widgets/theme.hpp", "", "cpp"},
+		{"fish/config.fish", "", "fish"},
+		{"scripts/frun", "#!/usr/bin/fish\n", "fish"},
 		{"README.md", "", ""},
 		{"random", "", ""},
 	}

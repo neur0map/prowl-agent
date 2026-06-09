@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -45,7 +47,10 @@ func newServeCmd(version string) *cobra.Command {
 				}
 			}
 
+			var mu sync.Mutex
 			reindex := func(ctx context.Context) (string, error) {
+				mu.Lock()
+				defer mu.Unlock()
 				sum, err := index.Index(s, ws.Root, cfg.Ignore)
 				if err != nil {
 					return "", err
@@ -74,6 +79,12 @@ func newServeCmd(version string) *cobra.Command {
 				return doctor.Run(s, rules, doctor.Options{Root: ws.Root})
 			}
 			srv := mcpserver.NewServer(q, version, reindex, doctorFn)
+			// Keep the index fresh: debounced re-index as the rice changes.
+			go func() {
+				_ = index.Watch(cmd.Context(), ws.Root, 750*time.Millisecond, func() {
+					_, _ = reindex(cmd.Context())
+				})
+			}()
 			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
 			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&
 				!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&

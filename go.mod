@@ -6,7 +6,9 @@ require (
 	charm.land/huh/v2 v2.0.3
 	github.com/BurntSushi/toml v1.6.0
 	github.com/alexaandru/go-sitter-forest/bash v1.9.6
+	github.com/alexaandru/go-sitter-forest/cpp v1.9.5
 	github.com/alexaandru/go-sitter-forest/css v1.9.4
+	github.com/alexaandru/go-sitter-forest/fish v1.9.2
 	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4
 	github.com/alexaandru/go-sitter-forest/ini v1.9.1
 	github.com/alexaandru/go-sitter-forest/json v1.9.1
@@ -19,6 +21,7 @@ require (
 	github.com/alexaandru/go-tree-sitter-bare v1.11.0
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2

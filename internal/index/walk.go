@@ -13,7 +13,7 @@ import (
 // alwaysSkipDirs are never walked.
 var alwaysSkipDirs = map[string]bool{
 	".git": true, ".prowl": true, "node_modules": true,
-	".cursor": true, ".vscode": true, ".zed": true, ".idea": true,
+	".cursor": true, ".vscode": true, ".zed": true, ".idea": true, ".helix": true,
 }
 
 // Walk returns rel paths under root, honoring .gitignore and extra ignore globs,

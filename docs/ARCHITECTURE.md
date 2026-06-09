@@ -1,8 +1,9 @@
 # Architecture
 
 Prowl Agent is a single Go binary. It indexes a project into a per-folder SQLite
-database and answers questions over MCP. There is no daemon and no network
-service; the coding agent starts the server itself over stdio.
+database and answers questions over two stdio front ends: MCP for coding agents
+and LSP for editors. There is no daemon and no network service; each client
+starts the binary itself.
 
 ## Packages
 
@@ -15,6 +16,7 @@ internal/store       SQLite schema, FTS5, sqlite-vec, graph reads (blast-radius 
 internal/query       structural queries and hybrid/semantic search
 internal/doctor      health checks (cycles, conflicts, hotspots)
 internal/mcp         MCP stdio server
+internal/lsp         Language Server (stdio) for editors (definition, references, hover, ...)
 internal/cli         init wizard, status, doctor, hidden serve, file watcher, injection
 internal/config      config.toml / rules.toml
 internal/workspace   .prowl/ workspace, global registry, gitignore wiring
@@ -33,8 +35,10 @@ internal/assist      local Ollama inferencer for the semantic layer
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius uses a
    recursive CTE.
-4. **Serve.** `mcp` exposes the queries as tools. The agent calls them over stdio
-   and gets back JSON with `file:line` provenance.
+4. **Serve.** `mcp` exposes the queries to coding agents as tools; `lsp` exposes
+   the same index to editors as a language server (definition, references, hover,
+   document/workspace symbols, code lens, completion, and `doctor` diagnostics).
+   Both carry `file:line` provenance and share the one `.prowl/index.db`.
 
 Indexing is incremental: only files whose content hash changed are reparsed, and
 graph resolution re-runs globally so the index stays correct as files move around.

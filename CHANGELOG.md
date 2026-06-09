@@ -30,11 +30,21 @@ answers about a project's files, served over MCP.
   `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
   `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
-- CLI: `init` (setup wizard), `status`, and `doctor`, plus a hidden `serve` that
-  the coding agent launches over stdio.
+- CLI: `init` (setup wizard), `status`, and `doctor`, plus hidden `serve` (MCP)
+  and `lsp` (editor language server) commands launched over stdio.
 - Setup writes `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, and an
   `AGENTS.md` block, and keeps state in a gitignored `.prowl/` folder.
 - The server watches files and re-indexes on save while it runs.
+
+#### Editor (LSP)
+
+- A language server (`prowl-agent lsp`) serves the same index to editors:
+  go-to-definition (keybind to script, include to file, variable to declaration),
+  find-references, hover with use counts, document and workspace symbols, code
+  lens, completion of known variables and colors, and inline `doctor` diagnostics.
+- `init` wires it up: editor configs under `.prowl/editor/`, plus a project-local
+  `.helix/languages.toml` when there is none to overwrite; Neovim attaches it
+  additively alongside your other servers.
 
 #### Health checks
 
@@ -66,5 +76,8 @@ answers about a project's files, served over MCP.
 - Linux only for now; requires cgo and the `sqlite_fts5` build tag.
 - The current focus is dotfiles and configs. Broader language support, including
   web and more scripting languages, is in progress.
+- Works in any repo, not just `~/.config`. It indexes what git tracks and keeps
+  its index in a gitignored `.prowl/`; agents read your real files, never
+  `.prowl/`, so the gitignore does not hide code from them.
 - `tests_for` is best-effort and marked `limited`, since configs rarely have
   formal tests.

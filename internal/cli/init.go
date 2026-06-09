@@ -54,6 +54,9 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err := Inject(root); err != nil {
 		return sum, err
 	}
+	if err := InjectEditor(root); err != nil {
+		return sum, err
+	}
 	if err := workspace.EnsureIgnored(root, workspace.Dir+"/"); err != nil {
 		return sum, err
 	}
@@ -96,6 +99,7 @@ func newInitCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
 			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
+			fmt.Fprintln(out, "Editor LSP: ready via 'prowl-agent lsp'. See .prowl/editor/SETUP.md (Neovim/Helix/VS Code).")
 			if ai {
 				cfg := config.Default()
 				fmt.Fprintln(out, "AI-assist enabled. Default models:")

@@ -1,10 +1,10 @@
-// Package cli wires Prowl Agent's user-facing commands (init, status) and the
-// hidden agent-launched serve command onto the cobra root.
+// Package cli wires Prowl Agent's user-facing commands (init, status, doctor)
+// and the hidden agent-launched serve and editor-launched lsp commands.
 package cli
 
 import "github.com/spf13/cobra"
 
 // Register adds all subcommands to the root command.
 func Register(root *cobra.Command, version string) {
-	root.AddCommand(newInitCmd(), newStatusCmd(), newDoctorCmd(), newServeCmd(version))
+	root.AddCommand(newInitCmd(), newStatusCmd(), newDoctorCmd(), newServeCmd(version), newLSPCmd(version))
 }

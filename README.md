@@ -19,6 +19,10 @@ It maps how files are wired together:
 - exec and keybind chains (`exec-once`, `bind = ... exec script`)
 - shared colors, fonts, paths, and variables across files
 
+It serves two front ends from one index: the MCP server for your coding agent,
+and a language server (`prowl-agent lsp`) for your editor, so a human gets the
+same go-to-definition, references, and hover.
+
 Today it is tuned for Linux dotfiles and configs (window managers, bars, widgets,
 themes, scripts). Broader language support, including web and more scripting
 languages, is in progress.
@@ -51,8 +55,9 @@ prowl-agent init --no-ai --yes   # or non-interactive
 ```
 
 That builds the index, registers the MCP server for Cursor, VS Code, and any
-MCP-compatible agent, and writes a short `AGENTS.md`. Everything lives in a local
-`.prowl/` folder that gets added to `.gitignore`. Nothing leaves your machine.
+MCP-compatible agent, wires your editor's language server, and writes a short
+`AGENTS.md`. Everything lives in a local `.prowl/` folder that gets added to
+`.gitignore`. Nothing leaves your machine.
 
 Two commands are handy day to day:
 
@@ -76,6 +81,34 @@ Once it is running, the agent has tools to:
 
 Every answer is deterministic and comes with `file:line`, so the agent (and you)
 can verify it.
+
+## Use it in your editor
+
+The same index drives a language server, so a human gets the navigation the agent
+has. `init` sets it up; the server runs as `prowl-agent lsp`.
+
+- **go to definition**: a keybind to the script it runs, an `@import` or `source=`
+  to the file, a `$variable` to where it is declared
+- **find references**: every place a color, font, variable, or script is used
+- **hover**: a value and how many times it is used
+- **document and workspace symbols**, **code lens** (use counts), **completion** of
+  known variables and colors, and **inline diagnostics** from `doctor`
+
+Neovim attaches it automatically (see `.prowl/editor/nvim.lua`); Helix gets a
+project-local `.helix/languages.toml` when there is none to overwrite. Setup notes,
+including VS Code, are in `.prowl/editor/SETUP.md`.
+
+## Does it work in any repo?
+
+Yes. Point it at a dotfiles repo, `~/.config`, or any project folder. It indexes
+what the project tracks (it honors `.gitignore`) and keeps its own state in a local
+`.prowl/` folder, which it adds to `.gitignore`.
+
+Gitignoring `.prowl/` does not hide your code from the agent. The agent reads your
+real files; `.prowl/` only holds the rebuildable index, which the agent never opens
+directly (it asks prowl over MCP, and your editor asks over LSP). Because prowl
+indexes the same files git tracks, it never points the agent at a path it was told
+to ignore.
 
 ## A quick measurement
 

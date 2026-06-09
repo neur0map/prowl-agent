@@ -155,6 +155,60 @@ func (e kwEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 
 func (kwEmbedder) Generate(context.Context, string) (string, error) { return "", nil }
 
+func (kwEmbedder) Rerank(_ context.Context, _ string, docs []string) ([]int, error) {
+	order := make([]int, len(docs))
+	for i := range order {
+		order[i] = i
+	}
+	return order, nil
+}
+
+// rewritingInf reuses kwEmbedder but returns a fixed query rewrite.
+type rewritingInf struct {
+	kwEmbedder
+	rewrite string
+}
+
+func (r rewritingInf) Generate(_ context.Context, _ string) (string, error) { return r.rewrite, nil }
+
+func TestSmartSearch(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(path, text string) {
+		fid, err := s.UpsertFile(store.File{RelPath: path, Lang: "generic", Hash: path, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil, []store.Chunk{{StartLine: 1, EndLine: 1, Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("a.conf", "alpha apple")
+	mk("b.conf", "beta banana")
+	mk("c.conf", "gamma grape")
+	emb := kwEmbedder{kw: []string{"apple", "banana", "grape"}}
+	if _, err := index.BuildVectors(context.Background(), s, emb, "kw"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The fuzzy query "fruit" embeds to nothing; the rewrite to "banana" makes
+	// the banana chunk the nearest neighbor.
+	inf := rewritingInf{kwEmbedder: emb, rewrite: "banana"}
+	res, err := NewWithAssist(s, inf).SmartSearch(context.Background(), "fruit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rewritten != "banana" {
+		t.Fatalf("rewritten = %q, want banana", res.Rewritten)
+	}
+	if len(res.Matches) == 0 || !strings.Contains(res.Matches[0].Snippet, "banana") {
+		t.Fatalf("smart_search top = %+v, want banana first", res.Matches)
+	}
+}
+
 func TestSimilarCodeHybrid(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {

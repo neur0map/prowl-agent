@@ -27,6 +27,14 @@ func (f fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, err
 
 func (f fakeEmbedder) Generate(_ context.Context, _ string) (string, error) { return "", nil }
 
+func (f fakeEmbedder) Rerank(_ context.Context, _ string, docs []string) ([]int, error) {
+	order := make([]int, len(docs))
+	for i := range order {
+		order[i] = i
+	}
+	return order, nil
+}
+
 func TestBuildVectors(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {

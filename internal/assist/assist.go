@@ -12,15 +12,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
 // Inferencer is the provider-agnostic local model interface. Its outputs are
-// deliberately narrow: embeddings and constrained text generation. It never
-// makes decisions; callers (retrieval tools) use it only to rank/compact.
+// deliberately narrow: embeddings, constrained generation, and rank orderings.
+// It never makes decisions; callers (retrieval tools) use it only to rank or
+// compact already-retrieved candidates.
 type Inferencer interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 	Generate(ctx context.Context, prompt string) (string, error)
+	Rerank(ctx context.Context, query string, docs []string) ([]int, error)
 }
 
 // Ollama talks to a local Ollama daemon over HTTP.
@@ -106,4 +110,52 @@ func (o *Ollama) post(ctx context.Context, path string, body, out any) error {
 		return fmt.Errorf("ollama %s: status %d", path, resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// Rerank asks the assist model to order docs by relevance to query and returns
+// the resulting index permutation. Its output is constrained to an ordering: the
+// model never adds, removes, or rewrites results. Any indices the model omits are
+// appended in their original order, so the result is always a full permutation.
+func (o *Ollama) Rerank(ctx context.Context, query string, docs []string) ([]int, error) {
+	if len(docs) == 0 {
+		return nil, nil
+	}
+	var b strings.Builder
+	b.WriteString("Order the snippets by relevance to the query. ")
+	b.WriteString("Reply with only the snippet numbers, most relevant first, comma-separated.\n")
+	b.WriteString("Query: ")
+	b.WriteString(query)
+	b.WriteString("\n")
+	for i, d := range docs {
+		if len(d) > 240 {
+			d = d[:240]
+		}
+		fmt.Fprintf(&b, "[%d] %s\n", i, strings.ReplaceAll(d, "\n", " "))
+	}
+	resp, err := o.Generate(ctx, b.String())
+	if err != nil {
+		return nil, err
+	}
+	return parseOrder(resp, len(docs)), nil
+}
+
+// parseOrder extracts a permutation of [0,n) from free-form model text, keeping
+// the first occurrence of each valid index and appending any missing indices.
+func parseOrder(resp string, n int) []int {
+	seen := make([]bool, n)
+	var order []int
+	for _, tok := range strings.FieldsFunc(resp, func(r rune) bool { return r < '0' || r > '9' }) {
+		v, err := strconv.Atoi(tok)
+		if err != nil || v < 0 || v >= n || seen[v] {
+			continue
+		}
+		seen[v] = true
+		order = append(order, v)
+	}
+	for i := 0; i < n; i++ {
+		if !seen[i] {
+			order = append(order, i)
+		}
+	}
+	return order
 }

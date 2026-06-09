@@ -170,22 +170,28 @@ func (q *Querier) TestsFor(path string) (TestsResult, error) {
 // fuses semantic (vector KNN) and lexical (FTS) results via reciprocal rank
 // fusion; otherwise it falls back to FTS only.
 func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHit, error) {
-	fts, err := q.s.SearchChunks(text, DefaultLimit)
+	if q.inf == nil || !q.s.VectorsReady() {
+		return q.s.SearchChunks(text, DefaultLimit)
+	}
+	return q.hybrid(ctx, text, DefaultLimit)
+}
+
+// hybrid embeds the query, runs vector KNN and FTS, and fuses by RRF, falling
+// back to FTS alone if embedding fails.
+func (q *Querier) hybrid(ctx context.Context, text string, k int) ([]store.ChunkHit, error) {
+	fts, err := q.s.SearchChunks(text, k)
 	if err != nil {
 		return nil, err
 	}
-	if q.inf == nil || !q.s.VectorsReady() {
-		return fts, nil
-	}
 	vecs, err := q.inf.Embed(ctx, []string{text})
 	if err != nil || len(vecs) == 0 {
-		return fts, nil // graceful fallback to lexical search
+		return fts, nil
 	}
-	vhits, err := q.s.VectorSearch(vecs[0], DefaultLimit)
+	vhits, err := q.s.VectorSearch(vecs[0], k)
 	if err != nil {
 		return fts, nil
 	}
-	return fuseRRF(vhits, fts, DefaultLimit), nil
+	return fuseRRF(vhits, fts, k), nil
 }
 
 // fuseRRF merges two ranked lists by reciprocal rank fusion, deduped by file:line.
@@ -220,6 +226,71 @@ func fuseRRF(a, b []store.ChunkHit, limit int) []store.ChunkHit {
 		out = append(out, m[k].hit)
 	}
 	return out
+}
+
+// SmartResult is the assist-augmented search result.
+type SmartResult struct {
+	Query     string           `json:"query"`
+	Rewritten string           `json:"rewritten,omitempty"`
+	Matches   []store.ChunkHit `json:"matches"`
+}
+
+// SmartSearch runs the full assist pipeline: an optional query rewrite, hybrid
+// vector+FTS retrieval, then a rerank. It falls back to plain FTS when the
+// assist layer is unavailable. Every model output is constrained (a query
+// string, an index ordering); the model never invents or edits results.
+func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, error) {
+	res := SmartResult{Query: text}
+	if q.inf == nil || !q.s.VectorsReady() {
+		hits, err := q.s.SearchChunks(text, DefaultLimit)
+		res.Matches = hits
+		return res, err
+	}
+	search := text
+	if rw, err := q.inf.Generate(ctx, rewritePrompt(text)); err == nil {
+		if c := cleanRewrite(rw); c != "" {
+			search, res.Rewritten = c, c
+		}
+	}
+	cand, err := q.hybrid(ctx, search, 20)
+	if err != nil {
+		return res, err
+	}
+	if len(cand) > 1 {
+		docs := make([]string, len(cand))
+		for i, c := range cand {
+			docs[i] = c.Snippet
+		}
+		if order, err := q.inf.Rerank(ctx, text, docs); err == nil && len(order) == len(cand) {
+			reordered := make([]store.ChunkHit, 0, len(cand))
+			for _, idx := range order {
+				reordered = append(reordered, cand[idx])
+			}
+			cand = reordered
+		}
+	}
+	if len(cand) > DefaultLimit {
+		cand = cand[:DefaultLimit]
+	}
+	res.Matches = cand
+	return res, nil
+}
+
+func rewritePrompt(q string) string {
+	return "Rewrite this into a short keyword search query for a dotfiles/config index. " +
+		"Reply with only the keywords, no punctuation or explanation.\nQuery: " + q
+}
+
+func cleanRewrite(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if len(s) == 0 || len(s) > 120 {
+		return ""
+	}
+	return s
 }
 
 // Violation is a deterministic architecture/health finding.

@@ -82,7 +82,7 @@ func TestMCPIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(lt.Tools) != 14 {
-		t.Fatalf("tool count = %d, want 14", len(lt.Tools))
+	if len(lt.Tools) != 15 {
+		t.Fatalf("tool count = %d, want 15", len(lt.Tools))
 	}
 }

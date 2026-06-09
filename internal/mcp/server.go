@@ -48,7 +48,9 @@ func NewServer(q *query.Querier, version string, reindex ReindexFunc, doctorFn D
 	sdk.AddTool(s, &sdk.Tool{Name: "tests_for",
 		Description: "Configs/keybinds that launch or reload a file (best-effort for ricing)."}, h.testsFor)
 	sdk.AddTool(s, &sdk.Tool{Name: "similar_code",
-		Description: "Full-text search over config/script content (semantic search arrives in M2)."}, h.similarCode)
+		Description: "Search config/script content. Hybrid vector+full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, h.similarCode)
+	sdk.AddTool(s, &sdk.Tool{Name: "smart_search",
+		Description: "Assist-augmented search: rewrites the query, runs hybrid retrieval, and reranks. Best for fuzzy/natural-language queries. Falls back to full-text when the semantic layer is off."}, h.smartSearch)
 	sdk.AddTool(s, &sdk.Tool{Name: "architecture_violations",
 		Description: "Dangling references, orphan scripts, and hardcoded colors."}, h.architectureViolations)
 	sdk.AddTool(s, &sdk.Tool{Name: "repo_hotspots",
@@ -152,6 +154,11 @@ func (h *handlers) testsFor(ctx context.Context, _ *sdk.CallToolRequest, in path
 func (h *handlers) similarCode(ctx context.Context, _ *sdk.CallToolRequest, in queryIn) (*sdk.CallToolResult, chunksOut, error) {
 	m, err := h.q.SimilarCode(ctx, in.Query)
 	return nil, chunksOut{Matches: m}, err
+}
+
+func (h *handlers) smartSearch(ctx context.Context, _ *sdk.CallToolRequest, in queryIn) (*sdk.CallToolResult, query.SmartResult, error) {
+	r, err := h.q.SmartSearch(ctx, in.Query)
+	return nil, r, err
 }
 
 func (h *handlers) architectureViolations(ctx context.Context, _ *sdk.CallToolRequest, _ Empty) (*sdk.CallToolResult, violationsOut, error) {

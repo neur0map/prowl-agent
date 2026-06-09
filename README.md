@@ -24,6 +24,21 @@ Hyprland (`hyprlang`); plus a line-oriented fallback for bespoke WM configs
 
 Linux, Go 1.26+, and a C toolchain (cgo is required for Tree-sitter and SQLite).
 
+## Install
+
+Download the latest Linux x86_64 binary from the rolling release (rebuilt on every
+push to `main`):
+
+```sh
+curl -fsSL -o ~/.local/bin/prowl-agent \
+  https://github.com/neur0map/prowl-agent/releases/download/nightly/prowl-agent-linux-amd64
+chmod +x ~/.local/bin/prowl-agent
+prowl-agent --version
+```
+
+A `.sha256` is published alongside the binary. The build is cgo-linked and needs a
+recent glibc. Or build from source (below).
+
 ## Build
 
 ```sh

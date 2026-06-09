@@ -48,6 +48,9 @@ First working slice: a local-first ricing config-intelligence backend.
   saving tokens; `full` includes snippets.
 - **Agent playbook**: the injected `AGENTS.md` now includes a concrete ricing
   workflow (which tools to use for color changes, edits, keybinds, commits).
+- **Prebuilt binary**: a CI workflow builds `prowl-agent-linux-amd64` (cgo + FTS5)
+  on every push to `main` and publishes it to the rolling `nightly` GitHub release
+  with a `.sha256`.
 
 ### Notes
 

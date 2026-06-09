@@ -1,0 +1,52 @@
+name: build-binary
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build (cgo + fts5)
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          ver="$(git describe --tags --always --dirty 2>/dev/null || echo dev)-${GITHUB_SHA::7}"
+          go build -tags sqlite_fts5 -trimpath \
+            -ldflags "-s -w -X main.version=${ver}" \
+            -o prowl-agent-linux-amd64 ./cmd/prowl-agent
+          ./prowl-agent-linux-amd64 --version
+
+      - name: Test
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags sqlite_fts5 ./...
+
+      - name: Checksum
+        run: sha256sum prowl-agent-linux-amd64 > prowl-agent-linux-amd64.sha256
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly (latest main)
+          prerelease: true
+          files: |
+            prowl-agent-linux-amd64
+            prowl-agent-linux-amd64.sha256
+          body: >
+            Rolling Linux x86_64 build of prowl-agent from the latest `main`
+            (commit ${{ github.sha }}). Built with cgo; needs a recent glibc.
+            Verify with the included `.sha256`.

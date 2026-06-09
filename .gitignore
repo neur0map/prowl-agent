@@ -1,0 +1,6 @@
+/prowl-agent
+/dist/
+*.db
+*.db-shm
+*.db-wal
+.prowl/

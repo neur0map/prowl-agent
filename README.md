@@ -84,6 +84,37 @@ agent context stays fresh.
 and `reindex`. Structural results are deterministic and carry `file:line`
 provenance.
 
+## Benchmarks
+
+Measured on a real rice
+([ryoku-arch](https://github.com/neur0map/ryoku-arch): 2814 tracked files; 2172
+indexed, 111,977 symbols). Task: find the files that make up the plugin system.
+Token counts are bytes/4 (approximate).
+
+| | Without prowl (`ripgrep "plugin"`) | With prowl (MCP) |
+|---|---|---|
+| Per-query latency | ~1.9 s (rescans the repo) | 1-16 ms (pre-indexed) |
+| Output to read | 288 KB / ~74k tokens | 0.4-12 KB / ~0.1-3k tokens |
+| Files returned | 121, unranked | typed, ranked subset |
+| `plugin` meanings mixed in | 5 (shell, nvim, pipewire, Qt, xournalpp) | separated by symbol kind |
+| Finds the C++/QML runtime (`shell/plugin/`) | no (those files never say "plugin") | yes, via `clusters` |
+| Change impact (`blast_radius`) | not possible | 5 dependents in <1 ms |
+| Index cost | none | one-time ~14 s, then incremental (auto on file change) |
+
+Per-tool latency and result size after the index is built:
+
+| tool | latency | result |
+|---|---|---|
+| `blast_radius` | 1 ms | 0.4 KB |
+| `find_symbol` | 2 ms | 5.8 KB |
+| `similar_code` | 3 ms | 11.6 KB |
+| `clusters` | 5 ms | 6.1 KB |
+| `overview` | 16 ms | 9.5 KB |
+
+Net: roughly 95% fewer tokens and 100-1000x lower per-query latency than
+re-grepping, plus answers grep cannot give (the runtime tree, change impact, and
+symbol types that separate real code from i18n strings and homonyms).
+
 ## Semantic search (opt-in)
 
 The setup wizard can enable a local semantic layer (via Ollama). When enabled,
@@ -92,6 +123,14 @@ and `similar_code` fuses vector nearest-neighbor search with full-text search
 (reciprocal rank fusion). A small assist model (`gemma3:4b` by default) stays a
 retrieval helper only: it never makes decisions and is never exposed as its own
 tool. Structural search works fully without any of this.
+
+**Model lifecycle:** the model is not cold-started per query. `serve` embeds the
+index once at startup (warming the embed model), and Ollama keeps a model
+resident for a keep-alive window (default ~5 min) after each use. Measured here:
+first embed after idle ~2.4 s (model load), then warm embeds ~20 ms; the assist
+model (used only by `smart_search`) warms the same way. So a model cold-starts
+once per idle period, then stays hot during active MCP use. Set
+`OLLAMA_KEEP_ALIVE=-1` to keep it resident permanently.
 
 ## Architecture
 

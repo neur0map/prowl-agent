@@ -77,12 +77,18 @@ func TestMCPIntegration(t *testing.T) {
 	if out := call("doctor", nil); !strings.Contains(out, "\"score\"") {
 		t.Fatalf("doctor: %s", out)
 	}
+	if out := call("overview", nil); !strings.Contains(out, "\"roles\"") {
+		t.Fatalf("overview: %s", out)
+	}
+	if out := call("clusters", nil); !strings.Contains(out, "\"clusters\"") {
+		t.Fatalf("clusters: %s", out)
+	}
 
 	lt, err := sess.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(lt.Tools) != 15 {
-		t.Fatalf("tool count = %d, want 15", len(lt.Tools))
+	if len(lt.Tools) != 17 {
+		t.Fatalf("tool count = %d, want 17", len(lt.Tools))
 	}
 }

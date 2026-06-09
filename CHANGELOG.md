@@ -41,6 +41,13 @@ First working slice: a local-first ricing config-intelligence backend.
 - **More inject targets**: Cursor (`.cursor/mcp.json`) and VS Code
   (`.vscode/mcp.json`) alongside the generic `.mcp.json`.
 - **More languages**: C++ and Fish grammars and extractors.
+- **Overview and clusters**: an `overview` tool/map (roles, entrypoints,
+  clusters, color palette, keybind count, hotspots) and a `clusters` tool that
+  groups files into subsystems via connected components over the graph.
+- **Tiered detail**: `detail: compact` on search tools returns file:line only,
+  saving tokens; `full` includes snippets.
+- **Agent playbook**: the injected `AGENTS.md` now includes a concrete ricing
+  workflow (which tools to use for color changes, edits, keybinds, commits).
 
 ### Notes
 

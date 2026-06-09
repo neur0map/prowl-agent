@@ -251,3 +251,39 @@ func TestSimilarCodeHybrid(t *testing.T) {
 		t.Fatal("FTS-only SimilarCode returned nothing")
 	}
 }
+
+func TestOverviewAndClusters(t *testing.T) {
+	q := indexed(t)
+
+	ov, err := q.Overview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ov.Counts.Files != 11 {
+		t.Fatalf("overview files = %d, want 11", ov.Counts.Files)
+	}
+	if len(ov.Entrypoints) == 0 {
+		t.Fatal("overview has no entrypoints")
+	}
+	if len(ov.Palette) == 0 {
+		t.Fatal("overview has no color palette")
+	}
+	if ov.Keybinds == 0 {
+		t.Fatal("overview has no keybinds")
+	}
+
+	cl, err := q.Clusters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cl) == 0 {
+		t.Fatal("no clusters found")
+	}
+	labels := map[string]bool{}
+	for _, c := range cl {
+		labels[c.Label] = true
+	}
+	if !labels["hypr"] && !labels["waybar"] {
+		t.Fatalf("expected a hypr or waybar cluster, got %+v", cl)
+	}
+}

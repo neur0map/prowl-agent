@@ -90,3 +90,51 @@ func (s *Store) FileMetrics() ([]FileMetric, error) {
 	}
 	return out, rows.Err()
 }
+
+// ResourceFileLinks returns file pairs connected by a shared resource: a file
+// that uses a resource (SrcFile) and the file that declares it (DstFile). Used
+// to cluster files that share colors, fonts, or variables.
+func (s *Store) ResourceFileLinks() ([]FileEdge, error) {
+	rows, err := s.db.Query(`
+		SELECT uf.rel_path, e.file_id, df.rel_path, r.file_id
+		FROM edges e
+		JOIN resources r ON e.dst_type='resource' AND e.dst_id=r.id
+		JOIN files uf ON uf.id=e.file_id
+		JOIN files df ON df.id=r.file_id
+		WHERE e.kind='uses_resource' AND e.resolved=1 AND r.file_id IS NOT NULL AND r.file_id<>e.file_id
+		ORDER BY uf.rel_path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileEdge
+	for rows.Next() {
+		e := FileEdge{Kind: "resource"}
+		if err := rows.Scan(&e.SrcFile, &e.SrcID, &e.DstFile, &e.DstID); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ColorPalette returns declared color resources (named) deduped by name.
+func (s *Store) ColorPalette() ([]ResourceRow, error) {
+	rows, err := s.db.Query(`
+		SELECT r.id, r.kind, r.name, IFNULL(r.value,''), IFNULL(f.rel_path,''), IFNULL(r.line,0)
+		FROM resources r LEFT JOIN files f ON f.id=r.file_id
+		WHERE r.kind='color' AND r.name IS NOT NULL AND r.name<>'' GROUP BY r.name ORDER BY r.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ResourceRow
+	for rows.Next() {
+		var r ResourceRow
+		if err := rows.Scan(&r.ID, &r.Kind, &r.Name, &r.Value, &r.File, &r.Line); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

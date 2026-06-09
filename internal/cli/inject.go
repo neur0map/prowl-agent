@@ -13,12 +13,20 @@ const agentsBlock = agentsMarker + `
 ## Prowl Agent (code intelligence)
 
 This rice is indexed by **prowl-agent** (MCP server: ` + "`prowl-agent serve`" + `).
-**Prefer prowl-agent queries before reading files manually.** Use them to narrow
-the search space, then open only the files they point to:
+**Prefer prowl-agent queries before reading files manually.** They return cited,
+bounded context; open raw files only after a query points you to them.
 
-- ` + "`find_symbol`, `find_references`, `find_callers`, `find_callees`" + `
-- ` + "`file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`" + `
-- ` + "`similar_code`, `architecture_violations`, `repo_hotspots`, `status`" + `
+Tools: ` + "`overview`, `clusters`, `find_symbol`, `find_references`, `find_callers`, `find_callees`, `file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`, `architecture_violations`, `repo_hotspots`, `doctor`, `status`" + `.
+
+### Ricing playbook
+
+- **New session / unfamiliar rice:** call ` + "`overview`" + ` first, then ` + "`clusters`" + ` to grab a whole subsystem.
+- **Fuzzy / natural-language question:** use ` + "`smart_search`" + ` (or ` + "`similar_code`" + `); pass ` + "`detail: compact`" + ` to list files before pulling snippets.
+- **Before changing a color/font/var:** ` + "`find_symbol`" + ` it, then ` + "`find_references`" + ` to see every usage; check ` + "`architecture_violations`" + ` for hardcoded duplicates.
+- **Before editing or deleting a file or script:** run ` + "`blast_radius`" + ` to see what breaks, and ` + "`find_callers`" + ` to see what invokes it.
+- **Adding a keybind:** run ` + "`doctor`" + ` first to avoid ` + "`duplicate_keybind`" + ` conflicts.
+- **Tracing startup:** ` + "`entrypoints_for`" + ` a file to find the WM/session entry and autostart chain.
+- **Before committing:** run ` + "`doctor`" + ` and resolve errors (cycles, dangling refs, broken commands).
 <!-- /prowl-agent -->`
 
 // Inject writes MCP server configs for common agent environments: a generic

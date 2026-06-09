@@ -57,6 +57,10 @@ func NewServer(q *query.Querier, version string, reindex ReindexFunc, doctorFn D
 		Description: "Structurally central and large files."}, h.repoHotspots)
 	sdk.AddTool(s, &sdk.Tool{Name: "status",
 		Description: "Index freshness, counts, languages, and AI status."}, h.status)
+	sdk.AddTool(s, &sdk.Tool{Name: "overview",
+		Description: "High-level map of the rice: role breakdown, entrypoints, clusters, color palette, keybind count, languages, and hotspots. A good first call on a new rice."}, h.overview)
+	sdk.AddTool(s, &sdk.Tool{Name: "clusters",
+		Description: "Group related config files into subsystems (connected via includes, exec chains, and shared resources)."}, h.clusters)
 	sdk.AddTool(s, &sdk.Tool{Name: "reindex",
 		Description: "Re-scan the rice and refresh the index incrementally."}, h.reindexTool)
 	sdk.AddTool(s, &sdk.Tool{Name: "doctor",
@@ -81,7 +85,8 @@ type pathIn struct {
 	Path string `json:"path" jsonschema:"file path relative to the rice root"`
 }
 type queryIn struct {
-	Query string `json:"query" jsonschema:"free-text search query"`
+	Query  string `json:"query" jsonschema:"free-text search query"`
+	Detail string `json:"detail,omitempty" jsonschema:"result detail: 'compact' for file:line only, 'full' for snippets (default full)"`
 }
 
 // --- outputs ---
@@ -153,12 +158,40 @@ func (h *handlers) testsFor(ctx context.Context, _ *sdk.CallToolRequest, in path
 
 func (h *handlers) similarCode(ctx context.Context, _ *sdk.CallToolRequest, in queryIn) (*sdk.CallToolResult, chunksOut, error) {
 	m, err := h.q.SimilarCode(ctx, in.Query)
-	return nil, chunksOut{Matches: m}, err
+	return nil, chunksOut{Matches: compactIf(in.Detail, m)}, err
 }
 
 func (h *handlers) smartSearch(ctx context.Context, _ *sdk.CallToolRequest, in queryIn) (*sdk.CallToolResult, query.SmartResult, error) {
 	r, err := h.q.SmartSearch(ctx, in.Query)
+	r.Matches = compactIf(in.Detail, r.Matches)
 	return nil, r, err
+}
+
+func (h *handlers) overview(ctx context.Context, _ *sdk.CallToolRequest, _ Empty) (*sdk.CallToolResult, query.Overview, error) {
+	o, err := h.q.Overview()
+	return nil, o, err
+}
+
+type clustersOut struct {
+	Clusters []query.Cluster `json:"clusters"`
+}
+
+func (h *handlers) clusters(ctx context.Context, _ *sdk.CallToolRequest, _ Empty) (*sdk.CallToolResult, clustersOut, error) {
+	c, err := h.q.Clusters()
+	return nil, clustersOut{Clusters: c}, err
+}
+
+// compactIf strips snippets when detail == "compact", for token-lean results.
+func compactIf(detail string, hits []store.ChunkHit) []store.ChunkHit {
+	if detail != "compact" {
+		return hits
+	}
+	out := make([]store.ChunkHit, len(hits))
+	for i, h := range hits {
+		h.Snippet = ""
+		out[i] = h
+	}
+	return out
 }
 
 func (h *handlers) architectureViolations(ctx context.Context, _ *sdk.CallToolRequest, _ Empty) (*sdk.CallToolResult, violationsOut, error) {

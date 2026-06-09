@@ -62,9 +62,10 @@ agent context stays fresh.
 
 ## MCP tools
 
-`find_symbol`, `find_references`, `find_callers`, `find_callees`,
-`file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`, `similar_code`,
-`smart_search`, `architecture_violations`, `repo_hotspots`, `doctor`, `status`,
+`overview`, `clusters`, `find_symbol`, `find_references`, `find_callers`,
+`find_callees`, `file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`,
+`similar_code`, `smart_search`, `architecture_violations`, `repo_hotspots`,
+`doctor`, `status`,
 and `reindex`. Structural results are deterministic and carry `file:line`
 provenance.
 

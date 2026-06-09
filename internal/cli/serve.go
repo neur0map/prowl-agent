@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ func newServeCmd(version string) *cobra.Command {
 					inf = oll
 				}
 			}
+			_ = s.SetMeta("ai_enabled", strconv.FormatBool(inf != nil))
 
 			var mu sync.Mutex
 			reindex := func(ctx context.Context) (string, error) {

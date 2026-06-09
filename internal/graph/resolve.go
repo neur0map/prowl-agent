@@ -28,6 +28,10 @@ func Resolve(s *store.Store) error {
 		byID[f.ID] = f
 		rels = append(rels, f.RelPath)
 	}
+	byBase := make(map[string][]int64, len(files))
+	for _, f := range files {
+		byBase[path.Base(f.RelPath)] = append(byBase[path.Base(f.RelPath)], f.ID)
+	}
 
 	// Pass 1: include/import/require/source edges -> files.
 	inc, err := s.UnresolvedEdges("includes", "references")
@@ -36,7 +40,7 @@ func Resolve(s *store.Store) error {
 	}
 	for _, e := range inc {
 		lua := byID[e.FileID].Lang == "lua"
-		if id, ok := resolvePath(fileMap, rels, e.File, e.Raw, lua); ok {
+		if id, ok := resolvePath(fileMap, rels, e.File, e.Raw, lua); ok && id != e.FileID {
 			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
 				return err
 			}
@@ -49,7 +53,7 @@ func Resolve(s *store.Store) error {
 		return err
 	}
 	for _, e := range ex {
-		if id, ok := resolveCommandTarget(fileMap, rels, e.File, e.Raw); ok {
+		if id, ok := resolveCommandTarget(fileMap, rels, byBase, e.File, e.Raw); ok && id != e.FileID {
 			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
 				return err
 			}
@@ -141,10 +145,20 @@ func pathCandidates(fromRel, raw string, lua bool) []string {
 	return c
 }
 
-// resolveCommandTarget scans a command string for a path-like token referring
-// to an indexed script and returns its file id.
-func resolveCommandTarget(fileMap map[string]int64, rels []string, fromRel, cmd string) (int64, bool) {
-	for _, t := range strings.Fields(cmd) {
+// resolveCommandTarget resolves a command string to an indexed file: first the
+// bare command name against repo command files by basename (e.g. ryoku-pkg-add
+// -> bin/ryoku-pkg-add), then any path-like token referring to a script.
+func resolveCommandTarget(fileMap map[string]int64, rels []string, byBase map[string][]int64, fromRel, cmd string) (int64, bool) {
+	toks := strings.Fields(cmd)
+	if len(toks) > 0 {
+		first := strings.Trim(toks[0], `"'`)
+		if first != "" && !strings.ContainsAny(first, "/$") {
+			if ids, ok := byBase[first]; ok && len(ids) == 1 {
+				return ids[0], true
+			}
+		}
+	}
+	for _, t := range toks {
 		t = strings.Trim(t, `"'`)
 		if strings.Contains(t, "/") || strings.HasSuffix(t, ".sh") || strings.HasSuffix(t, ".py") || strings.HasSuffix(t, ".lua") {
 			if id, ok := resolvePath(fileMap, rels, fromRel, t, false); ok {

@@ -1,6 +1,30 @@
 package extract
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+var reHasExt = regexp.MustCompile(`\.[A-Za-z0-9]{1,6}$`)
+
+// looksLikeLocalPath reports whether v is plausibly a local file reference: an
+// absolute/home/relative path, or a slash path ending in a file extension. It
+// rejects URLs, version/action refs (foo/bar@v1), and bare config namespaces
+// (custom/power) so config string values are not mistaken for file references.
+func looksLikeLocalPath(v string) bool {
+	v = strings.TrimSpace(strings.Trim(v, `"'`))
+	if v == "" || strings.Contains(v, "://") || strings.ContainsAny(v, " \t") {
+		return false
+	}
+	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~/") ||
+		strings.HasPrefix(v, "./") || strings.HasPrefix(v, "../") {
+		return true
+	}
+	if strings.Contains(v, "@") {
+		return false
+	}
+	return strings.Contains(v, "/") && reHasExt.MatchString(v)
+}
 
 // valueAfterEq returns the trimmed text following the first '=' in s.
 func valueAfterEq(s string) string {

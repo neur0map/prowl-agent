@@ -86,34 +86,34 @@ provenance.
 
 ## Benchmarks
 
-Measured on a real rice
-([ryoku-arch](https://github.com/neur0map/ryoku-arch): 2814 tracked files; 2172
-indexed, 111,977 symbols). Task: find the files that make up the plugin system.
-Token counts are bytes/4 (approximate).
+Project: [github.com/neur0map/prowl-agent](https://github.com/neur0map/prowl-agent).
+Test repo: [neur0map/ryoku-arch](https://github.com/neur0map/ryoku-arch), a real
+Arch rice with **2814 tracked files** (2172 indexed, 111,977 symbols). Task: find
+the files that make up the plugin system. Tokens are bytes/4 (approx).
 
-| | Without prowl (`ripgrep "plugin"`) | With prowl (MCP) |
-|---|---|---|
-| Per-query latency | ~1.9 s (rescans the repo) | 1-16 ms (pre-indexed) |
-| Output to read | 288 KB / ~74k tokens | 0.4-12 KB / ~0.1-3k tokens |
-| Files returned | 121, unranked | typed, ranked subset |
-| `plugin` meanings mixed in | 5 (shell, nvim, pipewire, Qt, xournalpp) | separated by symbol kind |
-| Finds the C++/QML runtime (`shell/plugin/`) | no (those files never say "plugin") | yes, via `clusters` |
-| Change impact (`blast_radius`) | not possible | 5 dependents in <1 ms |
-| Index cost | none | one-time ~14 s, then incremental (auto on file change) |
+| metric | without prowl (`rg "plugin"`) | prowl structural (MCP) | prowl + local AI |
+|---|---|---|---|
+| Per-query latency | ~1.9 s (rescans) | 1-16 ms | 37 ms `similar_code`, 6.3 s `smart_search` |
+| Output to read | 288 KB / ~74k tokens | 0.4-12 KB / ~0.1-3k tokens | ~13 KB / ~3k tokens |
+| One-time index build | none | ~14 s | ~14 s + ~121 s embeddings |
+| Files returned | 121, unranked (5 homonyms) | typed, ranked subset | semantically ranked |
+| Finds C++/QML runtime (`shell/plugin/`) | no | yes (`clusters`) | yes |
+| Semantic match (no shared words) | no | no | yes ("music spectrum" finds `AudioVisualizer.qml`) |
+| Change impact (`blast_radius`) | no | yes (<1 ms) | yes |
 
-Per-tool latency and result size after the index is built:
+Structural search is ~95% fewer tokens and 100-1000x lower per-query latency than
+re-grepping. The local-AI layer adds meaning-based recall (files that share no
+keywords) for a one-time embed cost; see Semantic search below for model lifecycle.
 
-| tool | latency | result |
-|---|---|---|
-| `blast_radius` | 1 ms | 0.4 KB |
-| `find_symbol` | 2 ms | 5.8 KB |
-| `similar_code` | 3 ms | 11.6 KB |
-| `clusters` | 5 ms | 6.1 KB |
-| `overview` | 16 ms | 9.5 KB |
+### Doctor accuracy
 
-Net: roughly 95% fewer tokens and 100-1000x lower per-query latency than
-re-grepping, plus answers grep cannot give (the runtime tree, change impact, and
-symbol types that separate real code from i18n strings and homonyms).
+`doctor` is tuned to keep false positives near zero. On ryoku-arch its report
+dropped from **2052 raw findings to 90** after: resolving bare commands against
+the repo's `bin/`, scoping checks to rice files (skipping migrations / installers
+/ CI / vendor), treating `~` / system / URL targets as runtime (not broken), only
+flagging repo-relative broken includes, and excluding data files from the size
+check. The remaining findings are real (broken theme imports, a monolithic
+`config.cpp` referencing 21 files, churn hotspots, hardcoded colors).
 
 ## Semantic search (opt-in)
 

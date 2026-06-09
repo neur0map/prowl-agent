@@ -48,11 +48,12 @@ type Options struct {
 	FanInThreshold  int
 	FanOutThreshold int
 	ChurnCommits    int
+	ExcludePaths    []string
 }
 
 func (o Options) withDefaults() Options {
 	if o.OversizedLines == 0 {
-		o.OversizedLines = 400
+		o.OversizedLines = 800
 	}
 	if o.FanInThreshold == 0 {
 		o.FanInThreshold = 8
@@ -62,6 +63,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.ChurnCommits == 0 {
 		o.ChurnCommits = 200
+	}
+	if o.ExcludePaths == nil {
+		o.ExcludePaths = []string{"migrations/", "install/", "iso/", "shell-install/", ".github/", "vendor/", "legacy/", ".githooks/", "tests/"}
 	}
 	return o
 }
@@ -86,6 +90,7 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	}
 	f = append(f, fb...)
 	f = append(f, checkChurn(s, opt)...) // best-effort; needs git
+	f = filterExcluded(f, opt.ExcludePaths)
 
 	sort.SliceStable(f, func(i, j int) bool {
 		if f[i].Check != f[j].Check {
@@ -113,6 +118,29 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 		score = 0
 	}
 	return Report{Findings: f, Summary: summary, Score: score}, nil
+}
+
+// filterExcluded drops findings whose file lives under a lifecycle/non-rice
+// directory (migrations, installers, CI, vendor, hooks), which are not part of
+// the live rice graph and otherwise dominate the report with non-actionable noise.
+func filterExcluded(findings []Finding, prefixes []string) []Finding {
+	if len(prefixes) == 0 {
+		return findings
+	}
+	out := findings[:0]
+	for _, fd := range findings {
+		skip := false
+		for _, p := range prefixes {
+			if fd.File != "" && strings.HasPrefix(fd.File, p) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, fd)
+		}
+	}
+	return out
 }
 
 func checkCycles(s *store.Store, _ Options) ([]Finding, error) {
@@ -161,6 +189,9 @@ func checkCycles(s *store.Store, _ Options) ([]Finding, error) {
 	var out []Finding
 	seen := map[string]bool{}
 	for _, c := range cycles {
+		if len(c) < 2 {
+			continue // ignore self-cycles (resolution artifacts)
+		}
 		key := strings.Join(c, ">")
 		if seen[key] {
 			continue
@@ -204,10 +235,11 @@ func checkOversized(s *store.Store, opt Options) ([]Finding, error) {
 	}
 	var out []Finding
 	for _, x := range m {
-		if x.Lines >= opt.OversizedLines {
-			out = append(out, Finding{Check: "oversized_file", Severity: SevWarn, File: x.File,
-				Detail: fmt.Sprintf("%d lines; consider splitting", x.Lines)})
+		if isDataFile(x.File) || x.Lines < opt.OversizedLines {
+			continue // data files (translations, indexes) are not splittable configs
 		}
+		out = append(out, Finding{Check: "oversized_file", Severity: SevWarn, File: x.File,
+			Detail: fmt.Sprintf("%d lines; consider splitting", x.Lines)})
 	}
 	return out, nil
 }
@@ -217,8 +249,17 @@ func checkDuplicateKeybinds(s *store.Store, _ Options) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	wmFiles := map[string]bool{}
+	if wm, err := s.FilesByRole("wm-config"); err == nil {
+		for _, f := range wm {
+			wmFiles[f.RelPath] = true
+		}
+	}
 	groups := map[string][]store.SymbolHit{}
 	for _, k := range kb {
+		if !wmFiles[k.File] {
+			continue // keybind conflicts only matter within a window manager
+		}
 		groups[canonKey(k.Name)] = append(groups[canonKey(k.Name)], k)
 	}
 	keys := make([]string, 0, len(groups))
@@ -287,29 +328,63 @@ func checkOrphansAndDangling(s *store.Store, _ Options) ([]Finding, error) {
 		return nil, err
 	}
 	for _, o := range orphans {
+		if strings.HasPrefix(o.RelPath, "bin/") {
+			continue // a user-invoked command suite, not config-referenced scripts
+		}
 		out = append(out, Finding{Check: "orphan_script", Severity: SevWarn, File: o.RelPath,
 			Detail: "script not referenced by any config or keybind"})
 	}
-	dang, err := s.UnresolvedEdges("includes", "references", "uses_resource")
+	dang, err := s.UnresolvedEdges("includes")
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range dang {
-		if e.Kind != "uses_resource" && !pathy(e.Raw) {
-			continue
+		if !repoRelative(e.Raw) {
+			continue // skip runtime (~), system (/), vars, URLs, and external modules
 		}
-		sev := SevWarn
-		if e.Kind == "includes" {
-			sev = SevError
-		}
-		out = append(out, Finding{Check: "dangling_reference", Severity: sev, File: e.File, Line: e.Line,
+		out = append(out, Finding{Check: "dangling_reference", Severity: SevError, File: e.File, Line: e.Line,
 			Detail: e.Kind + ": " + e.Raw})
 	}
 	return out, nil
 }
 
-func pathy(s string) bool {
-	return strings.ContainsAny(s, "/") || strings.HasPrefix(s, "$") || strings.HasPrefix(s, "@")
+// repoRelative reports whether a raw include target should resolve inside the
+// repo (a genuinely broken include if it does not): a relative slash path or a
+// file with an extension, excluding URLs, home (~), system (/), and vars.
+func repoRelative(v string) bool {
+	v = strings.TrimSpace(strings.Trim(v, `"'`))
+	if v == "" || strings.Contains(v, "://") ||
+		strings.HasPrefix(v, "~") || strings.HasPrefix(v, "/") ||
+		strings.HasPrefix(v, "$") || strings.HasPrefix(v, "@") {
+		return false
+	}
+	return strings.Contains(v, "/") || hasFileExt(v)
+}
+
+var includeExts = map[string]bool{
+	".css": true, ".scss": true, ".conf": true, ".sh": true, ".bash": true, ".fish": true,
+	".py": true, ".lua": true, ".qml": true, ".toml": true, ".yaml": true, ".yml": true,
+	".json": true, ".jsonc": true, ".ini": true, ".rasi": true, ".rasi2": true,
+}
+
+// hasFileExt reports whether v ends in a known config/script extension (so a
+// dotted module like "urllib.error" is not mistaken for a file).
+func hasFileExt(v string) bool {
+	b := v
+	if i := strings.LastIndexByte(v, '/'); i >= 0 {
+		b = v[i+1:]
+	}
+	d := strings.LastIndexByte(b, '.')
+	return d > 0 && includeExts[strings.ToLower(b[d:])]
+}
+
+func isDataFile(p string) bool {
+	for _, ext := range []string{".json", ".jsonc", ".yaml", ".yml"} {
+		if strings.HasSuffix(p, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkHardcodedColors(s *store.Store, _ Options) ([]Finding, error) {

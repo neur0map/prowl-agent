@@ -51,6 +51,15 @@ First working slice: a local-first ricing config-intelligence backend.
 - **Prebuilt binary**: a CI workflow builds `prowl-agent-linux-amd64` (cgo + FTS5)
   on every push to `main` and publishes it to the rolling `nightly` GitHub release
   with a `.sha256`.
+- **Command-graph resolution**: exec/keybind bare commands resolve against repo
+  command files by basename (e.g. `ryoku-pkg-add` to `bin/ryoku-pkg-add`), so
+  command-suite scripts are no longer false orphans.
+- **Doctor precision**: references are emitted only for local-path-shaped targets;
+  `doctor` resolves commands, scopes checks to rice files (skips
+  migrations/installers/CI/vendor), flags only repo-relative broken includes,
+  scopes duplicate-keybind to WM configs, ignores self-cycles, and skips data
+  files in the size check. On a 2172-file rice this cut raw findings from 2052 to
+  ~90 (mostly real).
 
 ### Notes
 

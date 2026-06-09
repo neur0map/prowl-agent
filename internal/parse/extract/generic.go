@@ -53,7 +53,7 @@ func (e genericExtractor) Extract(src []byte) (Result, error) {
 			switch {
 			case looksLikeColor(val):
 				r.Resources = append(r.Resources, Resource{Kind: "color", Value: val, Line: ln})
-			case looksLikePath(val):
+			case looksLikeLocalPath(val):
 				r.Edges = append(r.Edges, RawEdge{Kind: "references", Raw: val, Line: ln})
 			case strings.HasPrefix(val, "$") || strings.HasPrefix(val, "@"):
 				r.Edges = append(r.Edges, RawEdge{Kind: "uses_resource", Raw: strings.TrimRight(val, ";"), Line: ln})

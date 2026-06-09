@@ -52,7 +52,7 @@ func (e structuredExtractor) Extract(src []byte) (Result, error) {
 		}
 		if v, ok := capNode(caps, "val"); ok {
 			raw := unquote(v.Content(src))
-			if looksLikePath(raw) {
+			if looksLikeLocalPath(raw) {
 				r.Edges = append(r.Edges, RawEdge{Kind: "references", Raw: raw, Line: line(v)})
 			}
 		}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	mcpserver "github.com/prowl-agent/prowl-agent/internal/mcp"
@@ -34,19 +35,40 @@ func newServeCmd(version string) *cobra.Command {
 			}
 			defer s.Close()
 			cfg, _ := config.Load(ws.Path)
+
+			var inf assist.Inferencer
+			if cfg.AI.Enabled {
+				oll := assist.NewOllama(cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
+				if oll.Available(cmd.Context()) {
+					inf = oll
+				}
+			}
+
 			reindex := func(ctx context.Context) (string, error) {
 				sum, err := index.Index(s, ws.Root, cfg.Ignore)
 				if err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("indexed=%d parsed=%d skipped=%d deleted=%d",
-					sum.Indexed, sum.Parsed, sum.Skipped, sum.Deleted), nil
+				msg := fmt.Sprintf("indexed=%d parsed=%d skipped=%d deleted=%d",
+					sum.Indexed, sum.Parsed, sum.Skipped, sum.Deleted)
+				if inf != nil {
+					n, err := index.BuildVectors(ctx, s, inf, cfg.AI.EmbedModel)
+					if err != nil {
+						return msg, err
+					}
+					msg += fmt.Sprintf(" embedded=%d", n)
+				}
+				return msg, nil
 			}
 			// Freshen the index on startup (incremental, so cheap after first run).
 			if _, err := reindex(cmd.Context()); err != nil {
 				return err
 			}
-			srv := mcpserver.NewServer(query.New(s), version, reindex)
+			q := query.New(s)
+			if inf != nil {
+				q = query.NewWithAssist(s, inf)
+			}
+			srv := mcpserver.NewServer(q, version, reindex)
 			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
 			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&
 				!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&

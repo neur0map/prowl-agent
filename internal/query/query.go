@@ -3,17 +3,28 @@
 package query
 
 import (
+	"context"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
 // Querier answers structural queries against an index.
-type Querier struct{ s *store.Store }
+type Querier struct {
+	s   *store.Store
+	inf assist.Inferencer // optional; when set, SimilarCode is hybrid semantic
+}
 
-// New wraps a store.
+// New wraps a store for structural (FTS-only) queries.
 func New(s *store.Store) *Querier { return &Querier{s: s} }
+
+// NewWithAssist wraps a store with a local inferencer for hybrid semantic search.
+func NewWithAssist(s *store.Store, inf assist.Inferencer) *Querier {
+	return &Querier{s: s, inf: inf}
+}
 
 // DefaultLimit bounds result sizes.
 const DefaultLimit = 50
@@ -155,9 +166,60 @@ func (q *Querier) TestsFor(path string) (TestsResult, error) {
 	return res, nil
 }
 
-// SimilarCode returns FTS-ranked snippets (vector search arrives in M2).
-func (q *Querier) SimilarCode(text string) ([]store.ChunkHit, error) {
-	return q.s.SearchChunks(text, DefaultLimit)
+// SimilarCode returns ranked snippets. With an inferencer and a vector index it
+// fuses semantic (vector KNN) and lexical (FTS) results via reciprocal rank
+// fusion; otherwise it falls back to FTS only.
+func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHit, error) {
+	fts, err := q.s.SearchChunks(text, DefaultLimit)
+	if err != nil {
+		return nil, err
+	}
+	if q.inf == nil || !q.s.VectorsReady() {
+		return fts, nil
+	}
+	vecs, err := q.inf.Embed(ctx, []string{text})
+	if err != nil || len(vecs) == 0 {
+		return fts, nil // graceful fallback to lexical search
+	}
+	vhits, err := q.s.VectorSearch(vecs[0], DefaultLimit)
+	if err != nil {
+		return fts, nil
+	}
+	return fuseRRF(vhits, fts, DefaultLimit), nil
+}
+
+// fuseRRF merges two ranked lists by reciprocal rank fusion, deduped by file:line.
+func fuseRRF(a, b []store.ChunkHit, limit int) []store.ChunkHit {
+	const k0 = 60.0
+	type agg struct {
+		hit   store.ChunkHit
+		score float64
+	}
+	m := map[string]*agg{}
+	var order []string
+	add := func(list []store.ChunkHit) {
+		for rank, h := range list {
+			key := h.File + ":" + strconv.Itoa(h.StartLine)
+			e, ok := m[key]
+			if !ok {
+				e = &agg{hit: h}
+				m[key] = e
+				order = append(order, key)
+			}
+			e.score += 1.0 / (k0 + float64(rank+1))
+		}
+	}
+	add(a)
+	add(b)
+	sort.SliceStable(order, func(i, j int) bool { return m[order[i]].score > m[order[j]].score })
+	out := make([]store.ChunkHit, 0, limit)
+	for _, k := range order {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, m[k].hit)
+	}
+	return out
 }
 
 // Violation is a deterministic architecture/health finding.

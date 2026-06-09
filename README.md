@@ -63,12 +63,12 @@ is deterministic and carries `file:line` provenance.
 
 ## Semantic search (opt-in)
 
-The setup wizard can enable a local semantic layer. It uses Ollama with small,
-code-aware models: `qwen3-embedding:0.6b` (embeddings), `qwen3-reranker:0.6b`
-(reranking), and `gemma3:4b` (query assist) by default. The assist model is a
-retrieval helper only: it never makes decisions, is never exposed as its own
-tool, and only rewrites queries, reranks, and compacts results behind
-`similar_code`. Structural search works fully without it.
+The setup wizard can enable a local semantic layer (via Ollama). When enabled,
+chunk embeddings (`qwen3-embedding:0.6b` by default) are stored in `sqlite-vec`,
+and `similar_code` fuses vector nearest-neighbor search with full-text search
+(reciprocal rank fusion). A small assist model (`gemma3:4b` by default) stays a
+retrieval helper only: it never makes decisions and is never exposed as its own
+tool. Structural search works fully without any of this.
 
 ## Architecture
 
@@ -77,7 +77,7 @@ cmd/prowl-agent      entry point (cobra)
 internal/parse       Tree-sitter grammar loading and per-language extractors
 internal/graph       include / exec / resource resolution and role inference
 internal/index       ignore-aware walk and hash-based incremental indexing
-internal/store       SQLite schema, FTS5, graph reads (blast-radius CTE)
+internal/store       SQLite schema, FTS5, sqlite-vec, graph reads (blast-radius CTE)
 internal/query       the 12 structural query ops
 internal/mcp         MCP stdio server
 internal/cli         init wizard, status, hidden serve, agent injection

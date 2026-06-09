@@ -25,8 +25,11 @@ First working slice: a local-first ricing config-intelligence backend.
   `status` (plus `reindex`), served over stdio.
 - **Workspace**: per-folder `.prowl/`, global project registry (XDG), automatic
   `.gitignore` wiring, and agent injection (`.mcp.json` and `AGENTS.md`).
-- **Semantic layer seams**: local Ollama `Inferencer` (embed/generate) and
-  configuration; the setup wizard detects Ollama and reports model setup.
+- **Semantic search (opt-in)**: a local Ollama `Inferencer` (embed/generate),
+  chunk embeddings stored in `sqlite-vec`, and a hybrid `similar_code` that fuses
+  vector nearest-neighbor and full-text results (reciprocal rank fusion), with a
+  full-text fallback when disabled. The setup wizard detects Ollama and reports
+  model setup.
 
 ### Notes
 

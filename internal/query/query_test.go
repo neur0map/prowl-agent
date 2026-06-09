@@ -1,7 +1,9 @@
 package query
 
 import (
+	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/prowl-agent/prowl-agent/internal/index"
@@ -116,7 +118,7 @@ func TestViolationsHotspotsStatusSimilar(t *testing.T) {
 		t.Fatalf("hotspots empty: %+v", hs)
 	}
 
-	sim, err := q.SimilarCode("workspaces")
+	sim, err := q.SimilarCode(context.Background(), "workspaces")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,5 +132,68 @@ func TestViolationsHotspotsStatusSimilar(t *testing.T) {
 	}
 	if !tf.Limited || len(tf.Runners) == 0 {
 		t.Fatalf("tests_for = %+v", tf)
+	}
+}
+
+// kwEmbedder maps text to a keyword-presence vector, giving deterministic
+// nearest-neighbor behavior without a live model.
+type kwEmbedder struct{ kw []string }
+
+func (e kwEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		v := make([]float32, len(e.kw))
+		for j, k := range e.kw {
+			if strings.Contains(t, k) {
+				v[j] = 1
+			}
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+func (kwEmbedder) Generate(context.Context, string) (string, error) { return "", nil }
+
+func TestSimilarCodeHybrid(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(path, text string) {
+		fid, err := s.UpsertFile(store.File{RelPath: path, Lang: "generic", Hash: path, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil, []store.Chunk{{StartLine: 1, EndLine: 1, Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("a.conf", "alpha apple")
+	mk("b.conf", "beta banana")
+	mk("c.conf", "gamma grape")
+
+	emb := kwEmbedder{kw: []string{"apple", "banana", "grape"}}
+	if _, err := index.BuildVectors(context.Background(), s, emb, "kw"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hybrid: query nearest the banana chunk.
+	hits, err := NewWithAssist(s, emb).SimilarCode(context.Background(), "banana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 || !strings.Contains(hits[0].Snippet, "banana") {
+		t.Fatalf("hybrid top hit = %+v, want banana chunk first", hits)
+	}
+
+	// FTS-only fallback still returns results.
+	hits2, err := New(s).SimilarCode(context.Background(), "banana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits2) == 0 {
+		t.Fatal("FTS-only SimilarCode returned nothing")
 	}
 }

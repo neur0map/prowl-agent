@@ -143,7 +143,7 @@ func (h *handlers) testsFor(ctx context.Context, _ *sdk.CallToolRequest, in path
 }
 
 func (h *handlers) similarCode(ctx context.Context, _ *sdk.CallToolRequest, in queryIn) (*sdk.CallToolResult, chunksOut, error) {
-	m, err := h.q.SimilarCode(in.Query)
+	m, err := h.q.SimilarCode(ctx, in.Query)
 	return nil, chunksOut{Matches: m}, err
 }
 

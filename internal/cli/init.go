@@ -102,11 +102,11 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintf(out, "  embed: %s  rerank: %s  assist: %s\n", cfg.AI.EmbedModel, cfg.AI.RerankModel, cfg.AI.AssistModel)
 				oll := assist.NewOllama(cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
 				if oll.Available(cmd.Context()) {
-					fmt.Fprintf(out, "  Ollama detected at %s. Pull models with: ollama pull %s\n", cfg.AI.OllamaURL, cfg.AI.EmbedModel)
+					fmt.Fprintf(out, "  Ollama detected at %s. Pull the models: ollama pull %s && ollama pull %s\n", cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
+					fmt.Fprintln(out, "  Semantic search activates on 'prowl-agent serve' (it embeds the rice into the index).")
 				} else {
-					fmt.Fprintf(out, "  Ollama not detected at %s. Install it (e.g. 'pacman -S ollama') to enable semantic search.\n", cfg.AI.OllamaURL)
+					fmt.Fprintf(out, "  Ollama not detected at %s. Install it to enable semantic search; structural search works without it.\n", cfg.AI.OllamaURL)
 				}
-				fmt.Fprintln(out, "  (Semantic index builds in an upcoming release.)")
 			}
 			return nil
 		},

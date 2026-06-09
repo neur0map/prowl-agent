@@ -3,20 +3,24 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/spf13/cobra"
 
 	"github.com/prowl-agent/prowl-agent/internal/query"
+	"github.com/prowl-agent/prowl-agent/internal/selfupdate"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
-func newStatusCmd() *cobra.Command {
+func newStatusCmd(version string) *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "status",
-		Short: "Show index status for this project, or list all initialized projects",
+		Short: "Show index status, token savings, and update availability",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			ws, err := workspace.Resolve(".")
@@ -50,25 +54,42 @@ func newStatusCmd() *cobra.Command {
 			if asJSON {
 				return json.NewEncoder(out).Encode(st)
 			}
-			fmt.Fprintf(out, "Project:   %s\n", ws.Root)
-			fmt.Fprintf(out, "Files:     %d\n", st.Counts.Files)
-			fmt.Fprintf(out, "Symbols:   %d\n", st.Counts.Symbols)
-			fmt.Fprintf(out, "Edges:     %d (resolved %d, dangling %d)\n", st.Counts.Edges, st.Counts.Resolved, st.Counts.Dangling)
-			fmt.Fprintf(out, "Resources: %d\n", st.Counts.Resources)
-			langs := make([]string, 0, len(st.Counts.Langs))
-			for l := range st.Counts.Langs {
-				langs = append(langs, l)
+			upd := selfupdate.Check(version)
+			if f, ok := out.(*os.File); ok && isTTY(f) {
+				fmt.Fprintln(out, renderStatusCard(version, ws.Root, filepath.Base(ws.Root), st, upd))
+				return nil
 			}
-			sort.Strings(langs)
-			fmt.Fprint(out, "Languages: ")
-			for _, l := range langs {
-				fmt.Fprintf(out, "%s=%d ", l, st.Counts.Langs[l])
-			}
-			fmt.Fprintln(out)
-			fmt.Fprintf(out, "AI-assist: %v\n", st.AIEnabled)
+			printPlainStatus(out, ws.Root, st, upd)
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return c
+}
+
+func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdate.Result) {
+	c := st.Counts
+	fmt.Fprintf(out, "Project:   %s\n", root)
+	fmt.Fprintf(out, "Files:     %d\n", c.Files)
+	fmt.Fprintf(out, "Symbols:   %d\n", c.Symbols)
+	fmt.Fprintf(out, "Edges:     %d (resolved %d, dangling %d)\n", c.Edges, c.Resolved, c.Dangling)
+	fmt.Fprintf(out, "Resources: %d\n", c.Resources)
+	langs := make([]string, 0, len(c.Langs))
+	for l := range c.Langs {
+		langs = append(langs, l)
+	}
+	sort.Strings(langs)
+	fmt.Fprint(out, "Languages: ")
+	for _, l := range langs {
+		fmt.Fprintf(out, "%s=%d ", l, c.Langs[l])
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "AI-assist: %v\n", st.AIEnabled)
+	if st.Savings.Queries > 0 {
+		fmt.Fprintf(out, "Saved:     ~%s tokens across %d answers (estimated)\n",
+			humanTokens(st.Savings.SavedTokens), st.Savings.Queries)
+	}
+	if upd.Available {
+		fmt.Fprintln(out, "Update:    available. Run 'prowl-agent update'.")
+	}
 }

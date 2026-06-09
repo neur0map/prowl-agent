@@ -6,5 +6,5 @@ import "github.com/spf13/cobra"
 
 // Register adds all subcommands to the root command.
 func Register(root *cobra.Command, version string) {
-	root.AddCommand(newInitCmd(), newStatusCmd(), newDoctorCmd(), newServeCmd(version), newLSPCmd(version))
+	root.AddCommand(newInitCmd(), newStatusCmd(version), newDoctorCmd(), newServeCmd(version), newLSPCmd(version), newUpdateCmd(version))
 }

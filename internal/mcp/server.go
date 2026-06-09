@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
@@ -19,6 +20,7 @@ type DoctorFunc func(ctx context.Context) (doctor.Report, error)
 
 type handlers struct {
 	q       *query.Querier
+	store   *store.Store
 	reindex ReindexFunc
 	doctor  DoctorFunc
 }
@@ -27,44 +29,44 @@ type handlers struct {
 type Empty struct{}
 
 // NewServer builds an MCP server exposing the query tools, reindex, and doctor.
-func NewServer(q *query.Querier, version string, reindex ReindexFunc, doctorFn DoctorFunc) *sdk.Server {
-	h := &handlers{q: q, reindex: reindex, doctor: doctorFn}
+func NewServer(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc) *sdk.Server {
+	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn}
 	s := sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
 
 	sdk.AddTool(s, &sdk.Tool{Name: "find_symbol",
-		Description: "Find symbols (functions, settings, keybinds, components, ids) by name."}, h.findSymbol)
+		Description: "Find symbols (functions, settings, keybinds, components, ids) by name."}, tracked(h, h.findSymbol))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_references",
-		Description: "Find edges pointing at a symbol id."}, h.findReferences)
+		Description: "Find edges pointing at a symbol id."}, tracked(h, h.findReferences))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_callers",
-		Description: "Configs/scripts that include, exec, or bind to a file."}, h.findCallers)
+		Description: "Configs/scripts that include, exec, or bind to a file."}, tracked(h, h.findCallers))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_callees",
-		Description: "What a file includes, execs, or binds to."}, h.findCallees)
+		Description: "What a file includes, execs, or binds to."}, tracked(h, h.findCallees))
 	sdk.AddTool(s, &sdk.Tool{Name: "file_relations",
-		Description: "A file's defined symbols and include neighbors."}, h.fileRelations)
+		Description: "A file's defined symbols and include neighbors."}, tracked(h, h.fileRelations))
 	sdk.AddTool(s, &sdk.Tool{Name: "blast_radius",
-		Description: "Files that transitively depend on a file (change impact)."}, h.blastRadius)
+		Description: "Files that transitively depend on a file (change impact)."}, tracked(h, h.blastRadius))
 	sdk.AddTool(s, &sdk.Tool{Name: "entrypoints_for",
-		Description: "Root files from which a file is reachable (its entry points)."}, h.entrypointsFor)
+		Description: "Root files from which a file is reachable (its entry points)."}, tracked(h, h.entrypointsFor))
 	sdk.AddTool(s, &sdk.Tool{Name: "tests_for",
-		Description: "Configs/keybinds that launch or reload a file (best-effort)."}, h.testsFor)
+		Description: "Configs/keybinds that launch or reload a file (best-effort)."}, tracked(h, h.testsFor))
 	sdk.AddTool(s, &sdk.Tool{Name: "similar_code",
-		Description: "Search file content. Hybrid vector and full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, h.similarCode)
+		Description: "Search file content. Hybrid vector and full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, tracked(h, h.similarCode))
 	sdk.AddTool(s, &sdk.Tool{Name: "smart_search",
-		Description: "Assist-augmented search: rewrites the query, runs hybrid retrieval, and reranks. Best for fuzzy/natural-language queries. Falls back to full-text when the semantic layer is off."}, h.smartSearch)
+		Description: "Assist-augmented search: rewrites the query, runs hybrid retrieval, and reranks. Best for fuzzy/natural-language queries. Falls back to full-text when the semantic layer is off."}, tracked(h, h.smartSearch))
 	sdk.AddTool(s, &sdk.Tool{Name: "architecture_violations",
-		Description: "Dangling references, orphan scripts, and hardcoded colors."}, h.architectureViolations)
+		Description: "Dangling references, orphan scripts, and hardcoded colors."}, tracked(h, h.architectureViolations))
 	sdk.AddTool(s, &sdk.Tool{Name: "repo_hotspots",
-		Description: "Structurally central and large files."}, h.repoHotspots)
+		Description: "Structurally central and large files."}, tracked(h, h.repoHotspots))
 	sdk.AddTool(s, &sdk.Tool{Name: "status",
-		Description: "Index freshness, counts, languages, and AI status."}, h.status)
+		Description: "Index freshness, counts, languages, and AI status."}, tracked(h, h.status))
 	sdk.AddTool(s, &sdk.Tool{Name: "overview",
-		Description: "High-level map of the project: role breakdown, entrypoints, clusters, color palette, keybind count, languages, and hotspots. A good first call on a new project."}, h.overview)
+		Description: "High-level map of the project: role breakdown, entrypoints, clusters, color palette, keybind count, languages, and hotspots. A good first call on a new project."}, tracked(h, h.overview))
 	sdk.AddTool(s, &sdk.Tool{Name: "clusters",
-		Description: "Group related files into subsystems (connected via includes, exec chains, and shared resources)."}, h.clusters)
+		Description: "Group related files into subsystems (connected via includes, exec chains, and shared resources)."}, tracked(h, h.clusters))
 	sdk.AddTool(s, &sdk.Tool{Name: "reindex",
-		Description: "Re-scan the project and refresh the index incrementally."}, h.reindexTool)
+		Description: "Re-scan the project and refresh the index incrementally."}, tracked(h, h.reindexTool))
 	sdk.AddTool(s, &sdk.Tool{Name: "doctor",
-		Description: "Health diagnostics: cyclic includes, fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, h.doctorTool)
+		Description: "Health diagnostics: cyclic includes, fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, tracked(h, h.doctorTool))
 	return s
 }
 
@@ -223,4 +225,59 @@ func (h *handlers) doctorTool(ctx context.Context, _ *sdk.CallToolRequest, _ Emp
 	}
 	r, err := h.doctor(ctx)
 	return nil, r, err
+}
+
+// tracked wraps a tool handler so each successful answer updates the savings
+// counters: the bytes prowl returned, and the size of the files it pointed at.
+func tracked[In, Out any](h *handlers, fn func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error)) func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error) {
+	return func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+		res, out, err := fn(ctx, req, in)
+		if err == nil {
+			h.recordStats(out)
+		}
+		return res, out, err
+	}
+}
+
+// recordStats measures one answer: its serialized size, and the combined size of
+// the indexed files it references (what an agent would otherwise have read).
+func (h *handlers) recordStats(out any) {
+	if h.store == nil {
+		return
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	refs := map[string]bool{}
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			refs[t] = true
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	var generic any
+	if json.Unmarshal(data, &generic) == nil {
+		walk(generic)
+	}
+	sizes, err := h.store.FileSizes()
+	if err != nil {
+		return
+	}
+	var baseline int64
+	for p := range refs {
+		if sz, ok := sizes[p]; ok {
+			baseline += sz
+		}
+	}
+	_ = h.store.BumpStats(1, int64(len(data)), baseline)
 }

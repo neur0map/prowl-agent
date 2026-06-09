@@ -384,6 +384,16 @@ type Status struct {
 	Counts    store.Counts `json:"counts"`
 	LastIndex string       `json:"last_index"`
 	AIEnabled bool         `json:"ai_enabled"`
+	Savings   Savings      `json:"savings"`
+}
+
+// Savings estimates tokens saved versus reading the files each answer pointed at.
+// Tokens are bytes/4 (the usual rough rule); saved is the referenced-file bytes
+// minus what prowl actually returned.
+type Savings struct {
+	Queries      int64 `json:"queries"`
+	AnswerTokens int64 `json:"answer_tokens"`
+	SavedTokens  int64 `json:"saved_tokens"`
 }
 
 // Status returns the index summary.
@@ -394,5 +404,13 @@ func (q *Querier) Status() (Status, error) {
 	}
 	last, _ := q.s.GetMeta("last_index")
 	ai, _ := q.s.GetMeta("ai_enabled")
-	return Status{Counts: c, LastIndex: last, AIEnabled: ai == "true"}, nil
+	stats, _ := q.s.Stats()
+	saved := (stats.BaselineBytes - stats.AnswerBytes) / 4
+	if saved < 0 {
+		saved = 0
+	}
+	return Status{
+		Counts: c, LastIndex: last, AIEnabled: ai == "true",
+		Savings: Savings{Queries: stats.Queries, AnswerTokens: stats.AnswerBytes / 4, SavedTokens: saved},
+	}, nil
 }

@@ -46,6 +46,19 @@ answers about a project's files, served over MCP.
   `.helix/languages.toml` when there is none to overwrite; Neovim attaches it
   additively alongside your other servers.
 
+#### Install, status, and updates
+
+- One-line installer (`install.sh`) that downloads, checksum-verifies, and drops
+  the binary in `~/.local/bin`.
+- `prowl-agent update` replaces the running binary with the latest published build
+  (downloaded and checksum-verified). `prowl-agent status` reports when a new build
+  is out via a cached, anonymous checksum check (skipped for dev builds).
+- Redesigned `prowl-agent status`: a bordered card (in a terminal) with index
+  stats, a language breakdown, and a token-savings report. Savings are measured per
+  answer (the bytes each answer returned versus the size of the files it pointed
+  at), so the figure is grounded rather than a flat multiplier. Plain text when
+  piped; `--json` carries the numbers.
+
 #### Health checks
 
 - `doctor`, as both a command and an MCP tool, reports cyclic includes,

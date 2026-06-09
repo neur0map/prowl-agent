@@ -29,21 +29,28 @@ languages, is in progress.
 
 ## Install
 
-Grab the latest Linux x86_64 build (rebuilt on every push to `main`):
+Install with one line. It downloads the binary, verifies its checksum, and drops
+it in `~/.local/bin`:
 
 ```sh
-curl -fsSL -o ~/.local/bin/prowl-agent \
-  https://github.com/neur0map/prowl-agent/releases/download/nightly/prowl-agent-linux-amd64
-chmod +x ~/.local/bin/prowl-agent
-prowl-agent --version
+curl -fsSL https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.sh | sh
 ```
 
-A `.sha256` sits next to the binary. It is cgo-linked, so it needs a recent glibc.
-To build from source instead, you need Go 1.26+ and a C toolchain:
+It is a Linux x86_64, cgo-linked binary, so it needs a recent glibc. Prefer to do
+it by hand, or build from source? Both work:
 
 ```sh
+# manual download + checksum verify
+curl -fsSL -O https://github.com/neur0map/prowl-agent/releases/download/nightly/prowl-agent-linux-amd64
+curl -fsSL -O https://github.com/neur0map/prowl-agent/releases/download/nightly/prowl-agent-linux-amd64.sha256
+sha256sum -c prowl-agent-linux-amd64.sha256 && install -m755 prowl-agent-linux-amd64 ~/.local/bin/prowl-agent
+
+# from source (Go 1.26+, C toolchain)
 CGO_ENABLED=1 go build -tags sqlite_fts5 -o prowl-agent ./cmd/prowl-agent
 ```
+
+Update in place anytime with `prowl-agent update`. `prowl-agent status` also tells
+you when a new build is out, via a quick anonymous checksum check cached for a day.
 
 ## Quick start
 
@@ -62,8 +69,9 @@ MCP-compatible agent, wires your editor's language server, and writes a short
 Two commands are handy day to day:
 
 ```sh
-prowl-agent status   # what is indexed
+prowl-agent status   # index, token savings, and update notice
 prowl-agent doctor   # broken includes, dead scripts, keybind clashes
+prowl-agent update   # upgrade to the latest build
 ```
 
 The agent launches the server itself through the generated config, watches your
@@ -109,6 +117,16 @@ real files; `.prowl/` only holds the rebuildable index, which the agent never op
 directly (it asks prowl over MCP, and your editor asks over LSP). Because prowl
 indexes the same files git tracks, it never points the agent at a path it was told
 to ignore.
+
+## See your savings
+
+`prowl-agent status` prints a card with what is indexed and, once your agent has
+asked a few questions, how many tokens it saved. The number is grounded per
+answer: for each query prowl served, it compares the bytes it returned against the
+combined size of the files that answer pointed at (what an agent would otherwise
+have read). It is labeled an estimate, because it is one, and it grows as you use
+the tool. Run it in your terminal for the full colored card; pipe it for plain
+text, or add `--json` for the raw numbers.
 
 ## A quick measurement
 

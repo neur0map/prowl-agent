@@ -24,7 +24,7 @@ func TestMCPIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := NewServer(query.New(s), "test",
+	srv := NewServer(query.New(s), s, "test",
 		func(context.Context) (string, error) { return "reindexed", nil },
 		func(context.Context) (doctor.Report, error) { return doctor.Run(s, config.Rules{}, doctor.Options{}) })
 
@@ -90,5 +90,10 @@ func TestMCPIntegration(t *testing.T) {
 	}
 	if len(lt.Tools) != 17 {
 		t.Fatalf("tool count = %d, want 17", len(lt.Tools))
+	}
+
+	// The tracked wrapper should have recorded usage for the calls above.
+	if st, _ := s.Stats(); st.Queries == 0 || st.AnswerBytes == 0 {
+		t.Fatalf("usage stats not recorded: %+v", st)
 	}
 }

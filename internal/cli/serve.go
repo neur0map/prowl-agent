@@ -80,7 +80,7 @@ func newServeCmd(version string) *cobra.Command {
 				rules, _ := config.LoadRules(ws.Path)
 				return doctor.Run(s, rules, doctor.Options{Root: ws.Root})
 			}
-			srv := mcpserver.NewServer(q, version, reindex, doctorFn)
+			srv := mcpserver.NewServer(q, s, version, reindex, doctorFn)
 			// Keep the index fresh: debounced re-index as files change.
 			go func() {
 				_ = index.Watch(cmd.Context(), ws.Root, 750*time.Millisecond, func() {

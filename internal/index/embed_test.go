@@ -41,7 +41,7 @@ func TestBuildVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	root := filepath.Join("..", "..", "testdata", "rice-hypr")
+	root := filepath.Join("..", "..", "testdata", "sample-config")
 	if _, err := Index(s, root, nil); err != nil {
 		t.Fatal(err)
 	}

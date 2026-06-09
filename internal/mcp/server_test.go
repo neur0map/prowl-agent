@@ -20,7 +20,7 @@ func TestMCPIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := index.Index(s, filepath.Join("..", "..", "testdata", "rice-hypr"), nil); err != nil {
+	if _, err := index.Index(s, filepath.Join("..", "..", "testdata", "sample-config"), nil); err != nil {
 		t.Fatal(err)
 	}
 

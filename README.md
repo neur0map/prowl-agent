@@ -1,23 +1,27 @@
 # Prowl Agent
 
-A local index that lets AI coding agents understand your Linux rice without re-reading the whole thing.
+A local index that helps AI coding agents understand a project without re-reading the whole thing.
 
 [![build](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml/badge.svg)](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml)
 [![download](https://img.shields.io/github/v/release/neur0map/prowl-agent?include_prereleases&label=download)](https://github.com/neur0map/prowl-agent/releases/latest)
 ![platform](https://img.shields.io/badge/platform-Linux-555)
 
-Coding agents burn a lot of tokens grepping and re-reading config files every time
-you ask them to tweak your bar, your keybinds, or a theme. Prowl Agent builds a
-small SQLite index of your dotfiles (configs, widgets, scripts, themes, colors) and
-serves it to the agent over the [Model Context Protocol](https://modelcontextprotocol.io).
-The agent asks a question and gets a short, exact answer with `file:line` links
-instead of a pile of grep hits.
+Coding agents spend a lot of tokens grepping and re-reading files every time you
+ask them to change something. Prowl Agent builds a small SQLite index of your
+project (files, the symbols in them, and the values they share) and serves it to
+the agent over the [Model Context Protocol](https://modelcontextprotocol.io). The
+agent asks a question and gets a short, exact answer with `file:line` links instead
+of a wall of grep hits.
 
-It knows how a rice is wired together:
+It maps how files are wired together:
 
 - include trees (`source=`, `include`, `@import`, `require()`)
 - exec and keybind chains (`exec-once`, `bind = ... exec script`)
-- shared colors, fonts, paths, and theme variables across files
+- shared colors, fonts, paths, and variables across files
+
+Today it is tuned for Linux dotfiles and configs (window managers, bars, widgets,
+themes, scripts). Broader language support, including web and more scripting
+languages, is in progress.
 
 ## Install
 
@@ -39,7 +43,7 @@ CGO_ENABLED=1 go build -tags sqlite_fts5 -o prowl-agent ./cmd/prowl-agent
 
 ## Quick start
 
-Run this once inside your dotfiles repo (or `~/.config`):
+Run this once inside your project (a dotfiles repo, `~/.config`, or any folder):
 
 ```sh
 prowl-agent init                 # interactive setup
@@ -73,38 +77,38 @@ Once it is running, the agent has tools to:
 Every answer is deterministic and comes with `file:line`, so the agent (and you)
 can verify it.
 
-## Benchmarks
+## A quick measurement
 
-We indexed three real, sizable rices and asked the same question on each: find the
-battery widget and the files around it.
+This is a small test on three real dotfile repos, not a benchmark suite, so take
+it as a rough idea rather than a promise. We indexed each and asked the same
+question: find the battery widget and the files near it.
 
-- [ryoku-arch](https://github.com/neur0map/ryoku-arch) (2172 files indexed)
-- [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) (732)
-- [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) (578)
+| repo | files indexed |
+|---|---|
+| [ryoku-arch](https://github.com/neur0map/ryoku-arch) | 2172 |
+| [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | 732 |
+| [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | 578 |
 
-Averaged across the three:
+On average, `find_symbol` returned about 5 KB of JSON with `file:line` links, in a
+couple of milliseconds against the prebuilt index. For the same word, a plain
+ripgrep hit list was around 50 KB, and opening every file it matched added up to a
+few megabytes. As a rough idea, that is a few thousand tokens versus tens of
+thousands just to locate something, before the agent reads anything.
 
-| | ripgrep | Prowl Agent |
-|---|---|---|
-| to locate the feature | ~52 KB of raw matches (~13k tokens) | ~5.5 KB ranked answer (~1.4k tokens) |
-| per query | re-scans the repo (~60 ms here) | ~1 ms, already indexed |
-| what you get | every match, unranked, all meanings mixed in | typed and ranked, with `file:line` |
-
-That is about **10x less to read** than the grep hit list. And because the answer
-is ranked with `file:line`, the agent opens the two or three files that matter
-instead of the dozens that merely mention the word. Opening everything grep found
-would have meant ~2.7 MB on average (~710k tokens).
+The point is not a headline number. It is that the agent reads a small, ranked
+answer instead of scanning the repo and paging through everything that mentions a
+word. Your files, your question, and your editor will all move these numbers, so
+measure on your own setup.
 
 <details>
 <summary>How we counted tokens</summary>
 
-Tokens are estimated as characters / 4, the usual rough rule. The ripgrep figure
-is the size of the hits it prints (one `path:line` per match). The "open
-everything" figure is the combined size of every file that contained the word,
-which is what an agent ends up reading to understand them. The Prowl figure is the
-size of the JSON its `find_symbol` tool returns. Same word, same machine, averaged
-over the three repos above. A broader semantic search (`similar_code`) returns
-about 12 KB (~3k tokens) on the same query.
+Tokens are estimated as characters / 4, the common rough rule, so they are
+approximate. The ripgrep figure is the size of the hits it prints (one `path:line`
+per match). The "open everything" figure is the combined size of every file that
+contained the word. The Prowl figure is the size of the JSON `find_symbol`
+returns. Same word, same machine, averaged over the three repos. Indexing them
+took a few seconds to a few tens of seconds depending on size.
 
 </details>
 
@@ -119,17 +123,17 @@ own. Structural search works fully without any of this.
 
 The model warms up once when the server starts and stays loaded for a few minutes
 between queries, so it is not paying a cold start every time (about 2.4 s on the
-first query after idle, then around 20 ms).
+first query after idle, then around 20 ms on the repo we tried).
 
 ## Supported formats
 
 Lua, Python, Bash, Fish, C++, QML, CSS/SCSS, TOML, YAML, JSON/JSONC, INI, and
 Hyprland (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
-`rasi`, polybar, kitty, dunst, and similar).
+`rasi`, polybar, kitty, dunst, and similar). More languages are on the way.
 
 ## More
 
 - [Architecture](docs/ARCHITECTURE.md): how indexing, the graph, and the server fit together
 - [Changelog](CHANGELOG.md)
 
-Linux only. Built with Go, Tree-sitter, and SQLite.
+Linux only for now. Built with Go, Tree-sitter, and SQLite.

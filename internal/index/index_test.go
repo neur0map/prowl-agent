@@ -49,7 +49,7 @@ func openStore(t *testing.T) *store.Store {
 
 func TestIndexFixture(t *testing.T) {
 	s := openStore(t)
-	root := filepath.Join("..", "..", "testdata", "rice-hypr")
+	root := filepath.Join("..", "..", "testdata", "sample-config")
 	sum, err := Index(s, root, nil)
 	if err != nil {
 		t.Fatal(err)

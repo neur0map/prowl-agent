@@ -1,6 +1,6 @@
 # Architecture
 
-Prowl Agent is a single Go binary. It indexes a rice into a per-folder SQLite
+Prowl Agent is a single Go binary. It indexes a project into a per-folder SQLite
 database and answers questions over MCP. There is no daemon and no network
 service; the coding agent starts the server itself over stdio.
 
@@ -23,13 +23,13 @@ internal/assist      local Ollama inferencer for the semantic layer
 
 ## How it works
 
-1. **Walk and parse.** `index` walks the repo, skipping ignored paths. Each file
-   is parsed by the matching Tree-sitter grammar (or a line-based reader for
-   bespoke WM configs) into symbols, resources, and raw edges.
+1. **Walk and parse.** `index` walks the project, skipping ignored paths. Each
+   file is parsed by the matching Tree-sitter grammar (or a line-based reader for
+   config formats without a grammar) into symbols, resources, and raw edges.
 2. **Resolve the graph.** `graph` turns raw edges into real links: include trees,
    exec and keybind to script chains, and shared color/font/path/variable
-   references. Bare commands resolve against the repo's command files by basename.
-   Each file gets a role (wm-config, bar, theme, script, and so on).
+   references. Bare commands resolve against the project's command files by
+   basename. Each file gets a role (config, bar, theme, script, and so on).
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius uses a
    recursive CTE.

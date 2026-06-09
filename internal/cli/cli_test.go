@@ -35,7 +35,7 @@ func copyDir(t *testing.T, src, dst string) {
 func TestRunInit(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	root := t.TempDir()
-	copyDir(t, filepath.Join("..", "..", "testdata", "rice-hypr"), root)
+	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
 
 	sum, err := RunInit(InitOptions{Root: root, AI: false})
 	if err != nil {

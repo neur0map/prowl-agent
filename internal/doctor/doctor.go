@@ -1,4 +1,4 @@
-// Package doctor computes deterministic health diagnostics for a rice from the
+// Package doctor computes deterministic health diagnostics for a project from the
 // indexed graph: cyclic includes, fan-in/out risk, oversized configs, duplicate
 // keybinds, broken commands, orphan scripts, dangling references, hardcoded
 // colors, forbidden layer crossings, and git-churn hotspots.
@@ -120,9 +120,9 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	return Report{Findings: f, Summary: summary, Score: score}, nil
 }
 
-// filterExcluded drops findings whose file lives under a lifecycle/non-rice
-// directory (migrations, installers, CI, vendor, hooks), which are not part of
-// the live rice graph and otherwise dominate the report with non-actionable noise.
+// filterExcluded drops findings whose file lives under a lifecycle directory
+// (migrations, installers, CI, vendor, hooks), which are not part of the live
+// graph and otherwise dominate the report with non-actionable noise.
 func filterExcluded(findings []Finding, prefixes []string) []Finding {
 	if len(prefixes) == 0 {
 		return findings

@@ -1,4 +1,4 @@
-// Package index walks a rice, hashes files, drives Tree-sitter extraction, and
+// Package index walks a project, hashes files, drives Tree-sitter extraction, and
 // keeps the SQLite graph incrementally up to date.
 package index
 

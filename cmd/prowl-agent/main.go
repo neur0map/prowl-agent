@@ -14,7 +14,7 @@ var version = "0.1.0-dev"
 func main() {
 	root := &cobra.Command{
 		Use:           "prowl-agent",
-		Short:         "Local-first ricing/dotfiles config-intelligence backend",
+		Short:         "Local code and config intelligence for AI coding agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,

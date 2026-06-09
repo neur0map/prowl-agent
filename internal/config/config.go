@@ -39,7 +39,7 @@ type Forbid struct {
 	To   string `toml:"to"`   // glob on the target file path
 }
 
-// Rules is the set of architecture rules for a rice.
+// Rules is the set of architecture rules for a project.
 type Rules struct {
 	Rule   []Rule   `toml:"rule"`
 	Forbid []Forbid `toml:"forbid"`
@@ -65,10 +65,10 @@ func Default() Config {
 	}
 }
 
-// DefaultRules returns the starter rule set for a rice.
+// DefaultRules returns the starter rule set for a project.
 func DefaultRules() Rules {
 	return Rules{Rule: []Rule{
-		{Name: "no-dangling-includes", Kind: "dangling_includes", Description: "every source/include/import/require must resolve to a file in the rice"},
+		{Name: "no-dangling-includes", Kind: "dangling_includes", Description: "every source/include/import/require must resolve to a file in the project"},
 		{Name: "no-orphan-scripts", Kind: "orphan_script", Description: "scripts should be referenced by some config or keybind"},
 		{Name: "use-theme-variables", Kind: "hardcoded_color", Description: "prefer theme variables over hardcoded color literals"},
 	}}

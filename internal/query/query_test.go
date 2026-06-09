@@ -17,7 +17,7 @@ func indexed(t *testing.T) *Querier {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if _, err := index.Index(s, filepath.Join("..", "..", "testdata", "rice-hypr"), nil); err != nil {
+	if _, err := index.Index(s, filepath.Join("..", "..", "testdata", "sample-config"), nil); err != nil {
 		t.Fatal(err)
 	}
 	return New(s)

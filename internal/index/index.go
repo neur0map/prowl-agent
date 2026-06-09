@@ -23,7 +23,7 @@ type Summary struct {
 	Edges   int
 }
 
-// Index incrementally synchronizes the store with the rice rooted at root.
+// Index incrementally synchronizes the store with the project rooted at root.
 // Only files whose content hash changed are reparsed; removed files are deleted;
 // the global resolution passes always run afterward.
 func Index(s *store.Store, root string, ignore []string) (Summary, error) {
@@ -85,7 +85,7 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 		sum.Edges += len(edges)
 	}
 
-	// Remove files that disappeared from the rice.
+	// Remove files that disappeared from the project.
 	all, err := s.AllFiles()
 	if err != nil {
 		return sum, err

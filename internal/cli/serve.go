@@ -81,7 +81,7 @@ func newServeCmd(version string) *cobra.Command {
 				return doctor.Run(s, rules, doctor.Options{Root: ws.Root})
 			}
 			srv := mcpserver.NewServer(q, version, reindex, doctorFn)
-			// Keep the index fresh: debounced re-index as the rice changes.
+			// Keep the index fresh: debounced re-index as files change.
 			go func() {
 				_ = index.Watch(cmd.Context(), ws.Root, 750*time.Millisecond, func() {
 					_, _ = reindex(cmd.Context())

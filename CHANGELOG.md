@@ -1,71 +1,70 @@
 # Changelog
 
-## Unreleased
+All notable changes are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
+[semantic versioning](https://semver.org/).
 
-First working slice: a local-first ricing config-intelligence backend.
+## [Unreleased]
+
+The first working version: a local index that gives AI coding agents fast, cited
+answers about a project's files, served over MCP.
 
 ### Added
 
-- **CLI**: `init` (interactive setup wizard), `status` (per-project and global
-  registry view), and a hidden agent-launched `serve` (MCP stdio server).
-- **Indexing pipeline**: ignore-aware walk plus content-hash incremental
-  indexing. Only changed files are reparsed; removed files are pruned; graph
-  resolution re-runs globally and idempotently.
-- **Tree-sitter extraction** for Lua, Python, Bash, CSS, SCSS, JSON, YAML, TOML,
-  INI, QML, and Hyprland (`hyprlang`), plus a line-oriented generic extractor for
-  bespoke WM configs (sway/i3, rofi `rasi`, polybar, and others).
-- **Config graph**: include trees, exec/keybind to script chains, and shared
-  resource (color/font/path/variable) references, with best-effort path/name
-  resolution and dangling-reference detection.
-- **SQLite store**: files/symbols/resources/edges/chunks with FTS5 full-text
-  search and a recursive-CTE blast-radius query (WAL mode).
-- **15 MCP tools**: `find_symbol`, `find_references`, `find_callers`,
-  `find_callees`, `file_relations`, `blast_radius`, `entrypoints_for`,
-  `tests_for`, `similar_code`, `smart_search`, `architecture_violations`,
-  `repo_hotspots`, `doctor`, `status` (plus `reindex`), served over stdio.
-- **Workspace**: per-folder `.prowl/`, global project registry (XDG), automatic
-  `.gitignore` wiring, and agent injection (`.mcp.json` and `AGENTS.md`).
-- **Semantic search (opt-in)**: a local Ollama `Inferencer` (embed/generate),
-  chunk embeddings stored in `sqlite-vec`, and a hybrid `similar_code` that fuses
-  vector nearest-neighbor and full-text results (reciprocal rank fusion), with a
-  full-text fallback when disabled. The setup wizard detects Ollama and reports
-  model setup.
-- **Doctor**: `prowl-agent doctor` and a `doctor` MCP tool with deterministic
-  checks (cyclic includes, fan-in/out risk, oversized configs, duplicate
-  keybinds, broken commands, orphan scripts, dangling references, hardcoded
-  colors, rule-driven forbidden crossings, git-churn hotspots) and a 0-100 score.
-- **smart_search**: assist-augmented retrieval (query rewrite, hybrid search,
-  rerank) with a full-text fallback; a reranker was added to the local Inferencer.
-- **Live freshness**: the server watches the rice and re-indexes changed files
-  automatically (debounced) while serving.
-- **More inject targets**: Cursor (`.cursor/mcp.json`) and VS Code
-  (`.vscode/mcp.json`) alongside the generic `.mcp.json`.
-- **More languages**: C++ and Fish grammars and extractors.
-- **Overview and clusters**: an `overview` tool/map (roles, entrypoints,
-  clusters, color palette, keybind count, hotspots) and a `clusters` tool that
-  groups files into subsystems via connected components over the graph.
-- **Tiered detail**: `detail: compact` on search tools returns file:line only,
-  saving tokens; `full` includes snippets.
-- **Agent playbook**: the injected `AGENTS.md` now includes a concrete ricing
-  workflow (which tools to use for color changes, edits, keybinds, commits).
-- **Prebuilt binary**: a CI workflow builds `prowl-agent-linux-amd64` (cgo + FTS5)
-  on every push to `main` and publishes it to the rolling `nightly` GitHub release
-  with a `.sha256`.
-- **Command-graph resolution**: exec/keybind bare commands resolve against repo
-  command files by basename (e.g. `ryoku-pkg-add` to `bin/ryoku-pkg-add`), so
-  command-suite scripts are no longer false orphans.
-- **Doctor precision**: references are emitted only for local-path-shaped targets;
-  `doctor` resolves commands, scopes checks to rice files (skips
-  migrations/installers/CI/vendor), flags only repo-relative broken includes,
-  scopes duplicate-keybind to WM configs, ignores self-cycles, and skips data
-  files in the size check. On a 2172-file rice this cut raw findings from 2052 to
-  ~90 (mostly real).
-- **Docs**: rewrote the README in a plainer, modern style, moved the
-  architecture write-up to `docs/ARCHITECTURE.md`, and re-ran the benchmarks
-  across three real rices (ryoku-arch, dots-hyprland, noctalia-shell) reporting
-  the average.
+#### Indexing
+
+- Incremental indexing. An ignore-aware walk hashes files and reparses only what
+  changed; deleted files are pruned, and graph resolution re-runs each time.
+- Tree-sitter extraction for Lua, Python, Bash, Fish, C++, QML, CSS, SCSS, JSON,
+  YAML, TOML, INI, and Hyprland, plus a line-based reader for other config formats
+  (sway/i3, rofi `rasi`, polybar, and similar).
+- A graph of how files connect: include trees, exec and keybind to script chains,
+  and shared color/font/path/variable references, with path and name resolution.
+  Bare commands resolve against the project's command files by basename.
+- SQLite store with FTS5 full-text search and a recursive-CTE blast-radius query,
+  in WAL mode so the indexer can write while the server reads.
+
+#### Interface
+
+- 17 MCP tools: `overview`, `clusters`, `find_symbol`, `find_references`,
+  `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
+  `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,
+  `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
+- CLI: `init` (setup wizard), `status`, and `doctor`, plus a hidden `serve` that
+  the coding agent launches over stdio.
+- Setup writes `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, and an
+  `AGENTS.md` block, and keeps state in a gitignored `.prowl/` folder.
+- The server watches files and re-indexes on save while it runs.
+
+#### Health checks
+
+- `doctor`, as both a command and an MCP tool, reports cyclic includes,
+  fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan
+  scripts, dangling references, hardcoded colors, forbidden layer crossings, and
+  git-churn hotspots, with a 0-100 score.
+- Tuned to keep false positives low: references are emitted only for path-shaped
+  targets, commands resolve against the project, checks skip lifecycle directories
+  (migrations, installers, CI, vendor), and only project-relative broken includes
+  are flagged. On one 2172-file project this brought the report from 2052 findings
+  down to about 90, most of them real.
+
+#### Semantic search (optional)
+
+- A local Ollama layer stores chunk embeddings in sqlite-vec. `similar_code` fuses
+  vector and full-text results, and `smart_search` adds a query rewrite and a
+  rerank. Both fall back to full-text when the layer is off. The model only
+  reorders and rewrites; it never makes decisions and is never its own tool.
+
+#### Build and docs
+
+- CI builds a Linux x86_64 binary (cgo + FTS5) on every push to `main` and
+  publishes it, with a checksum, to the rolling `nightly` release.
+- README and an architecture write-up in `docs/ARCHITECTURE.md`.
 
 ### Notes
 
-- Linux-only; requires cgo and the `sqlite_fts5` build tag.
-- `tests_for` is best-effort (rices have no formal tests) and marked `limited`.
+- Linux only for now; requires cgo and the `sqlite_fts5` build tag.
+- The current focus is dotfiles and configs. Broader language support, including
+  web and more scripting languages, is in progress.
+- `tests_for` is best-effort and marked `limited`, since configs rarely have
+  formal tests.

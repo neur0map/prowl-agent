@@ -14,7 +14,7 @@ import (
 // ReindexFunc refreshes the index and returns a human-readable summary.
 type ReindexFunc func(ctx context.Context) (string, error)
 
-// DoctorFunc runs health diagnostics for the rice.
+// DoctorFunc runs health diagnostics for the project.
 type DoctorFunc func(ctx context.Context) (doctor.Report, error)
 
 type handlers struct {
@@ -44,11 +44,11 @@ func NewServer(q *query.Querier, version string, reindex ReindexFunc, doctorFn D
 	sdk.AddTool(s, &sdk.Tool{Name: "blast_radius",
 		Description: "Files that transitively depend on a file (change impact)."}, h.blastRadius)
 	sdk.AddTool(s, &sdk.Tool{Name: "entrypoints_for",
-		Description: "Root configs from which a file is reachable (session/WM entry)."}, h.entrypointsFor)
+		Description: "Root files from which a file is reachable (its entry points)."}, h.entrypointsFor)
 	sdk.AddTool(s, &sdk.Tool{Name: "tests_for",
-		Description: "Configs/keybinds that launch or reload a file (best-effort for ricing)."}, h.testsFor)
+		Description: "Configs/keybinds that launch or reload a file (best-effort)."}, h.testsFor)
 	sdk.AddTool(s, &sdk.Tool{Name: "similar_code",
-		Description: "Search config/script content. Hybrid vector+full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, h.similarCode)
+		Description: "Search file content. Hybrid vector and full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, h.similarCode)
 	sdk.AddTool(s, &sdk.Tool{Name: "smart_search",
 		Description: "Assist-augmented search: rewrites the query, runs hybrid retrieval, and reranks. Best for fuzzy/natural-language queries. Falls back to full-text when the semantic layer is off."}, h.smartSearch)
 	sdk.AddTool(s, &sdk.Tool{Name: "architecture_violations",
@@ -58,13 +58,13 @@ func NewServer(q *query.Querier, version string, reindex ReindexFunc, doctorFn D
 	sdk.AddTool(s, &sdk.Tool{Name: "status",
 		Description: "Index freshness, counts, languages, and AI status."}, h.status)
 	sdk.AddTool(s, &sdk.Tool{Name: "overview",
-		Description: "High-level map of the rice: role breakdown, entrypoints, clusters, color palette, keybind count, languages, and hotspots. A good first call on a new rice."}, h.overview)
+		Description: "High-level map of the project: role breakdown, entrypoints, clusters, color palette, keybind count, languages, and hotspots. A good first call on a new project."}, h.overview)
 	sdk.AddTool(s, &sdk.Tool{Name: "clusters",
-		Description: "Group related config files into subsystems (connected via includes, exec chains, and shared resources)."}, h.clusters)
+		Description: "Group related files into subsystems (connected via includes, exec chains, and shared resources)."}, h.clusters)
 	sdk.AddTool(s, &sdk.Tool{Name: "reindex",
-		Description: "Re-scan the rice and refresh the index incrementally."}, h.reindexTool)
+		Description: "Re-scan the project and refresh the index incrementally."}, h.reindexTool)
 	sdk.AddTool(s, &sdk.Tool{Name: "doctor",
-		Description: "Rice health diagnostics: cyclic includes, fan-in/out risk, oversized configs, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, h.doctorTool)
+		Description: "Health diagnostics: cyclic includes, fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, h.doctorTool)
 	return s
 }
 
@@ -82,7 +82,7 @@ type symbolIn struct {
 	SymbolID int64 `json:"symbol_id" jsonschema:"symbol id from find_symbol"`
 }
 type pathIn struct {
-	Path string `json:"path" jsonschema:"file path relative to the rice root"`
+	Path string `json:"path" jsonschema:"file path relative to the project root"`
 }
 type queryIn struct {
 	Query  string `json:"query" jsonschema:"free-text search query"`

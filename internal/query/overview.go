@@ -7,7 +7,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
-// Cluster is a connected group of files (a rice subsystem).
+// Cluster is a connected group of files (a subsystem).
 type Cluster struct {
 	Label string   `json:"label"`
 	Files []string `json:"files"`
@@ -84,7 +84,7 @@ func clusterLabel(members []string) string {
 	return best
 }
 
-// Overview is a compact map of the whole rice for an agent's first call.
+// Overview is a compact map of the whole project for an agent's first call.
 type Overview struct {
 	Counts      store.Counts        `json:"counts"`
 	Roles       map[string]int      `json:"roles"`
@@ -95,7 +95,7 @@ type Overview struct {
 	Hotspots    []store.FanRow      `json:"hotspots"`
 }
 
-// Overview assembles a high-level map of the rice from the graph.
+// Overview assembles a high-level map of the project from the graph.
 func (q *Querier) Overview() (Overview, error) {
 	var o Overview
 	c, err := q.s.Counts()

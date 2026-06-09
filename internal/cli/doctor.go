@@ -17,7 +17,7 @@ func newDoctorCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "doctor",
-		Short: "Diagnose rice health: cycles, keybind conflicts, dead scripts, broken commands",
+		Short: "Diagnose project health: cycles, keybind conflicts, dead scripts, broken commands",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ws, err := workspace.Resolve(".")
 			if err != nil {

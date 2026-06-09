@@ -146,19 +146,19 @@ func (q *Querier) EntrypointsFor(path string) ([]string, error) {
 	return roots, nil
 }
 
-// TestsResult is the (deliberately limited) ricing analogue of tests_for.
+// TestsResult is the (deliberately limited) analogue of tests_for.
 type TestsResult struct {
 	Limited bool            `json:"limited"`
 	Note    string          `json:"note"`
 	Runners []store.EdgeRow `json:"runners"`
 }
 
-// TestsFor returns configs/keybinds that launch or reload a file. Ricing has no
-// formal tests, so this is best-effort and marked limited.
+// TestsFor returns configs/keybinds that launch or reload a file. Configs rarely
+// have formal tests, so this is best-effort and marked limited.
 func (q *Querier) TestsFor(path string) (TestsResult, error) {
 	res := TestsResult{
 		Limited: true,
-		Note:    "ricing has no formal tests; showing configs/keybinds that launch or reload this file",
+		Note:    "no formal tests detected; showing configs/keybinds that launch or reload this file",
 	}
 	if id, ok, err := q.fileID(path); err == nil && ok {
 		res.Runners, _ = q.s.IncomingEdges("file", id, "execs", "binds", "autostarts")

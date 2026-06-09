@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// InferRole classifies a file's purpose in a rice from its path and language.
+// InferRole classifies a file's purpose from its path and language.
 func InferRole(relPath, lang string) string {
 	p := strings.ToLower(relPath)
 	base := strings.ToLower(path.Base(relPath))

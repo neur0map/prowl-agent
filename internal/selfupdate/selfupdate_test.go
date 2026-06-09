@@ -5,12 +5,23 @@ import (
 	"time"
 )
 
-func TestCheckSkipsDevBuilds(t *testing.T) {
-	if r := Check(DevVersion); r.Available || r.Note != "dev build" {
-		t.Fatalf("dev build check = %+v", r)
+func TestSameCommit(t *testing.T) {
+	full := "abc1234def5678abc1234def5678abc1234def56"
+	cases := []struct {
+		a, b string
+		same bool
+	}{
+		{full, full, true},
+		{"abc1234", full, true}, // short vs full
+		{full, "abc1234", true},
+		{"abc1234", "abc1235", false}, // differ within the prefix
+		{"", full, false},
+		{"ABC1234", "abc1234def", true}, // case-insensitive
 	}
-	if r := Check(""); r.Available {
-		t.Fatalf("empty version should not report available: %+v", r)
+	for _, c := range cases {
+		if got := sameCommit(c.a, c.b); got != c.same {
+			t.Errorf("sameCommit(%q,%q) = %v, want %v", c.a, c.b, got, c.same)
+		}
 	}
 }
 
@@ -43,7 +54,7 @@ func TestCacheRoundTripAndTTL(t *testing.T) {
 func TestCheckUsesCache(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	writeCache(cache{CheckedAt: time.Now().Unix(), Available: true})
-	if r := Check("v9.9.9-deadbee"); !r.Available {
+	if r := Check("v9.9.9-deadbee"); !r.Available || !r.Checked {
 		t.Fatalf("should honor cached availability without network: %+v", r)
 	}
 }

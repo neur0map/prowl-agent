@@ -51,8 +51,10 @@ answers about a project's files, served over MCP.
 - One-line installer (`install.sh`) that downloads, checksum-verifies, and drops
   the binary in `~/.local/bin`.
 - `prowl-agent update` replaces the running binary with the latest published build
-  (downloaded and checksum-verified). `prowl-agent status` reports when a new build
-  is out via a cached, anonymous checksum check (skipped for dev builds).
+  (downloaded and checksum-verified). `prowl-agent status` shows update status
+  ("up to date" or "update available") by comparing the build's commit against the
+  latest on main, cached for a day; it works for source builds too via embedded
+  VCS info.
 - Redesigned `prowl-agent status`: a bordered card (in a terminal) with index
   stats, a language breakdown, and a token-savings report. Savings are measured
   per answer (the bytes each answer returned versus the size of the files it
@@ -81,8 +83,9 @@ answers about a project's files, served over MCP.
   reorders and rewrites; it never makes decisions and is never its own tool.
 - The `init` wizard offers model tiers (`fast` / `smart` / `max`, or `--tier`),
   detects whether Ollama and the chosen models are present, offers to run the
-  official Ollama installer, and pulls missing models. Defaults updated to current
-  best local models: `qwen3-embedding` for retrieval and `gemma3` for the assist.
+  official Ollama installer, and pulls missing models. Defaults track current best
+  local models: `qwen3-embedding` for retrieval, `embeddinggemma` for the fast
+  tier, and `gemma3` for the assist (small Gemma 4 is not on Ollama yet).
 
 #### Build and docs
 

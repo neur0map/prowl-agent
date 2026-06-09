@@ -3,7 +3,7 @@ package config
 import "testing"
 
 func TestPresetByName(t *testing.T) {
-	if p := PresetByName("fast"); p.EmbedModel != "nomic-embed-text" {
+	if p := PresetByName("fast"); p.EmbedModel != "embeddinggemma" {
 		t.Fatalf("fast embed = %q", p.EmbedModel)
 	}
 	if p := PresetByName("max"); p.EmbedModel != "qwen3-embedding:8b" {

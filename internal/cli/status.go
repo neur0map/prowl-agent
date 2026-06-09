@@ -101,6 +101,8 @@ func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdat
 	}
 	if upd.Available {
 		fmt.Fprintln(out, "Update:    available. Run 'prowl-agent update'.")
+	} else if upd.Checked {
+		fmt.Fprintln(out, "Update:    up to date.")
 	}
 	fmt.Fprintf(out, "Verify:    %s\n", tokensDocURL)
 }

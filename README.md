@@ -176,15 +176,25 @@ missing), then pulls the models for you:
 
 | tier | embed | assist | needs |
 |---|---|---|---|
-| fast | `nomic-embed-text` | `gemma3:1b` | runs anywhere, CPU ok |
+| fast | `embeddinggemma` | `gemma3:1b` | runs anywhere, CPU ok |
 | smart | `qwen3-embedding:4b` | `gemma3:4b` | ~8 GB VRAM |
 | max | `qwen3-embedding:8b` | `gemma3:4b` | ~16 GB VRAM |
 
-Choose non-interactively with `--tier fast|smart|max`. Embeddings live in
-`sqlite-vec` so the agent finds files that mean the same thing even when they
-share no words (for example, "music spectrum" finds an `AudioVisualizer`). The
-assist model only rewrites and re-ranks; it never makes decisions, and structural
-search works fully without any of this.
+Choose non-interactively with `--tier fast|smart|max`. The tiers differ mainly in
+the **embedder**, which is where recall comes from: a bigger embedder (the `smart`
+and `max` `qwen3-embedding` models) finds related code on large repos or vaguely
+worded questions that a small one misses, while `fast` is plenty for small configs
+and keyword-ish queries. The assist model only rewrites and re-ranks, so it stays
+small on purpose; a much bigger assist would just make `smart_search` slower
+without improving what gets found. Embeddings live in `sqlite-vec`, so the agent
+finds files that mean the same thing even when they share no words (for example,
+"music spectrum" finds an `AudioVisualizer`). Structural search works without it.
+
+On Gemma: the assist uses Gemma 3 because, as of now, only `gemma4:31b` is on
+Ollama (the small Gemma 4 E2B/E4B variants are not published there yet), and a 31B
+model is the wrong size for the latency-sensitive assist. The `fast` tier already
+uses Google's newest small embedder, `embeddinggemma`, and the tiers will move to
+small Gemma 4 once it reaches Ollama.
 
 The model warms up once when the server starts and stays loaded for a few minutes
 between queries, so it is not paying a cold start every time (about 2.4 s on the

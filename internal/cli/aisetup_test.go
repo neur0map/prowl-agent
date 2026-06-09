@@ -14,7 +14,7 @@ func TestSetupAINonInteractive(t *testing.T) {
 	var b strings.Builder
 	setupAI(context.Background(), &b, config.PresetByName("fast"), false)
 	s := b.String()
-	if !strings.Contains(s, "fast") || !strings.Contains(s, "nomic-embed-text") {
+	if !strings.Contains(s, "fast") || !strings.Contains(s, "embeddinggemma") {
 		t.Fatalf("setupAI output missing tier/model:\n%s", s)
 	}
 }

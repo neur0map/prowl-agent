@@ -79,7 +79,7 @@ const DefaultTier = "smart"
 // Presets are the AI model tiers offered at init, fastest to best. Sizes and
 // VRAM are rough guidance for choosing one.
 var Presets = []ModelPreset{
-	{"fast", "runs anywhere, CPU ok (~1.3 GB)", "nomic-embed-text", "gemma3:1b"},
+	{"fast", "runs anywhere, CPU ok (~1 GB)", "embeddinggemma", "gemma3:1b"},
 	{"smart", "best balance, ~8 GB VRAM (~5 GB download)", "qwen3-embedding:4b", "gemma3:4b"},
 	{"max", "highest quality, ~16 GB VRAM (~10 GB download)", "qwen3-embedding:8b", "gemma3:4b"},
 }

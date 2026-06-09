@@ -1,7 +1,7 @@
 // Package selfupdate checks for and installs newer published builds. The check
-// is cheap (it fetches only a checksum), cached for a day, offline-safe, and a
-// no-op for local dev builds. It sends nothing about the user; it is an
-// anonymous download of a public checksum.
+// compares the running binary's commit (from the build's embedded VCS info)
+// against the latest commit on main, is cached for a day, and offline-safe. It
+// sends nothing about the user; it is an anonymous read of public commit data.
 package selfupdate
 
 import (
@@ -14,45 +14,95 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 )
 
 const (
-	// DevVersion is the default version of a locally built binary; update checks
-	// are skipped for it so contributors are not nagged.
+	// DevVersion is the default version string of a locally built binary.
 	DevVersion  = "0.1.0-dev"
 	releaseBase = "https://github.com/neur0map/prowl-agent/releases/download/nightly"
 	asset       = "prowl-agent-linux-amd64"
+	commitsAPI  = "https://api.github.com/repos/neur0map/prowl-agent/commits/main"
 	cacheTTL    = 24 * time.Hour
 )
 
-// Result reports whether a newer published build is available.
+// Result reports update status. Checked is true once we determined up-to-date or
+// not; Available is true when a newer build exists.
 type Result struct {
 	Available bool
-	Current   string
-	Note      string // "dev build", "offline", or empty
+	Checked   bool
+	Current   string // short local commit
+	Note      string // "offline", "unknown build", or empty
 }
 
-// Check reports whether the published nightly binary differs from this one.
-func Check(current string) Result {
-	if current == "" || current == DevVersion {
-		return Result{Current: current, Note: "dev build"}
+// Check reports whether main has advanced past the running binary's commit.
+func Check(version string) Result {
+	local := localCommit(version)
+	if local == "" {
+		return Result{Note: "unknown build"}
 	}
 	if c, ok := readCache(); ok {
-		return Result{Available: c.Available, Current: current}
+		return Result{Available: c.Available, Checked: true, Current: shortSum(local)}
 	}
-	remote, err := fetchChecksum(2 * time.Second)
+	latest, err := latestCommit(2 * time.Second)
 	if err != nil {
-		return Result{Current: current, Note: "offline"}
+		return Result{Current: shortSum(local), Note: "offline"}
 	}
-	local, err := selfChecksum()
-	if err != nil {
-		return Result{Current: current, Note: "unknown"}
-	}
-	avail := !strings.EqualFold(remote, local)
+	avail := !sameCommit(local, latest)
 	writeCache(cache{CheckedAt: time.Now().Unix(), Available: avail})
-	return Result{Available: avail, Current: current}
+	return Result{Available: avail, Checked: true, Current: shortSum(local)}
+}
+
+// localCommit returns the commit the running binary was built from, preferring
+// the embedded VCS revision (set for any go build/install in the repo).
+func localCommit(version string) string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && s.Value != "" {
+				return s.Value
+			}
+		}
+	}
+	if version != "" && version != DevVersion {
+		return version
+	}
+	return ""
+}
+
+// latestCommit reads the latest commit SHA on main from the public GitHub API.
+func latestCommit(timeout time.Duration) (string, error) {
+	body, err := download(commitsAPI, timeout)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	if out.SHA == "" {
+		return "", errors.New("no sha in response")
+	}
+	return out.SHA, nil
+}
+
+// sameCommit compares two revisions, tolerating short vs full SHAs.
+func sameCommit(a, b string) bool {
+	a, b = strings.ToLower(strings.TrimSpace(a)), strings.ToLower(strings.TrimSpace(b))
+	if a == "" || b == "" {
+		return false
+	}
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	if n < 7 {
+		return a == b
+	}
+	return a[:n] == b[:n]
 }
 
 // Apply downloads the latest published binary, verifies its checksum, and
@@ -122,8 +172,12 @@ func fetchChecksum(timeout time.Duration) (string, error) {
 }
 
 func download(url string, timeout time.Duration) ([]byte, error) {
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "prowl-agent")
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return nil, err
 	}

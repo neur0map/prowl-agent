@@ -195,6 +195,9 @@ func renderStatusCard(version, root, name string, st query.Status, upd selfupdat
 	if upd.Available {
 		L = append(L, "")
 		L = append(L, stWarn.Render("update available")+stFaint.Render("  ·  run ")+stNum.Render("prowl-agent update"))
+	} else if upd.Checked {
+		L = append(L, "")
+		L = append(L, stFaint.Render("up to date"))
 	}
 
 	L = append(L, "")

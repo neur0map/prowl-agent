@@ -4,3 +4,6 @@
 *.db-shm
 *.db-wal
 .prowl/
+
+# Local-only planning docs (spec/plan); never pushed.
+/docs/superpowers/

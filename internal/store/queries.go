@@ -85,7 +85,7 @@ type Dep struct {
 // blastKinds are the edge kinds traversed for dependency/impact analysis.
 var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts"}
 
-// TransitiveDependents returns files that (transitively) depend on fileID — the
+// TransitiveDependents returns files that (transitively) depend on fileID, the
 // blast radius. A dependent is a file that includes/execs/references it.
 func (s *Store) TransitiveDependents(fileID int64) ([]Dep, error) {
 	clause, kargs := inClause("e.kind", blastKinds)
@@ -103,7 +103,7 @@ func (s *Store) TransitiveDependents(fileID int64) ([]Dep, error) {
 }
 
 // AncestorsToward returns files reachable upward from fileID via dependency
-// edges (what this file includes/execs, transitively) — used for entrypoints.
+// edges (what this file includes/execs, transitively); used for entrypoints.
 func (s *Store) AncestorsToward(fileID int64) ([]Dep, error) {
 	clause, kargs := inClause("e.kind", blastKinds)
 	q := `WITH RECURSIVE up(id,depth) AS (

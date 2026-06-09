@@ -17,7 +17,7 @@ import (
 
 // Inferencer is the provider-agnostic local model interface. Its outputs are
 // deliberately narrow: embeddings and constrained text generation. It never
-// makes decisions — callers (retrieval tools) use it only to rank/compact.
+// makes decisions; callers (retrieval tools) use it only to rank/compact.
 type Inferencer interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 	Generate(ctx context.Context, prompt string) (string, error)

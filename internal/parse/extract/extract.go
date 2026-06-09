@@ -148,7 +148,7 @@ func chunkText(src []byte, window int) []Chunk {
 	return out
 }
 
-// Sexpr returns the parse tree's S-expression for a snippet — a debugging aid
+// Sexpr returns the parse tree's S-expression for a snippet, a debugging aid
 // for authoring queries against a grammar's real node names.
 func Sexpr(lang string, src []byte) (string, error) {
 	tree, err := parse.Parse(lang, src)

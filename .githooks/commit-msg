@@ -1,0 +1,11 @@
+#!/bin/sh
+# Reject AI-authorship tells in commit messages.
+
+forbidden='—|[Cc]o-authored-by|[Gg]enerated (with|by)|[Cc]laude|ChatGPT|Copilot|Anthropic|OpenAI|🤖'
+
+if grep -nE "$forbidden" "$1" >/dev/null; then
+  echo "commit-msg: forbidden content in commit message:" >&2
+  grep -nE "$forbidden" "$1" >&2
+  exit 1
+fi
+exit 0

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Reject local-only planning files and AI-authorship tells in staged changes.
+# Enable with: git config core.hooksPath .githooks
+
+forbidden='—|[Cc]o-authored-by|[Gg]enerated (with|by)|[Cc]laude|ChatGPT|Copilot|Anthropic|OpenAI|🤖|comprehensive|seamless|leverage|delve|intricate'
+
+# 1. Never commit planning files (they stay local).
+plans=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^docs/superpowers/')
+if [ -n "$plans" ]; then
+  echo "pre-commit: refusing to commit local-only planning files:" >&2
+  echo "$plans" >&2
+  exit 1
+fi
+
+# 2. Scan added lines (excluding this hooks dir, which names the patterns).
+added=$(git diff --cached -U0 --no-color -- . ':(exclude).githooks/' | grep -E '^\+[^+]')
+hits=$(printf '%s\n' "$added" | grep -nE "$forbidden")
+if [ -n "$hits" ]; then
+  echo "pre-commit: forbidden content in staged changes:" >&2
+  printf '%s\n' "$hits" >&2
+  echo "(no em-dashes, AI tool names, authorship trailers, or marketing filler)" >&2
+  exit 1
+fi
+exit 0

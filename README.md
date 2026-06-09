@@ -121,12 +121,16 @@ to ignore.
 ## See your savings
 
 `prowl-agent status` prints a card with what is indexed and, once your agent has
-asked a few questions, how many tokens it saved. The number is grounded per
-answer: for each query prowl served, it compares the bytes it returned against the
-combined size of the files that answer pointed at (what an agent would otherwise
-have read). It is labeled an estimate, because it is one, and it grows as you use
-the tool. Run it in your terminal for the full colored card; pipe it for plain
-text, or add `--json` for the raw numbers.
+asked a few questions, how many tokens it saved. It tracks every project you have
+initialized and shows a combined total, so the savings add up across your whole
+setup. The number is grounded per answer: for each query prowl served, it compares
+the bytes it returned against the combined size of the files that answer pointed at
+(what an agent would otherwise have read), then keeps about 70% of that as a
+deliberately conservative, under-counted estimate.
+
+Run it in your terminal for the full colored card; pipe it for plain text, or add
+`--json` for the raw numbers. Want to check the math or test it on your own repos?
+See [Measuring token usage](docs/TOKENS.md).
 
 ## A quick measurement
 

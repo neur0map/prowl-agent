@@ -54,10 +54,12 @@ answers about a project's files, served over MCP.
   (downloaded and checksum-verified). `prowl-agent status` reports when a new build
   is out via a cached, anonymous checksum check (skipped for dev builds).
 - Redesigned `prowl-agent status`: a bordered card (in a terminal) with index
-  stats, a language breakdown, and a token-savings report. Savings are measured per
-  answer (the bytes each answer returned versus the size of the files it pointed
-  at), so the figure is grounded rather than a flat multiplier. Plain text when
-  piped; `--json` carries the numbers.
+  stats, a language breakdown, and a token-savings report. Savings are measured
+  per answer (the bytes each answer returned versus the size of the files it
+  pointed at), kept at a conservative ~70% so the figure under-counts rather than
+  over-claims. It aggregates across every initialized project for a combined total
+  and links to `docs/TOKENS.md` so users can reproduce the measurement. Plain text
+  when piped; `--json` carries the numbers.
 
 #### Health checks
 

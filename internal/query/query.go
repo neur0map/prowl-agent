@@ -388,12 +388,31 @@ type Status struct {
 }
 
 // Savings estimates tokens saved versus reading the files each answer pointed at.
-// Tokens are bytes/4 (the usual rough rule); saved is the referenced-file bytes
-// minus what prowl actually returned.
+// Tokens are bytes/4 (the usual rough rule). The figure is deliberately
+// conservative: it reports only a fraction (savingsMargin) of the measured byte
+// difference, so it under-counts rather than over-claims.
 type Savings struct {
 	Queries      int64 `json:"queries"`
 	AnswerTokens int64 `json:"answer_tokens"`
 	SavedTokens  int64 `json:"saved_tokens"`
+}
+
+// savingsMargin is the fraction of the raw byte difference we report, leaving
+// headroom for files an agent would only partly read, result overlap, and
+// tokenizer variance.
+const savingsMargin = 0.7
+
+// ComputeSavings turns raw usage counters into a conservative savings estimate.
+func ComputeSavings(s store.Stats) Savings {
+	raw := s.BaselineBytes - s.AnswerBytes
+	if raw < 0 {
+		raw = 0
+	}
+	return Savings{
+		Queries:      s.Queries,
+		AnswerTokens: s.AnswerBytes / 4,
+		SavedTokens:  int64(float64(raw) * savingsMargin / 4),
+	}
 }
 
 // Status returns the index summary.
@@ -405,12 +424,8 @@ func (q *Querier) Status() (Status, error) {
 	last, _ := q.s.GetMeta("last_index")
 	ai, _ := q.s.GetMeta("ai_enabled")
 	stats, _ := q.s.Stats()
-	saved := (stats.BaselineBytes - stats.AnswerBytes) / 4
-	if saved < 0 {
-		saved = 0
-	}
 	return Status{
 		Counts: c, LastIndex: last, AIEnabled: ai == "true",
-		Savings: Savings{Queries: stats.Queries, AnswerTokens: stats.AnswerBytes / 4, SavedTokens: saved},
+		Savings: ComputeSavings(stats),
 	}, nil
 }

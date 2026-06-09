@@ -134,7 +134,7 @@ func langBars(langs map[string]int) []string {
 }
 
 // renderStatusCard builds the bordered, colored status card for a terminal.
-func renderStatusCard(version, root, name string, st query.Status, upd selfupdate.Result) string {
+func renderStatusCard(version, root, name string, st query.Status, upd selfupdate.Result, perProject []projSaving, combined query.Savings) string {
 	c := st.Counts
 	var L []string
 	L = append(L, stTitle.Render("prowl-agent")+"  "+stFaint.Render(version))
@@ -179,10 +179,26 @@ func renderStatusCard(version, root, name string, st query.Status, upd selfupdat
 		L = append(L, "  "+stFaint.Render("no queries yet; savings grow as your agent uses prowl"))
 	}
 
+	if len(perProject) >= 2 {
+		L = append(L, "")
+		L = append(L, stLabel.Render("ACROSS YOUR PROJECTS"))
+		shown := perProject
+		if len(shown) > 4 {
+			shown = shown[:4]
+		}
+		for _, p := range shown {
+			L = append(L, "  "+stLabel.Width(18).Render(p.Name)+stNum.Render("~"+humanTokens(p.Saved)))
+		}
+		L = append(L, "  "+stLabel.Width(18).Render("combined")+stBig.Render("~"+humanTokens(combined.SavedTokens)))
+	}
+
 	if upd.Available {
 		L = append(L, "")
 		L = append(L, stWarn.Render("update available")+stFaint.Render("  ·  run ")+stNum.Render("prowl-agent update"))
 	}
+
+	L = append(L, "")
+	L = append(L, stFaint.Render("measure it yourself: "+tokensDocURL))
 
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cFaint).Padding(0, 2)
 	return box.Render(lipgloss.JoinVertical(lipgloss.Left, L...))

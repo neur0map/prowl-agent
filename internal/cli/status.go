@@ -37,6 +37,11 @@ func newStatusCmd(version string) *cobra.Command {
 				for _, e := range entries {
 					fmt.Fprintf(out, "  %s  (ai=%v)\n", e.Root, e.AI)
 				}
+				if _, combined := aggregateSavings(); combined.Queries > 0 {
+					fmt.Fprintf(out, "\nCombined savings: ~%s tokens across %d answers (estimated)\n",
+						humanTokens(combined.SavedTokens), combined.Queries)
+				}
+				fmt.Fprintf(out, "Measure it yourself: %s\n", tokensDocURL)
 				return nil
 			}
 			if err != nil {
@@ -55,11 +60,12 @@ func newStatusCmd(version string) *cobra.Command {
 				return json.NewEncoder(out).Encode(st)
 			}
 			upd := selfupdate.Check(version)
+			perProject, combined := aggregateSavings()
 			if f, ok := out.(*os.File); ok && isTTY(f) {
-				fmt.Fprintln(out, renderStatusCard(version, ws.Root, filepath.Base(ws.Root), st, upd))
+				fmt.Fprintln(out, renderStatusCard(version, ws.Root, filepath.Base(ws.Root), st, upd, perProject, combined))
 				return nil
 			}
-			printPlainStatus(out, ws.Root, st, upd)
+			printPlainStatus(out, ws.Root, st, upd, combined)
 			return nil
 		},
 	}
@@ -67,7 +73,7 @@ func newStatusCmd(version string) *cobra.Command {
 	return c
 }
 
-func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdate.Result) {
+func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdate.Result, combined query.Savings) {
 	c := st.Counts
 	fmt.Fprintf(out, "Project:   %s\n", root)
 	fmt.Fprintf(out, "Files:     %d\n", c.Files)
@@ -89,7 +95,12 @@ func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdat
 		fmt.Fprintf(out, "Saved:     ~%s tokens across %d answers (estimated)\n",
 			humanTokens(st.Savings.SavedTokens), st.Savings.Queries)
 	}
+	if combined.Queries > st.Savings.Queries {
+		fmt.Fprintf(out, "Combined:  ~%s tokens across all your projects (estimated)\n",
+			humanTokens(combined.SavedTokens))
+	}
 	if upd.Available {
 		fmt.Fprintln(out, "Update:    available. Run 'prowl-agent update'.")
 	}
+	fmt.Fprintf(out, "Verify:    %s\n", tokensDocURL)
 }

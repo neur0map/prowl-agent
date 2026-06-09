@@ -19,8 +19,8 @@ type Summary struct {
 	Parsed  int // files (re)parsed this run
 	Skipped int // unchanged files
 	Deleted int // files removed from the index
-	Symbols int
-	Edges   int
+	Symbols int // symbols in the index (total)
+	Edges   int // edges in the index (total)
 }
 
 // Index incrementally synchronizes the store with the project rooted at root.
@@ -81,8 +81,6 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 			return sum, err
 		}
 		sum.Parsed++
-		sum.Symbols += len(syms)
-		sum.Edges += len(edges)
 	}
 
 	// Remove files that disappeared from the project.
@@ -101,6 +99,10 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
+	}
+	if c, err := s.Counts(); err == nil {
+		sum.Symbols = c.Symbols
+		sum.Edges = c.Edges
 	}
 	if err := s.SetMeta("last_index", strconv.FormatInt(time.Now().Unix(), 10)); err != nil {
 		return sum, err

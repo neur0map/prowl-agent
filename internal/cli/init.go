@@ -99,7 +99,7 @@ func newInitCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
 			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
-			fmt.Fprintln(out, "Editor LSP: ready via 'prowl-agent lsp'. See .prowl/editor/SETUP.md (Neovim/Helix/VS Code).")
+			fmt.Fprintln(out, "Editor LSP: configured. Your editor launches 'prowl-agent lsp' automatically; see .prowl/editor/SETUP.md.")
 			if ai {
 				cfg := config.Default()
 				fmt.Fprintln(out, "AI-assist enabled. Default models:")

@@ -1,0 +1,10 @@
+@import "colors.css";
+
+* {
+  font-family: JetBrainsMono;
+}
+
+#clock {
+  color: var(--accent);
+  background: #1e1e2e;
+}

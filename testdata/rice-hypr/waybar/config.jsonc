@@ -1,0 +1,6 @@
+{
+  "layer": "top",
+  "modules-left": ["hyprland/workspaces"],
+  "clock": { "format": "{:%H:%M}" },
+  "custom/power": { "on-click": "~/.config/scripts/power.sh" }
+}

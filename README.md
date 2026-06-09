@@ -169,12 +169,22 @@ took a few seconds to a few tens of seconds depending on size.
 
 ## Semantic search (optional)
 
-If you turn it on, `init` sets up a local semantic layer through
-[Ollama](https://ollama.com), with no cloud and no API keys. It stores embeddings
-in `sqlite-vec` so the agent can find files that mean the same thing even when they
-share no words (for example, "music spectrum" finds an `AudioVisualizer`). A small
-helper model can rewrite and re-rank queries, but it never makes decisions on its
-own. Structural search works fully without any of this.
+If you turn it on, `init` walks you through a local semantic layer powered by
+[Ollama](https://ollama.com), with no cloud and no API keys. You pick a model
+tier; the wizard detects Ollama (offering to run the official installer if it is
+missing), then pulls the models for you:
+
+| tier | embed | assist | needs |
+|---|---|---|---|
+| fast | `nomic-embed-text` | `gemma3:1b` | runs anywhere, CPU ok |
+| smart | `qwen3-embedding:4b` | `gemma3:4b` | ~8 GB VRAM |
+| max | `qwen3-embedding:8b` | `gemma3:4b` | ~16 GB VRAM |
+
+Choose non-interactively with `--tier fast|smart|max`. Embeddings live in
+`sqlite-vec` so the agent finds files that mean the same thing even when they
+share no words (for example, "music spectrum" finds an `AudioVisualizer`). The
+assist model only rewrites and re-ranks; it never makes decisions, and structural
+search works fully without any of this.
 
 The model warms up once when the server starts and stays loaded for a few minutes
 between queries, so it is not paying a cold start every time (about 2.4 s on the

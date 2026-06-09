@@ -8,7 +8,6 @@ import (
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -19,6 +18,7 @@ import (
 type InitOptions struct {
 	Root string
 	AI   bool
+	Tier string
 }
 
 // RunInit creates the workspace, writes config/rules, runs the first index,
@@ -35,6 +35,10 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	}
 	cfg := config.Default()
 	cfg.AI.Enabled = opt.AI
+	if opt.AI {
+		p := config.PresetByName(opt.Tier)
+		cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
+	}
 	if err := config.Save(ws.Path, cfg); err != nil {
 		return index.Summary{}, err
 	}
@@ -68,6 +72,7 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 
 func newInitCmd() *cobra.Command {
 	var withAI, noAI, yes bool
+	var tier string
 	c := &cobra.Command{
 		Use:   "init",
 		Short: "Set up Prowl Agent in the current folder (interactive wizard)",
@@ -92,8 +97,14 @@ func newInitCmd() *cobra.Command {
 			if noAI {
 				ai = false
 			}
+			if ai && tier == "" {
+				tier = config.DefaultTier
+				if !yes {
+					tier = selectTier()
+				}
+			}
 			fmt.Fprintf(out, "Indexing %s ...\n", root)
-			sum, err := RunInit(InitOptions{Root: root, AI: ai})
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, Tier: tier})
 			if err != nil {
 				return err
 			}
@@ -101,16 +112,7 @@ func newInitCmd() *cobra.Command {
 			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
 			fmt.Fprintln(out, "Editor LSP: configured. Your editor launches 'prowl-agent lsp' automatically; see .prowl/editor/SETUP.md.")
 			if ai {
-				cfg := config.Default()
-				fmt.Fprintln(out, "AI-assist enabled. Default models:")
-				fmt.Fprintf(out, "  embed: %s  rerank: %s  assist: %s\n", cfg.AI.EmbedModel, cfg.AI.RerankModel, cfg.AI.AssistModel)
-				oll := assist.NewOllama(cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
-				if oll.Available(cmd.Context()) {
-					fmt.Fprintf(out, "  Ollama detected at %s. Pull the models: ollama pull %s && ollama pull %s\n", cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
-					fmt.Fprintln(out, "  Semantic search activates on 'prowl-agent serve' (it embeds the project into the index).")
-				} else {
-					fmt.Fprintf(out, "  Ollama not detected at %s. Install it to enable semantic search; structural search works without it.\n", cfg.AI.OllamaURL)
-				}
+				setupAI(cmd.Context(), out, config.PresetByName(tier), !yes)
 			}
 			return nil
 		},
@@ -118,5 +120,6 @@ func newInitCmd() *cobra.Command {
 	c.Flags().BoolVar(&withAI, "with-ai", false, "enable AI-assist non-interactively")
 	c.Flags().BoolVar(&noAI, "no-ai", false, "skip AI-assist non-interactively")
 	c.Flags().BoolVar(&yes, "yes", false, "accept defaults without prompting")
+	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
 	return c
 }

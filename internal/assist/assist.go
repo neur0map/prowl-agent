@@ -159,3 +159,56 @@ func parseOrder(resp string, n int) []int {
 	}
 	return order
 }
+
+// Models lists the model names available to the daemon (via /api/tags).
+func (o *Ollama) Models(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.BaseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := o.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama /api/tags: status %d", resp.StatusCode)
+	}
+	var out struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	names := make([]string, len(out.Models))
+	for i, m := range out.Models {
+		names[i] = m.Name
+	}
+	return names, nil
+}
+
+// HasModel reports whether a model (with or without an explicit tag) is present.
+func (o *Ollama) HasModel(ctx context.Context, name string) bool {
+	have, err := o.Models(ctx)
+	if err != nil {
+		return false
+	}
+	return matchModel(have, name)
+}
+
+// matchModel tolerates Ollama's implicit :latest tag and bare-name requests.
+func matchModel(have []string, want string) bool {
+	for _, h := range have {
+		if h == want || h == want+":latest" {
+			return true
+		}
+		if !strings.Contains(want, ":") {
+			if i := strings.IndexByte(h, ':'); i >= 0 && h[:i] == want {
+				return true
+			}
+		}
+	}
+	return false
+}

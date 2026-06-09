@@ -52,17 +52,51 @@ const (
 
 // Default returns the starting configuration for a new workspace.
 func Default() Config {
+	p := PresetByName(DefaultTier)
 	return Config{
 		Languages: []string{"lua", "python", "bash", "css", "scss", "json", "yaml", "toml", "ini", "qml", "hyprlang", "rasi", "generic"},
 		Ignore:    []string{".mcp.json", "*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ttf", "*.otf", "*.woff", "*.woff2"},
 		AI: AI{
 			Enabled:     false,
-			EmbedModel:  "qwen3-embedding:0.6b",
-			RerankModel: "qwen3-reranker:0.6b",
-			AssistModel: "gemma3:4b",
+			EmbedModel:  p.EmbedModel,
+			AssistModel: p.AssistModel,
 			OllamaURL:   "http://localhost:11434",
 		},
 	}
+}
+
+// ModelPreset is a named pair of local models for the AI layer.
+type ModelPreset struct {
+	Name        string
+	Desc        string
+	EmbedModel  string
+	AssistModel string
+}
+
+// DefaultTier is the recommended preset when none is chosen.
+const DefaultTier = "smart"
+
+// Presets are the AI model tiers offered at init, fastest to best. Sizes and
+// VRAM are rough guidance for choosing one.
+var Presets = []ModelPreset{
+	{"fast", "runs anywhere, CPU ok (~1.3 GB)", "nomic-embed-text", "gemma3:1b"},
+	{"smart", "best balance, ~8 GB VRAM (~5 GB download)", "qwen3-embedding:4b", "gemma3:4b"},
+	{"max", "highest quality, ~16 GB VRAM (~10 GB download)", "qwen3-embedding:8b", "gemma3:4b"},
+}
+
+// PresetByName returns the named preset, falling back to the default tier.
+func PresetByName(name string) ModelPreset {
+	for _, p := range Presets {
+		if p.Name == name {
+			return p
+		}
+	}
+	for _, p := range Presets {
+		if p.Name == DefaultTier {
+			return p
+		}
+	}
+	return Presets[0]
 }
 
 // DefaultRules returns the starter rule set for a project.

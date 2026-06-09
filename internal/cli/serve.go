@@ -11,6 +11,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	mcpserver "github.com/prowl-agent/prowl-agent/internal/mcp"
 	"github.com/prowl-agent/prowl-agent/internal/query"
@@ -68,7 +69,11 @@ func newServeCmd(version string) *cobra.Command {
 			if inf != nil {
 				q = query.NewWithAssist(s, inf)
 			}
-			srv := mcpserver.NewServer(q, version, reindex)
+			doctorFn := func(context.Context) (doctor.Report, error) {
+				rules, _ := config.LoadRules(ws.Path)
+				return doctor.Run(s, rules, doctor.Options{Root: ws.Root})
+			}
+			srv := mcpserver.NewServer(q, version, reindex, doctorFn)
 			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
 			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&
 				!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&

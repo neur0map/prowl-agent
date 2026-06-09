@@ -6,6 +6,7 @@ import (
 	"context"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -13,17 +14,21 @@ import (
 // ReindexFunc refreshes the index and returns a human-readable summary.
 type ReindexFunc func(ctx context.Context) (string, error)
 
+// DoctorFunc runs health diagnostics for the rice.
+type DoctorFunc func(ctx context.Context) (doctor.Report, error)
+
 type handlers struct {
 	q       *query.Querier
 	reindex ReindexFunc
+	doctor  DoctorFunc
 }
 
 // Empty is the input type for tools that take no arguments.
 type Empty struct{}
 
-// NewServer builds an MCP server exposing the 12 query tools plus reindex.
-func NewServer(q *query.Querier, version string, reindex ReindexFunc) *sdk.Server {
-	h := &handlers{q: q, reindex: reindex}
+// NewServer builds an MCP server exposing the query tools, reindex, and doctor.
+func NewServer(q *query.Querier, version string, reindex ReindexFunc, doctorFn DoctorFunc) *sdk.Server {
+	h := &handlers{q: q, reindex: reindex, doctor: doctorFn}
 	s := sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
 
 	sdk.AddTool(s, &sdk.Tool{Name: "find_symbol",
@@ -52,6 +57,8 @@ func NewServer(q *query.Querier, version string, reindex ReindexFunc) *sdk.Serve
 		Description: "Index freshness, counts, languages, and AI status."}, h.status)
 	sdk.AddTool(s, &sdk.Tool{Name: "reindex",
 		Description: "Re-scan the rice and refresh the index incrementally."}, h.reindexTool)
+	sdk.AddTool(s, &sdk.Tool{Name: "doctor",
+		Description: "Rice health diagnostics: cyclic includes, fan-in/out risk, oversized configs, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, h.doctorTool)
 	return s
 }
 
@@ -168,4 +175,12 @@ func (h *handlers) reindexTool(ctx context.Context, _ *sdk.CallToolRequest, _ Em
 	}
 	msg, err := h.reindex(ctx)
 	return nil, messageOut{Message: msg}, err
+}
+
+func (h *handlers) doctorTool(ctx context.Context, _ *sdk.CallToolRequest, _ Empty) (*sdk.CallToolResult, doctor.Report, error) {
+	if h.doctor == nil {
+		return nil, doctor.Report{Summary: map[string]int{}}, nil
+	}
+	r, err := h.doctor(ctx)
+	return nil, r, err
 }

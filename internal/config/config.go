@@ -31,9 +31,18 @@ type Rule struct {
 	Description string `toml:"description"`
 }
 
+// Forbid declares a forbidden dependency crossing: any resolved edge whose
+// source path matches From and target path matches To is a violation.
+type Forbid struct {
+	Name string `toml:"name"`
+	From string `toml:"from"` // glob on the source file path
+	To   string `toml:"to"`   // glob on the target file path
+}
+
 // Rules is the set of architecture rules for a rice.
 type Rules struct {
-	Rule []Rule `toml:"rule"`
+	Rule   []Rule   `toml:"rule"`
+	Forbid []Forbid `toml:"forbid"`
 }
 
 const (

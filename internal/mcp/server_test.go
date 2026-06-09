@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -22,7 +24,9 @@ func TestMCPIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := NewServer(query.New(s), "test", func(context.Context) (string, error) { return "reindexed", nil })
+	srv := NewServer(query.New(s), "test",
+		func(context.Context) (string, error) { return "reindexed", nil },
+		func(context.Context) (doctor.Report, error) { return doctor.Run(s, config.Rules{}, doctor.Options{}) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -70,12 +74,15 @@ func TestMCPIntegration(t *testing.T) {
 	if out := call("reindex", nil); !strings.Contains(out, "reindexed") {
 		t.Fatalf("reindex: %s", out)
 	}
+	if out := call("doctor", nil); !strings.Contains(out, "\"score\"") {
+		t.Fatalf("doctor: %s", out)
+	}
 
 	lt, err := sess.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(lt.Tools) != 13 {
-		t.Fatalf("tool count = %d, want 13", len(lt.Tools))
+	if len(lt.Tools) != 14 {
+		t.Fatalf("tool count = %d, want 14", len(lt.Tools))
 	}
 }

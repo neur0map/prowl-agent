@@ -198,7 +198,7 @@ func (s *Store) OrphanFiles(roles ...string) ([]File, error) {
 	q := `SELECT f.id,f.rel_path,f.lang,IFNULL(f.role,''),f.size,f.hash,f.mtime,f.indexed_at FROM files f
 		WHERE NOT EXISTS (
 			SELECT 1 FROM edges e WHERE e.dst_type='file' AND e.dst_id=f.id AND e.resolved=1
-			  AND e.kind IN ('includes','execs','binds','autostarts')
+			  AND e.kind IN ('includes','execs','binds','autostarts','references')
 		)` + clause + ` ORDER BY f.rel_path`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

@@ -34,6 +34,8 @@ github.com/alexaandru/go-sitter-forest/yaml v1.9.6 h1:QwFVl8fvUDlYlrYP6TbBJo23Ej
 github.com/alexaandru/go-sitter-forest/yaml v1.9.6/go.mod h1:ylpn3Lek1cElYsYq8ONRK6TJ78ntXYGIcLSjKAHqZ5Y=
 github.com/alexaandru/go-tree-sitter-bare v1.11.0 h1:hRg0R09Kukx2il7ZEec570L/zG4SlM9VwEYR7kkh2nY=
 github.com/alexaandru/go-tree-sitter-bare v1.11.0/go.mod h1:D0p+tpA7QXGADKpNHG9qTc1EXTg/tS/DO4cQdd0cSUg=
+github.com/asg017/sqlite-vec-go-bindings v0.1.6 h1:Nx0jAzyS38XpkKznJ9xQjFXz2X9tI7KqjwVxV8RNoww=
+github.com/asg017/sqlite-vec-go-bindings v0.1.6/go.mod h1:A8+cTt/nKFsYCQF6OgzSNpKZrzNo5gQsXBTfsXHXY0Q=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
 github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ12Gv5o=

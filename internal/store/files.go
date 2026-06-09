@@ -103,6 +103,9 @@ func (s *Store) deleteFileByID(id int64) error {
 // deleteFileChildren removes derived rows for a file via direct deletes so the
 // AFTER DELETE FTS-sync triggers fire (cascade deletes are not relied upon).
 func deleteFileChildren(tx *sql.Tx, id int64) error {
+	if err := deleteChunkVectors(tx, id); err != nil {
+		return err
+	}
 	for _, q := range []string{
 		`DELETE FROM chunks WHERE file_id=?`,
 		`DELETE FROM symbols WHERE file_id=?`,

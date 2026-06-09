@@ -17,6 +17,7 @@ require (
 	github.com/alexaandru/go-sitter-forest/toml v1.9.2
 	github.com/alexaandru/go-sitter-forest/yaml v1.9.6
 	github.com/alexaandru/go-tree-sitter-bare v1.11.0
+	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/modelcontextprotocol/go-sdk v1.6.1

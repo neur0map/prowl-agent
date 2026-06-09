@@ -10,6 +10,16 @@ require (
 )
 
 require (
+	github.com/alexaandru/go-sitter-forest/bash v1.9.6 // indirect
+	github.com/alexaandru/go-sitter-forest/css v1.9.4 // indirect
+	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4 // indirect
+	github.com/alexaandru/go-sitter-forest/ini v1.9.1 // indirect
+	github.com/alexaandru/go-sitter-forest/json v1.9.1 // indirect
+	github.com/alexaandru/go-sitter-forest/python v1.9.10 // indirect
+	github.com/alexaandru/go-sitter-forest/qmljs v1.9.3 // indirect
+	github.com/alexaandru/go-sitter-forest/scss v1.9.0 // indirect
+	github.com/alexaandru/go-sitter-forest/toml v1.9.2 // indirect
+	github.com/alexaandru/go-sitter-forest/yaml v1.9.6 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 )

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"unsafe"
 
-	sitter "github.com/alexaandru/go-tree-sitter-bare"
 	"github.com/alexaandru/go-sitter-forest/bash"
 	"github.com/alexaandru/go-sitter-forest/css"
 	"github.com/alexaandru/go-sitter-forest/hyprlang"
@@ -17,6 +16,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/scss"
 	"github.com/alexaandru/go-sitter-forest/toml"
 	"github.com/alexaandru/go-sitter-forest/yaml"
+	sitter "github.com/alexaandru/go-tree-sitter-bare"
 )
 
 // grammars maps a canonical language id to its Tree-sitter grammar constructor.

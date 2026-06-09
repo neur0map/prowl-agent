@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"testing"
 
-	sitter "github.com/alexaandru/go-tree-sitter-bare"
 	"github.com/alexaandru/go-sitter-forest/lua"
+	sitter "github.com/alexaandru/go-tree-sitter-bare"
 	_ "github.com/mattn/go-sqlite3"
 )
 

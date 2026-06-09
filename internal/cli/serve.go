@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -44,7 +47,13 @@ func newServeCmd(version string) *cobra.Command {
 				return err
 			}
 			srv := mcpserver.NewServer(query.New(s), version, reindex)
-			return mcpserver.Serve(cmd.Context(), srv)
+			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
+			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&
+				!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&
+				!strings.Contains(err.Error(), "closing") {
+				return err
+			}
+			return nil
 		},
 	}
 }

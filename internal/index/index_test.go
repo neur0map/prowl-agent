@@ -69,11 +69,11 @@ func TestIndexFixture(t *testing.T) {
 			t.Fatalf("%s has no incoming %s edges", rel, kind)
 		}
 	}
-	mustResolve("hypr/colors.conf", "includes")             // sourced by hyprland.conf
-	mustResolve("nvim/lua/opts.lua", "includes")            // require("opts")
-	mustResolve("hypr/scripts/screenshot.sh", "binds")      // bind exec script
-	mustResolve("waybar/colors.css", "includes")            // @import
-	mustResolve("scripts/power.sh", "references")           // waybar on-click
+	mustResolve("hypr/colors.conf", "includes")        // sourced by hyprland.conf
+	mustResolve("nvim/lua/opts.lua", "includes")       // require("opts")
+	mustResolve("hypr/scripts/screenshot.sh", "binds") // bind exec script
+	mustResolve("waybar/colors.css", "includes")       // @import
+	mustResolve("scripts/power.sh", "references")      // waybar on-click
 
 	// 'kitty' bind is an external bare command -> dangling.
 	dang, _ := s.UnresolvedEdges("binds")

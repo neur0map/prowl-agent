@@ -45,7 +45,7 @@ const (
 func Default() Config {
 	return Config{
 		Languages: []string{"lua", "python", "bash", "css", "scss", "json", "yaml", "toml", "ini", "qml", "hyprlang", "rasi", "generic"},
-		Ignore:    []string{"*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ttf", "*.otf", "*.woff", "*.woff2"},
+		Ignore:    []string{".mcp.json", "*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ttf", "*.otf", "*.woff", "*.woff2"},
 		AI: AI{
 			Enabled:     false,
 			EmbedModel:  "qwen3-embedding:0.6b",

@@ -76,7 +76,7 @@ func newInitCmd() *cobra.Command {
 				form := huh.NewForm(huh.NewGroup(
 					huh.NewConfirm().
 						Title("Enable AI-assisted semantic search?").
-						Description("Adds fuzzy/semantic search powered by a small local model (via Ollama).\n"+
+						Description("Adds fuzzy/semantic search powered by a small local model (via Ollama).\n" +
 							"Structural search works without it; you can enable this later.").
 						Affirmative("Enable").
 						Negative("Skip").

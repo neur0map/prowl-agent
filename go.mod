@@ -3,6 +3,7 @@ module github.com/prowl-agent/prowl-agent
 go 1.26.4
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/alexaandru/go-sitter-forest/bash v1.9.6
 	github.com/alexaandru/go-sitter-forest/css v1.9.4
 	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4

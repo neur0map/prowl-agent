@@ -1,3 +1,5 @@
+github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
+github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/alexaandru/go-sitter-forest/bash v1.9.6 h1:08bixRLEPEeo5dUMUa5AkGRso5RA9T/gYJ1iqxx4lvk=
 github.com/alexaandru/go-sitter-forest/bash v1.9.6/go.mod h1:n7akT/YMJSe0m+kKMZRzi+lQlXDjKU0vvYrrvejJ0no=
 github.com/alexaandru/go-sitter-forest/css v1.9.4 h1:MBdaNeWhmIBqrxetO0HBiyit9Sfxw4WBukUPqHGA/Ho=

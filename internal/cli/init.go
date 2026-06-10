@@ -53,7 +53,10 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 
 	// Base config is the project's existing config when present, else defaults,
 	// so a re-init preserves user-edited ignore/languages and the prior AI value.
-	cfg, _ := config.Load(ws.Path)
+	cfg, err := config.Load(ws.Path)
+	if err != nil {
+		return index.Summary{}, fmt.Errorf("read existing config: %w", err)
+	}
 	g, _ := config.LoadGlobal()
 
 	// AI-enable precedence: explicit decision > existing project > global default.
@@ -194,17 +197,19 @@ func newInitCmd() *cobra.Command {
 				aiSet = true
 			default:
 				ai, aiSet = inheritedAI, false
-				state := "off"
-				if ai {
-					state = "on"
+				if tier == "" {
+					state := "off"
+					if ai {
+						state = "on"
+					}
+					uiLog.Infof("using remembered settings (AI %s); pass --reconfigure to change", state)
 				}
-				uiLog.Infof("using remembered settings (AI %s); pass --reconfigure to change", state)
 			}
 
 			// Resolve tier + installed models only when (re)configuring AI; on an
 			// inherit, RunInit preserves the project's existing models.
 			var embedModel, assistModel string
-			if ai && aiSet {
+			if ai && (aiSet || tier != "") {
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)
 					if !yes && (reconfigure || !remembered) {
@@ -241,5 +246,6 @@ func newInitCmd() *cobra.Command {
 	c.Flags().BoolVar(&yes, "yes", false, "accept defaults without prompting")
 	c.Flags().BoolVar(&reconfigure, "reconfigure", false, "re-open the AI/tier prompts even if already configured")
 	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
+	c.MarkFlagsMutuallyExclusive("with-ai", "no-ai")
 	return c
 }

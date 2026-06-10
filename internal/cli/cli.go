@@ -1,5 +1,6 @@
-// Package cli wires Prowl Agent's user-facing commands (init, status, doctor)
-// and the hidden agent-launched serve and editor-launched lsp commands.
+// Package cli wires Prowl Agent's user-facing commands (init, status, doctor,
+// update, restart, version) and the hidden agent-launched serve and
+// editor-launched lsp commands.
 package cli
 
 import "github.com/spf13/cobra"

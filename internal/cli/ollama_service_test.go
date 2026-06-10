@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -85,4 +86,51 @@ func TestEnsureOllamaReturnsFalseWhenNothingWorks(t *testing.T) {
 		t.Fatal("want reachable false when ollama cannot be started")
 	}
 	assertCallOrder(t, rec, []string{"spawn"})
+}
+
+var errFake = errors.New("fake failure")
+
+func TestEnsureOllamaFallsBackToSpawnWhenStartFails(t *testing.T) {
+	var rec []string
+	reach := false
+	e := fakeOllamaEnv(&rec)
+	e.reachable = func(context.Context) bool { return reach }
+	e.hasUnit = func() (bool, bool) { return false, true }
+	e.startUnit = func(bool) error { rec = append(rec, "start"); return errFake }
+	e.spawnDetached = func() error { rec = append(rec, "spawn"); reach = true; return nil }
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true after spawn fallback")
+	}
+	assertCallOrder(t, rec, []string{"start", "spawn"})
+}
+
+func TestEnsureOllamaFallsBackToSpawnWhenEnableFails(t *testing.T) {
+	var rec []string
+	reach := false
+	e := fakeOllamaEnv(&rec)
+	e.reachable = func(context.Context) bool { return reach }
+	e.systemdUser = func() bool { return true }
+	e.writeAndEnable = func() error { rec = append(rec, "write"); return errFake }
+	e.spawnDetached = func() error { rec = append(rec, "spawn"); reach = true; return nil }
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true after spawn fallback")
+	}
+	assertCallOrder(t, rec, []string{"write", "spawn"})
+}
+
+func TestEnsureOllamaStartsUserUnitWithUserTrue(t *testing.T) {
+	var rec []string
+	var gotUser bool
+	reach := false
+	e := fakeOllamaEnv(&rec)
+	e.reachable = func(context.Context) bool { return reach }
+	e.hasUnit = func() (bool, bool) { return true, true }
+	e.startUnit = func(user bool) error { gotUser = user; rec = append(rec, "start"); reach = true; return nil }
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true")
+	}
+	if !gotUser {
+		t.Fatal("startUnit should receive user=true for a user unit")
+	}
+	assertCallOrder(t, rec, []string{"start"})
 }

@@ -83,7 +83,7 @@ func (o *Ollama) Warm(ctx context.Context, model, keepAlive string) error {
 	var out struct {
 		Embeddings [][]float32 `json:"embeddings"`
 	}
-	body := map[string]any{"model": model, "input": " ", "keep_alive": keepAlive}
+	body := map[string]any{"model": model, "input": ".", "keep_alive": keepAlive}
 	return o.post(ctx, "/api/embed", body, &out)
 }
 

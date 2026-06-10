@@ -67,24 +67,25 @@ func realOllamaEnv(oll *assist.Ollama, root string) ollamaEnv {
 			if !haveSystemctl() {
 				return false, false
 			}
-			if runOK("systemctl", "cat", "ollama.service") {
-				return false, true
-			}
-			if runOK("systemctl", "--user", "cat", "ollama.service") {
+			// Prefer the user unit: starting it needs no polkit authorization.
+			if systemctlOK("--user", "cat", "ollama.service") {
 				return true, true
+			}
+			if systemctlOK("cat", "ollama.service") {
+				return false, true
 			}
 			return false, false
 		},
 		systemdUser: func() bool {
-			return haveSystemctl() && runOK("systemctl", "--user", "show-environment")
+			return haveSystemctl() && systemctlOK("--user", "show-environment")
 		},
 		startUnit: func(user bool) error {
 			uiLog.Info("starting the Ollama service")
-			args := []string{"start", "ollama.service"}
+			args := []string{"--no-ask-password", "start", "ollama.service"}
 			if user {
 				args = append([]string{"--user"}, args...)
 			}
-			if err := exec.Command("systemctl", args...).Run(); err != nil {
+			if err := systemctlRun(args...); err != nil {
 				return err
 			}
 			if !waitReachable(oll, 8*time.Second) {
@@ -97,8 +98,8 @@ func realOllamaEnv(oll *assist.Ollama, root string) ollamaEnv {
 			if err := writeOllamaUserUnit(); err != nil {
 				return err
 			}
-			_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
-			if err := exec.Command("systemctl", "--user", "enable", "--now", "ollama.service").Run(); err != nil {
+			_ = systemctlRun("--user", "daemon-reload")
+			if err := systemctlRun("--user", "--no-ask-password", "enable", "--now", "ollama.service"); err != nil {
 				return err
 			}
 			if !waitReachable(oll, 8*time.Second) {
@@ -125,9 +126,21 @@ func haveSystemctl() bool {
 	return err == nil
 }
 
-// runOK reports whether a command exits zero.
-func runOK(name string, args ...string) bool {
-	return exec.Command(name, args...).Run() == nil
+const systemctlTimeout = 10 * time.Second
+
+// systemctlOK reports whether a systemctl command exits zero within the timeout.
+func systemctlOK(args ...string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), systemctlTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "systemctl", args...).Run() == nil
+}
+
+// systemctlRun runs a systemctl command bounded by the timeout, so a hung daemon
+// or a blocked polkit authorization cannot stall init indefinitely.
+func systemctlRun(args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), systemctlTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "systemctl", args...).Run()
 }
 
 // ollamaPath resolves the ollama binary, falling back to the bare name.
@@ -170,6 +183,12 @@ func userUnitDir() (string, error) {
 // writeOllamaUserUnit installs a user-level ollama.service that restarts on
 // failure, so Ollama comes back after a crash or a reboot.
 func writeOllamaUserUnit() error {
+	// systemd requires an absolute ExecStart; refuse to write a unit we cannot
+	// run rather than leave a broken one on disk.
+	bin, err := exec.LookPath("ollama")
+	if err != nil || !filepath.IsAbs(bin) {
+		return fmt.Errorf("ollama binary not found on PATH; skipping user service")
+	}
 	dir, err := userUnitDir()
 	if err != nil {
 		return err
@@ -180,7 +199,7 @@ func writeOllamaUserUnit() error {
 	unit := "[Unit]\n" +
 		"Description=Ollama (managed by prowl-agent)\n\n" +
 		"[Service]\n" +
-		"ExecStart=" + ollamaPath() + " serve\n" +
+		"ExecStart=" + bin + " serve\n" +
 		"Restart=always\n" +
 		"RestartSec=2\n\n" +
 		"[Install]\n" +

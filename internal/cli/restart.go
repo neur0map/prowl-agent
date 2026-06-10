@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -62,7 +63,7 @@ func newRestartCmd(string) *cobra.Command {
 // prowl-agent serve/lsp worth stopping. scope=="" matches regardless of cwd;
 // otherwise only processes whose cwd is at or under scope match.
 func matchProwlServer(args []string, cwd, scope string) bool {
-	if len(args) < 2 || !strings.HasSuffix(args[0], "prowl-agent") {
+	if len(args) < 2 || filepath.Base(args[0]) != "prowl-agent" {
 		return false
 	}
 	if args[1] != "serve" && args[1] != "lsp" {

@@ -8,6 +8,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -19,6 +20,10 @@ type InitOptions struct {
 	Root string
 	AI   bool
 	Tier string
+	// EmbedModel and AssistModel override the tier preset when non-empty. The
+	// init command fills them from models already installed on Ollama.
+	EmbedModel  string
+	AssistModel string
 }
 
 // RunInit creates the workspace, writes config/rules, runs the first index,
@@ -38,6 +43,12 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if opt.AI {
 		p := config.PresetByName(opt.Tier)
 		cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
+		if opt.EmbedModel != "" {
+			cfg.AI.EmbedModel = opt.EmbedModel
+		}
+		if opt.AssistModel != "" {
+			cfg.AI.AssistModel = opt.AssistModel
+		}
 	}
 	if err := config.Save(ws.Path, cfg); err != nil {
 		return index.Summary{}, err
@@ -103,8 +114,13 @@ func newInitCmd() *cobra.Command {
 					tier = selectTier()
 				}
 			}
+			var embedModel, assistModel string
+			if ai {
+				oll := assist.NewOllama("", config.PresetByName(tier).EmbedModel, config.PresetByName(tier).AssistModel)
+				embedModel, assistModel = resolveModels(cmd.Context(), oll, config.PresetByName(tier))
+			}
 			fmt.Fprintf(out, "Indexing %s ...\n", root)
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, Tier: tier})
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel})
 			if err != nil {
 				return err
 			}
@@ -112,7 +128,7 @@ func newInitCmd() *cobra.Command {
 			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
 			fmt.Fprintln(out, "Editor LSP: configured. Your editor launches 'prowl-agent lsp' automatically; see .prowl/editor/SETUP.md.")
 			if ai {
-				setupAI(cmd.Context(), out, config.PresetByName(tier), !yes)
+				setupAI(cmd.Context(), out, config.ModelPreset{Name: tier, EmbedModel: embedModel, AssistModel: assistModel}, !yes)
 			}
 			return nil
 		},

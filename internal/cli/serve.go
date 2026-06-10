@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,10 +28,15 @@ func maybeInferencer(ctx context.Context, cfg config.Config) assist.Inferencer {
 		return nil
 	}
 	oll := assist.NewOllama(cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
-	if oll.Available(ctx) {
-		return oll
+	if !oll.Available(ctx) {
+		fmt.Fprintf(os.Stderr, "prowl-agent: AI is enabled but Ollama is not reachable at %s; semantic search is off, structural search still works\n", oll.BaseURL)
+		return nil
 	}
-	return nil
+	if !oll.HasModel(ctx, cfg.AI.EmbedModel) {
+		fmt.Fprintf(os.Stderr, "prowl-agent: embed model %q is not installed; run 'ollama pull %s'. Semantic search is off, structural search still works\n", cfg.AI.EmbedModel, cfg.AI.EmbedModel)
+		return nil
+	}
+	return oll
 }
 
 // reindexer returns a serialized re-index function: structural always, plus
@@ -46,11 +52,13 @@ func reindexer(s *store.Store, root string, ignore []string, embedModel string, 
 		}
 		msg := fmt.Sprintf("indexed=%d parsed=%d skipped=%d deleted=%d", sum.Indexed, sum.Parsed, sum.Skipped, sum.Deleted)
 		if inf != nil {
-			n, err := index.BuildVectors(ctx, s, inf, embedModel)
-			if err != nil {
-				return msg, err
+			// Embeddings are optional: a transient Ollama failure or a missing
+			// model must not fail the index. Structural search still works.
+			if n, err := index.BuildVectors(ctx, s, inf, embedModel); err != nil {
+				msg += fmt.Sprintf(" embed_error=%q", err.Error())
+			} else {
+				msg += fmt.Sprintf(" embedded=%d", n)
 			}
-			msg += fmt.Sprintf(" embedded=%d", n)
 		}
 		return msg, nil
 	}

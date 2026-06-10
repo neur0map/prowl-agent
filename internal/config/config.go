@@ -84,6 +84,23 @@ var Presets = []ModelPreset{
 	{"max", "best quality, ~16 GB VRAM", "qwen3-embedding:8b", "gemma4:e4b"},
 }
 
+// KnownEmbedModels lists Ollama models prowl can use for embeddings, by base
+// name (tag stripped). init prefers one of these when it is already installed so
+// it does not point the config at an absent model or ask for a redundant pull.
+var KnownEmbedModels = []string{
+	"nomic-embed-text",
+	"mxbai-embed-large",
+	"embeddinggemma",
+	"qwen3-embedding",
+	"snowflake-arctic-embed",
+	"snowflake-arctic-embed2",
+	"bge-m3",
+	"bge-large",
+	"all-minilm",
+	"granite-embedding",
+	"paraphrase-multilingual",
+}
+
 // PresetByName returns the named preset, falling back to the default tier.
 func PresetByName(name string) ModelPreset {
 	for _, p := range Presets {

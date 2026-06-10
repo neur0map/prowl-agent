@@ -17,7 +17,9 @@ answers about a project's files, served over MCP.
   changed; deleted files are pruned, and graph resolution re-runs each time.
 - A binary upgrade forces a full re-parse: the index records the binary's version,
   so extractor and resolver fixes apply on update instead of incremental hashing
-  skipping unchanged files and serving stale data.
+  skipping unchanged files and serving stale data. Release builds key this off the
+  commit; dev and dirty builds key off the binary's mtime so each local rebuild
+  also reparses.
 - Tree-sitter extraction for Lua, Python, Bash, Fish, C++, QML, CSS, SCSS, JSON,
   YAML, TOML, INI, and Hyprland, plus a line-based reader for other config formats
   (sway/i3, rofi `rasi`, polybar, and similar).
@@ -42,8 +44,9 @@ answers about a project's files, served over MCP.
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
 - CLI: `init` (setup wizard), `status`, `doctor`, and `restart`, plus hidden
   `serve` (MCP) and `lsp` (editor language server) commands launched over stdio.
-  `restart` rebuilds the index from scratch and stops running serve/lsp processes
-  so the agent or editor relaunches the current binary.
+  `restart` rebuilds the structural index from scratch and stops running serve/lsp
+  processes so the agent or editor relaunches the current binary; the relaunched
+  server re-embeds lazily, so an Ollama or model issue cannot block the restart.
 - Setup writes MCP configs: the standard `.mcp.json` (most agents), Cursor, VS Code, Oh My
   Pi (`.omp/mcp.json`), Factory droid (`.factory/mcp.json`), and OpenCode
   (`opencode.json`, its own shape), plus an `AGENTS.md` block; state stays in a
@@ -101,11 +104,17 @@ answers about a project's files, served over MCP.
   vector and full-text results, and `smart_search` adds a query rewrite and a
   rerank. Both fall back to full-text when the layer is off. The model only
   reorders and rewrites; it never makes decisions and is never its own tool.
+- Resilience: if the configured embed model is missing or Ollama is unreachable,
+  the server logs a notice and runs structural-only instead of failing to start,
+  and an embedding error during a refresh never fails the index.
 - The `init` wizard offers model tiers (`fast` / `smart` / `max`, or `--tier`),
-  detects whether Ollama and the chosen models are present, offers to run the
-  official Ollama installer, and pulls missing models. Defaults track current best
-  local models: `qwen3-embedding` for retrieval, `embeddinggemma` on the fast tier,
-  `gemma4:e2b`/`e4b` for the smart/max assist, and `gemma3:1b` for the fast assist.
+  but prefers models already installed on Ollama over the tier preset, so it never
+  points the config at an absent model or asks you to pull a redundant one when a
+  usable embedder (for example `nomic-embed-text`) is already present. It offers to
+  run the official Ollama installer and pulls only genuinely missing models. Tier
+  presets track current best local models: `qwen3-embedding` for retrieval,
+  `embeddinggemma` on the fast tier, `gemma4:e2b`/`e4b` for the smart/max assist,
+  and `gemma3:1b` for the fast assist.
 
 #### Build and docs
 

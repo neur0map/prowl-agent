@@ -134,10 +134,26 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 // incremental hashing skipping unchanged files and serving stale data.
 func indexVersion() string {
 	if bi, ok := debug.ReadBuildInfo(); ok {
+		var rev, modified string
 		for _, s := range bi.Settings {
-			if s.Key == "vcs.revision" && s.Value != "" {
-				return s.Value
+			switch s.Key {
+			case "vcs.revision":
+				rev = s.Value
+			case "vcs.modified":
+				modified = s.Value
 			}
+		}
+		// A clean release build is identified by its commit. A dirty build shares
+		// that commit across edits, so fall through to the binary mtime below.
+		if rev != "" && modified != "true" {
+			return rev
+		}
+	}
+	// Dev or dirty build: key off the binary's own mtime so each rebuild forces a
+	// full reparse instead of reusing an index made by different extractor logic.
+	if exe, err := os.Executable(); err == nil {
+		if fi, err := os.Stat(exe); err == nil {
+			return "dev-" + strconv.FormatInt(fi.ModTime().UnixNano(), 10)
 		}
 	}
 	return "dev"

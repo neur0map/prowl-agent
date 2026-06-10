@@ -24,7 +24,7 @@ type InitOptions struct {
 	// When false, RunInit derives AI from the existing project config, then the
 	// global default, so a plain re-init never resets a prior choice.
 	AISet bool
-	Tier string
+	Tier  string
 	// EmbedModel and AssistModel override the tier preset when non-empty. The
 	// init command fills them from models already installed on Ollama.
 	EmbedModel  string

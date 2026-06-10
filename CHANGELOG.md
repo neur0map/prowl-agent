@@ -84,8 +84,8 @@ answers about a project's files, served over MCP.
 - The `init` wizard offers model tiers (`fast` / `smart` / `max`, or `--tier`),
   detects whether Ollama and the chosen models are present, offers to run the
   official Ollama installer, and pulls missing models. Defaults track current best
-  local models: `qwen3-embedding` for retrieval, `embeddinggemma` for the fast
-  tier, and `gemma3` for the assist (small Gemma 4 is not on Ollama yet).
+  local models: `qwen3-embedding` for retrieval, `embeddinggemma` on the fast tier,
+  `gemma4:e2b`/`e4b` for the smart/max assist, and `gemma3:1b` for the fast assist.
 
 #### Build and docs
 

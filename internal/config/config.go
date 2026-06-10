@@ -80,8 +80,8 @@ const DefaultTier = "smart"
 // VRAM are rough guidance for choosing one.
 var Presets = []ModelPreset{
 	{"fast", "runs anywhere, CPU ok (~1 GB)", "embeddinggemma", "gemma3:1b"},
-	{"smart", "best balance, ~8 GB VRAM (~5 GB download)", "qwen3-embedding:4b", "gemma3:4b"},
-	{"max", "highest quality, ~16 GB VRAM (~10 GB download)", "qwen3-embedding:8b", "gemma3:4b"},
+	{"smart", "newer assist, ~10 GB VRAM", "qwen3-embedding:4b", "gemma4:e2b"},
+	{"max", "best quality, ~16 GB VRAM", "qwen3-embedding:8b", "gemma4:e4b"},
 }
 
 // PresetByName returns the named preset, falling back to the default tier.

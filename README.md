@@ -177,8 +177,8 @@ missing), then pulls the models for you:
 | tier | embed | assist | needs |
 |---|---|---|---|
 | fast | `embeddinggemma` | `gemma3:1b` | runs anywhere, CPU ok |
-| smart | `qwen3-embedding:4b` | `gemma3:4b` | ~8 GB VRAM |
-| max | `qwen3-embedding:8b` | `gemma3:4b` | ~16 GB VRAM |
+| smart | `qwen3-embedding:4b` | `gemma4:e2b` | ~10 GB VRAM |
+| max | `qwen3-embedding:8b` | `gemma4:e4b` | ~16 GB VRAM |
 
 Choose non-interactively with `--tier fast|smart|max`. The tiers differ mainly in
 the **embedder**, which is where recall comes from: a bigger embedder (the `smart`
@@ -190,11 +190,11 @@ without improving what gets found. Embeddings live in `sqlite-vec`, so the agent
 finds files that mean the same thing even when they share no words (for example,
 "music spectrum" finds an `AudioVisualizer`). Structural search works without it.
 
-On Gemma: the assist uses Gemma 3 because, as of now, only `gemma4:31b` is on
-Ollama (the small Gemma 4 E2B/E4B variants are not published there yet), and a 31B
-model is the wrong size for the latency-sensitive assist. The `fast` tier already
-uses Google's newest small embedder, `embeddinggemma`, and the tiers will move to
-small Gemma 4 once it reaches Ollama.
+On Gemma: the `smart` and `max` tiers use Gemma 4 for the assist (`gemma4:e2b` /
+`gemma4:e4b`, the efficient MatFormer models that infer at effective-2B/4B speed).
+The `fast` tier stays on `gemma3:1b` because there is no smaller Gemma 4 that fits
+a CPU budget. Gemma 4 is a generative model, so retrieval embeddings come from
+`qwen3-embedding` (or `embeddinggemma` on `fast`), not Gemma.
 
 The model warms up once when the server starts and stays loaded for a few minutes
 between queries, so it is not paying a cold start every time (about 2.4 s on the

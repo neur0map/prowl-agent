@@ -58,16 +58,31 @@ func newRestartCmd(string) *cobra.Command {
 	}
 }
 
-// stopWorkspaceServers SIGTERMs any prowl-agent serve/lsp processes whose working
-// directory is inside root, so the launching agent or editor respawns the current
-// binary. Linux-only (reads /proc) and best-effort.
-func stopWorkspaceServers(root string) int {
+// matchProwlServer reports whether a process (args from /proc cmdline, cwd) is a
+// prowl-agent serve/lsp worth stopping. scope=="" matches regardless of cwd;
+// otherwise only processes whose cwd is at or under scope match.
+func matchProwlServer(args []string, cwd, scope string) bool {
+	if len(args) < 2 || !strings.HasSuffix(args[0], "prowl-agent") {
+		return false
+	}
+	if args[1] != "serve" && args[1] != "lsp" {
+		return false
+	}
+	if scope == "" {
+		return true
+	}
+	return cwd == scope || strings.HasPrefix(cwd, scope+"/")
+}
+
+// findProwlServers returns the PIDs of prowl-agent serve/lsp processes matching
+// scope (see matchProwlServer), skipping this process. Linux-only (reads /proc).
+func findProwlServers(scope string) []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return 0
+		return nil
 	}
 	self := os.Getpid()
-	n := 0
+	var pids []int
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid == self {
@@ -78,19 +93,27 @@ func stopWorkspaceServers(root string) int {
 			continue
 		}
 		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
-		if len(args) < 2 || !strings.HasSuffix(args[0], "prowl-agent") {
-			continue
+		cwd, _ := os.Readlink("/proc/" + e.Name() + "/cwd")
+		if matchProwlServer(args, cwd, scope) {
+			pids = append(pids, pid)
 		}
-		if args[1] != "serve" && args[1] != "lsp" {
-			continue
-		}
-		cwd, err := os.Readlink("/proc/" + e.Name() + "/cwd")
-		if err != nil || (cwd != root && !strings.HasPrefix(cwd, root+"/")) {
-			continue
-		}
+	}
+	return pids
+}
+
+// stopServers SIGTERMs the given PIDs, returning how many were signaled, so the
+// launching agent or editor respawns the current binary on next use.
+func stopServers(pids []int) int {
+	n := 0
+	for _, pid := range pids {
 		if syscall.Kill(pid, syscall.SIGTERM) == nil {
 			n++
 		}
 	}
 	return n
+}
+
+// stopWorkspaceServers stops the serve/lsp processes rooted at root.
+func stopWorkspaceServers(root string) int {
+	return stopServers(findProwlServers(root))
 }

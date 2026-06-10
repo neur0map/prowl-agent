@@ -178,8 +178,7 @@ func writeOllamaUserUnit() error {
 		return err
 	}
 	unit := "[Unit]\n" +
-		"Description=Ollama (managed by prowl-agent)\n" +
-		"After=network-online.target\n\n" +
+		"Description=Ollama (managed by prowl-agent)\n\n" +
 		"[Service]\n" +
 		"ExecStart=" + ollamaPath() + " serve\n" +
 		"Restart=always\n" +
@@ -207,5 +206,7 @@ func spawnOllama(root string) error {
 		_ = logf.Close()
 		return err
 	}
+	// The child holds its own copy of the log fd; release ours.
+	_ = logf.Close()
 	return nil
 }

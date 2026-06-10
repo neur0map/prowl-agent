@@ -121,9 +121,9 @@ func TestHyprlangExtractor(t *testing.T) {
 
 func TestQMLExtractor(t *testing.T) {
 	r := mustExtract(t, "qml", "import QtQuick 2.0\nItem {\n  id: root\n  property int x: 1\n  Rectangle { id: rect }\n}\n")
-	comp := symNames(r, "component")
-	if !has(comp, "Item") || !has(comp, "Rectangle") {
-		t.Fatalf("components=%v", comp)
+	inst := edgeRaws(r, "instantiates")
+	if !has(inst, "Item") || !has(inst, "Rectangle") {
+		t.Fatalf("instantiates=%v", inst)
 	}
 	ids := symNames(r, "qml_id")
 	if !has(ids, "root") || !has(ids, "rect") {

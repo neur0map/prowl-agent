@@ -64,6 +64,12 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 			continue
 		}
 		res, _ := ex.Extract(data) // partial extraction is acceptable; chunks still stored
+		if lang == "qml" {
+			b := filepath.Base(rel)
+			res.Symbols = append(res.Symbols, extract.Symbol{
+				Name: b[:len(b)-len(filepath.Ext(b))], Kind: "component", StartLine: 1, EndLine: 1,
+			})
+		}
 
 		var mtime int64
 		if info, err := os.Stat(full); err == nil {

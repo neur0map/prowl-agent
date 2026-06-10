@@ -21,6 +21,13 @@ answers about a project's files, served over MCP.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.
+- QML graph resolution: component instantiations (`Foo { }`) resolve to the
+  defining `Foo.qml` (same directory, then repo-unique stem, then nearest path),
+  so the QML UI now forms its own subsystems instead of being invisible. Built-in
+  and external types (QtQuick/Quickshell) are dropped rather than left dangling.
+  `clusters` now reports each subsystem's dominant language. On a QML-heavy rice
+  this took resolved edges from 228 to ~1950 and surfaced the 498-file QML shell
+  as the top cluster (previously zero QML clusters).
 - SQLite store with FTS5 full-text search and a recursive-CTE blast-radius query,
   in WAL mode so the indexer can write while the server reads.
 

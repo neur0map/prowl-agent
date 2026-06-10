@@ -76,6 +76,22 @@ func (s *Store) UnresolvedEdges(kinds ...string) ([]EdgeRow, error) {
 	return s.scanEdges(q, kargs...)
 }
 
+// DeleteUnresolvedEdges removes unresolved edges of the given kinds. Used for
+// kinds like QML instantiation, where a non-match means a built-in/external type
+// rather than a broken reference, so they must not count as dangling.
+func (s *Store) DeleteUnresolvedEdges(kinds ...string) error {
+	if len(kinds) == 0 {
+		return nil
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(kinds)), ",")
+	args := make([]any, len(kinds))
+	for i, k := range kinds {
+		args[i] = k
+	}
+	_, err := s.db.Exec(`DELETE FROM edges WHERE resolved=0 AND kind IN (`+ph+`)`, args...)
+	return err
+}
+
 // Dep is a file reachable in a graph traversal at a given depth.
 type Dep struct {
 	File  string `json:"file"`
@@ -83,7 +99,7 @@ type Dep struct {
 }
 
 // blastKinds are the edge kinds traversed for dependency/impact analysis.
-var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts"}
+var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts", "instantiates"}
 
 // TransitiveDependents returns files that (transitively) depend on fileID, the
 // blast radius. A dependent is a file that includes/execs/references it.
@@ -226,7 +242,7 @@ type FanRow struct {
 func (s *Store) FanIn(limit int) ([]FanRow, error) {
 	rows, err := s.db.Query(`
 		SELECT f.rel_path, count(*) c FROM edges e JOIN files f ON f.id=e.dst_id
-		WHERE e.dst_type='file' AND e.resolved=1 GROUP BY e.dst_id ORDER BY c DESC, f.rel_path LIMIT ?`, limit)
+		WHERE e.dst_type='file' AND e.resolved=1 AND e.kind<>'instantiates' GROUP BY e.dst_id ORDER BY c DESC, f.rel_path LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

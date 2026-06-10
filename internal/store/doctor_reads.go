@@ -4,7 +4,7 @@ package store
 func (s *Store) FanOut(limit int) ([]FanRow, error) {
 	rows, err := s.db.Query(`
 		SELECT f.rel_path, count(*) c FROM edges e JOIN files f ON f.id=e.file_id
-		WHERE e.dst_type='file' AND e.resolved=1 GROUP BY e.file_id
+		WHERE e.dst_type='file' AND e.resolved=1 AND e.kind<>'instantiates' GROUP BY e.file_id
 		ORDER BY c DESC, f.rel_path LIMIT ?`, limit)
 	if err != nil {
 		return nil, err

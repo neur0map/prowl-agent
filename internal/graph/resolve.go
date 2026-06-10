@@ -32,6 +32,14 @@ func Resolve(s *store.Store) error {
 	for _, f := range files {
 		byBase[path.Base(f.RelPath)] = append(byBase[path.Base(f.RelPath)], f.ID)
 	}
+	qmlStem := make(map[string][]store.File)
+	for _, f := range files {
+		if f.Lang == "qml" {
+			b := path.Base(f.RelPath)
+			stem := b[:len(b)-len(path.Ext(b))]
+			qmlStem[stem] = append(qmlStem[stem], f)
+		}
+	}
 
 	// Pass 1: include/import/require/source edges -> files.
 	inc, err := s.UnresolvedEdges("includes", "references")
@@ -84,7 +92,59 @@ func Resolve(s *store.Store) error {
 			}
 		}
 	}
+	// Pass 4: QML component instantiation -> the .qml file defining that component
+	// (component name == file stem). Built-in/external types do not match and are
+	// dropped afterward so they do not pollute the dangling set.
+	inst, err := s.UnresolvedEdges("instantiates")
+	if err != nil {
+		return err
+	}
+	for _, e := range inst {
+		if id, ok := resolveQMLComponent(qmlStem, byID[e.FileID].RelPath, e.Raw); ok && id != e.FileID {
+			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.DeleteUnresolvedEdges("instantiates"); err != nil {
+		return err
+	}
 	return nil
+}
+
+// resolveQMLComponent links a QML component instantiation (by type name) to the
+// .qml file defining it: same directory first (QML's implicit same-dir import),
+// then a repo-unique stem, then the candidate sharing the longest path prefix.
+func resolveQMLComponent(qmlStem map[string][]store.File, fromRel, name string) (int64, bool) {
+	cands := qmlStem[name]
+	switch len(cands) {
+	case 0:
+		return 0, false
+	case 1:
+		return cands[0].ID, true
+	}
+	fromDir := path.Dir(fromRel)
+	best, bestScore := cands[0].ID, -1
+	for _, c := range cands {
+		cdir := path.Dir(c.RelPath)
+		score := sharedPrefixLen(cdir, fromDir)
+		if cdir == fromDir {
+			score = 1 << 30
+		}
+		if score > bestScore {
+			best, bestScore = c.ID, score
+		}
+	}
+	return best, true
+}
+
+func sharedPrefixLen(a, b string) int {
+	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+	n := 0
+	for n < len(as) && n < len(bs) && as[n] == bs[n] {
+		n++
+	}
+	return n
 }
 
 // resolvePath resolves a raw include/reference target to a file id.

@@ -7,9 +7,11 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
-// Cluster is a connected group of files (a subsystem).
+// Cluster is a connected group of files (a subsystem) with its dominant language,
+// so an agent can tell a UI subsystem from an engine at a glance.
 type Cluster struct {
 	Label string   `json:"label"`
+	Lang  string   `json:"lang,omitempty"`
 	Files []string `json:"files"`
 }
 
@@ -22,8 +24,10 @@ func (q *Querier) Clusters() ([]Cluster, error) {
 		return nil, err
 	}
 	uf := newUnionFind()
+	langOf := make(map[string]string, len(files))
 	for _, f := range files {
 		uf.add(f.RelPath)
+		langOf[f.RelPath] = f.Lang
 	}
 	dep, err := q.s.FileDepEdges()
 	if err != nil {
@@ -46,7 +50,7 @@ func (q *Querier) Clusters() ([]Cluster, error) {
 			continue
 		}
 		sort.Strings(members)
-		clusters = append(clusters, Cluster{Label: clusterLabel(members), Files: members})
+		clusters = append(clusters, Cluster{Label: clusterLabel(members), Lang: dominantLang(members, langOf), Files: members})
 	}
 	sort.Slice(clusters, func(i, j int) bool {
 		if len(clusters[i].Files) != len(clusters[j].Files) {
@@ -80,6 +84,21 @@ func clusterLabel(members []string) string {
 	}
 	if best == "" || strings.Contains(best, ".") {
 		return "misc"
+	}
+	return best
+}
+
+// dominantLang returns the most common language among a cluster's files.
+func dominantLang(members []string, langOf map[string]string) string {
+	counts := map[string]int{}
+	for _, m := range members {
+		counts[langOf[m]]++
+	}
+	best, bestN := "", 0
+	for l, n := range counts {
+		if n > bestN || (n == bestN && l < best) {
+			best, bestN = l, n
+		}
 	}
 	return best
 }

@@ -19,6 +19,7 @@ func main() {
 		SilenceErrors: true,
 		Version:       version,
 	}
+	root.CompletionOptions.HiddenDefaultCmd = true
 	cli.Register(root, version)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

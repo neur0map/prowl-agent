@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -196,15 +197,34 @@ func writeOllamaUserUnit() error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	var envBlock string
+	for _, l := range ollamaEnvLines(os.Environ()) {
+		envBlock += l + "\n"
+	}
 	unit := "[Unit]\n" +
 		"Description=Ollama (managed by prowl-agent)\n\n" +
 		"[Service]\n" +
 		"ExecStart=" + bin + " serve\n" +
+		envBlock +
 		"Restart=always\n" +
 		"RestartSec=2\n\n" +
 		"[Install]\n" +
 		"WantedBy=default.target\n"
 	return os.WriteFile(filepath.Join(dir, "ollama.service"), []byte(unit), 0o644)
+}
+
+// ollamaEnvLines turns OLLAMA_* entries from environ into systemd Environment=
+// directives, so the managed service uses the same models dir and host as the
+// user's own ollama (for example a custom OLLAMA_MODELS) rather than the empty
+// default store, which would otherwise look like the models are missing.
+func ollamaEnvLines(environ []string) []string {
+	var lines []string
+	for _, e := range environ {
+		if strings.HasPrefix(e, "OLLAMA_") {
+			lines = append(lines, "Environment=\""+e+"\"")
+		}
+	}
+	return lines
 }
 
 // spawnOllama starts `ollama serve` in its own session (so it outlives init),

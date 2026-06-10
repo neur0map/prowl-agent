@@ -134,3 +134,17 @@ func TestEnsureOllamaStartsUserUnitWithUserTrue(t *testing.T) {
 	}
 	assertCallOrder(t, rec, []string{"start"})
 }
+
+func TestOllamaEnvLines(t *testing.T) {
+	got := ollamaEnvLines([]string{
+		"PATH=/usr/bin",
+		"OLLAMA_MODELS=/home/u/.local/ollama",
+		"HOME=/home/u",
+		"OLLAMA_HOST=127.0.0.1:11434",
+	})
+	want := []string{
+		`Environment="OLLAMA_MODELS=/home/u/.local/ollama"`,
+		`Environment="OLLAMA_HOST=127.0.0.1:11434"`,
+	}
+	assertCallOrder(t, got, want)
+}

@@ -25,7 +25,7 @@ const (
 	releaseBase = "https://github.com/neur0map/prowl-agent/releases/download/nightly"
 	asset       = "prowl-agent-linux-amd64"
 	commitsAPI  = "https://api.github.com/repos/neur0map/prowl-agent/commits/main"
-	cacheTTL    = 24 * time.Hour
+	cacheTTL    = 2 * time.Minute
 )
 
 // Result reports update status. Checked is true once we determined up-to-date or
@@ -43,16 +43,27 @@ func Check(version string) Result {
 	if local == "" {
 		return Result{Note: "unknown build"}
 	}
-	if c, ok := readCache(); ok {
-		return Result{Available: c.Available, Checked: true, Current: shortSum(local)}
+	latest, ok := cachedLatest()
+	if !ok {
+		fetched, err := latestCommit(2 * time.Second)
+		if err != nil {
+			return Result{Current: shortSum(local), Note: "offline"}
+		}
+		latest = fetched
+		writeCache(cache{CheckedAt: time.Now().Unix(), Latest: latest})
 	}
-	latest, err := latestCommit(2 * time.Second)
-	if err != nil {
-		return Result{Current: shortSum(local), Note: "offline"}
+	return Result{Available: !sameCommit(local, latest), Checked: true, Current: shortSum(local)}
+}
+
+// cachedLatest returns the last fetched main commit while the cache is fresh. It
+// caches the commit (not the verdict) so the result is recomputed against the
+// current binary every call, staying correct immediately after an update.
+func cachedLatest() (string, bool) {
+	c, ok := readCache()
+	if !ok || c.Latest == "" {
+		return "", false
 	}
-	avail := !sameCommit(local, latest)
-	writeCache(cache{CheckedAt: time.Now().Unix(), Available: avail})
-	return Result{Available: avail, Checked: true, Current: shortSum(local)}
+	return c.Latest, true
 }
 
 // localCommit returns the commit the running binary was built from, preferring
@@ -216,8 +227,8 @@ func shortSum(s string) string {
 }
 
 type cache struct {
-	CheckedAt int64 `json:"checked_at"`
-	Available bool  `json:"available"`
+	CheckedAt int64  `json:"checked_at"`
+	Latest    string `json:"latest"`
 }
 
 func cachePath() string {

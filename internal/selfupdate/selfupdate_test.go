@@ -40,21 +40,23 @@ func TestParseChecksum(t *testing.T) {
 
 func TestCacheRoundTripAndTTL(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	writeCache(cache{CheckedAt: time.Now().Unix(), Available: true})
+	writeCache(cache{CheckedAt: time.Now().Unix(), Latest: "abc123"})
 	c, ok := readCache()
-	if !ok || !c.Available {
+	if !ok || c.Latest != "abc123" {
 		t.Fatalf("fresh cache = %+v ok=%v", c, ok)
 	}
-	writeCache(cache{CheckedAt: time.Now().Add(-48 * time.Hour).Unix(), Available: true})
+	writeCache(cache{CheckedAt: time.Now().Add(-48 * time.Hour).Unix(), Latest: "abc123"})
 	if _, ok := readCache(); ok {
 		t.Fatal("stale cache should be ignored")
 	}
 }
 
-func TestCheckUsesCache(t *testing.T) {
+func TestCheckUsesCachedLatest(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	writeCache(cache{CheckedAt: time.Now().Unix(), Available: true})
+	// A cached "latest" that differs from this build means an update is available,
+	// computed without any network call.
+	writeCache(cache{CheckedAt: time.Now().Unix(), Latest: "0000000000000000000000000000000000000000"})
 	if r := Check("v9.9.9-deadbee"); !r.Available || !r.Checked {
-		t.Fatalf("should honor cached availability without network: %+v", r)
+		t.Fatalf("should report available from cached latest without network: %+v", r)
 	}
 }

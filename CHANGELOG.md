@@ -57,8 +57,9 @@ answers about a project's files, served over MCP.
 - `prowl-agent update` replaces the running binary with the latest published build
   (downloaded and checksum-verified). `prowl-agent status` shows update status
   ("up to date" or "update available") by comparing the build's commit against the
-  latest on main, cached for a day; it works for source builds too via embedded
-  VCS info.
+  latest commit on main (cached briefly, recomputed against the running build so
+  it is correct right after an update); it works for source builds too via the
+  embedded VCS revision.
 - Redesigned `prowl-agent status`: a bordered card (in a terminal) with index
   stats, a language breakdown, and a token-savings report. Savings are measured
   per answer (the bytes each answer returned versus the size of the files it

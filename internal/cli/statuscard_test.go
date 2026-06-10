@@ -32,6 +32,19 @@ func TestRenderStatusCard(t *testing.T) {
 	}
 }
 
+func TestRenderStatusCardCombinedFromEmptyProject(t *testing.T) {
+	st := sampleStatus()
+	st.Savings = query.Savings{} // current project has no queries yet
+	out := renderStatusCard("v1", "/home/x/empty", "empty", st, selfupdate.Result{},
+		[]projSaving{{Name: "ryoku-arch", Saved: 1300000}},
+		query.Savings{Queries: 23, SavedTokens: 1300000})
+	for _, want := range []string{"ACROSS YOUR PROJECTS", "ryoku-arch", "across your projects", "1.3M"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("card missing %q\n%s", want, out)
+		}
+	}
+}
+
 func TestPlainStatusShowsSavingsAndUpdate(t *testing.T) {
 	var b strings.Builder
 	printPlainStatus(&b, "/p", sampleStatus(), selfupdate.Result{Available: true},

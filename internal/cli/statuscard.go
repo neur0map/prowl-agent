@@ -175,11 +175,13 @@ func renderStatusCard(version, root, name string, st query.Status, upd selfupdat
 		avg := sv.AnswerTokens / sv.Queries
 		L = append(L, "  "+stFaint.Render(fmt.Sprintf("across %s answers · ~%s tokens each vs reading the files",
 			comma(int(sv.Queries)), humanTokens(avg))))
+	} else if combined.SavedTokens > 0 {
+		L = append(L, "  "+stFaint.Render("none in this project yet; ~"+humanTokens(combined.SavedTokens)+" across your projects"))
 	} else {
 		L = append(L, "  "+stFaint.Render("no queries yet; savings grow as your agent uses prowl"))
 	}
 
-	if len(perProject) >= 2 {
+	if len(perProject) >= 1 && combined.Queries > sv.Queries {
 		L = append(L, "")
 		L = append(L, stLabel.Render("ACROSS YOUR PROJECTS"))
 		shown := perProject
@@ -189,7 +191,9 @@ func renderStatusCard(version, root, name string, st query.Status, upd selfupdat
 		for _, p := range shown {
 			L = append(L, "  "+stLabel.Width(18).Render(p.Name)+stNum.Render("~"+humanTokens(p.Saved)))
 		}
-		L = append(L, "  "+stLabel.Width(18).Render("combined")+stBig.Render("~"+humanTokens(combined.SavedTokens)))
+		if len(perProject) >= 2 {
+			L = append(L, "  "+stLabel.Width(18).Render("combined")+stBig.Render("~"+humanTokens(combined.SavedTokens)))
+		}
 	}
 
 	if upd.Available {

@@ -29,23 +29,31 @@ Tools: ` + "`overview`, `clusters`, `find_symbol`, `find_references`, `find_call
 - **Before committing:** run ` + "`doctor`" + ` and resolve errors (cycles, dangling refs, broken commands).
 <!-- /prowl-agent -->`
 
-// Inject writes MCP server configs for common agent environments: a generic
-// `.mcp.json`, Cursor (`.cursor/mcp.json`), and VS Code (`.vscode/mcp.json`),
-// plus agent instructions (`AGENTS.md`). Every write merges and is idempotent.
+// Inject writes MCP server configs for common agent environments and agent
+// instructions (AGENTS.md). It covers the standard `.mcp.json` (most agents),
+// Cursor, VS Code, Oh My Pi (`.omp/mcp.json`), Factory droid
+// (`.factory/mcp.json`), and OpenCode (`opencode.json`, a distinct shape). Every
+// write merges into existing config and is idempotent.
 func Inject(root string) error {
-	if err := mergeMCPConfig(filepath.Join(root, ".mcp.json"), "mcpServers"); err != nil {
-		return err
+	for _, c := range []struct{ path, key string }{
+		{filepath.Join(root, ".mcp.json"), "mcpServers"},            // standard / generic
+		{filepath.Join(root, ".cursor", "mcp.json"), "mcpServers"},  // Cursor
+		{filepath.Join(root, ".vscode", "mcp.json"), "servers"},     // VS Code
+		{filepath.Join(root, ".omp", "mcp.json"), "mcpServers"},     // Oh My Pi
+		{filepath.Join(root, ".factory", "mcp.json"), "mcpServers"}, // Factory droid
+	} {
+		if err := mergeMCPConfig(c.path, c.key); err != nil {
+			return err
+		}
 	}
-	if err := mergeMCPConfig(filepath.Join(root, ".cursor", "mcp.json"), "mcpServers"); err != nil {
-		return err
-	}
-	if err := mergeMCPConfig(filepath.Join(root, ".vscode", "mcp.json"), "servers"); err != nil {
+	if err := mergeOpenCode(filepath.Join(root, "opencode.json")); err != nil {
 		return err
 	}
 	return ensureAgentsBlock(filepath.Join(root, "AGENTS.md"))
 }
 
 type mcpServer struct {
+	Type    string   `json:"type"`
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
 }
@@ -67,8 +75,36 @@ func mergeMCPConfig(path, key string) error {
 	if servers == nil {
 		servers = map[string]any{}
 	}
-	servers["prowl-agent"] = mcpServer{Command: "prowl-agent", Args: []string{"serve"}}
+	servers["prowl-agent"] = mcpServer{Type: "stdio", Command: "prowl-agent", Args: []string{"serve"}}
 	doc[key] = servers
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
+}
+
+// mergeOpenCode adds the prowl-agent server to an OpenCode config (opencode.json),
+// which uses a distinct shape: an `mcp` map of local servers with a command array.
+// Existing keys are preserved.
+func mergeOpenCode(path string) error {
+	doc := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &doc)
+	}
+	if _, ok := doc["$schema"]; !ok {
+		doc["$schema"] = "https://opencode.ai/config.json"
+	}
+	mcp, _ := doc["mcp"].(map[string]any)
+	if mcp == nil {
+		mcp = map[string]any{}
+	}
+	mcp["prowl-agent"] = map[string]any{
+		"type":    "local",
+		"command": []string{"prowl-agent", "serve"},
+		"enabled": true,
+	}
+	doc["mcp"] = mcp
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err

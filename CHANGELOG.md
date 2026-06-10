@@ -32,8 +32,11 @@ answers about a project's files, served over MCP.
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
 - CLI: `init` (setup wizard), `status`, and `doctor`, plus hidden `serve` (MCP)
   and `lsp` (editor language server) commands launched over stdio.
-- Setup writes `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, and an
-  `AGENTS.md` block, and keeps state in a gitignored `.prowl/` folder.
+- Setup writes MCP configs: the standard `.mcp.json` (most agents), Cursor, VS Code, Oh My
+  Pi (`.omp/mcp.json`), Factory droid (`.factory/mcp.json`), and OpenCode
+  (`opencode.json`, its own shape), plus an `AGENTS.md` block; state stays in a
+  gitignored `.prowl/` folder. Server entries now include `type: "stdio"` (which
+  VS Code requires). The README documents the one-command setup for any other agent.
 - Automatic freshness (no daemon, no extra command): the MCP server re-indexes
   right before a request when a change is pending, keeps a featherweight fsnotify
   watcher active for 30 minutes after each call, then suspends and resumes (with a

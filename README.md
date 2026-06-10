@@ -80,6 +80,37 @@ before a query, only when something actually changed), keeps a lightweight watch
 active for 30 minutes after each call, and idles when unused. You never run a
 watcher by hand, and the agent never reads stale data.
 
+## Connect your agent (MCP)
+
+`init` auto-writes the MCP config: the standard `.mcp.json` (most agents), Cursor
+(`.cursor/mcp.json`), VS Code (`.vscode/mcp.json`), Oh My Pi (`.omp/mcp.json`),
+Factory droid (`.factory/mcp.json`), and OpenCode (`opencode.json`). For any other
+agent, point it at one command:
+
+```sh
+prowl-agent serve
+```
+
+Most agents use the standard `mcpServers` shape:
+
+```json
+{
+  "mcpServers": {
+    "prowl-agent": { "type": "stdio", "command": "prowl-agent", "args": ["serve"] }
+  }
+}
+```
+
+OpenCode uses its own shape (an `mcp` map with a command array):
+
+```json
+{
+  "mcp": {
+    "prowl-agent": { "type": "local", "command": ["prowl-agent", "serve"], "enabled": true }
+  }
+}
+```
+
 ## What the agent can ask
 
 Once it is running, the agent has tools to:

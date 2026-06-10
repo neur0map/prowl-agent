@@ -103,4 +103,19 @@ func TestInjectMergePreservesServers(t *testing.T) {
 	if !strings.Contains(string(vsc), "\"servers\"") || !strings.Contains(string(vsc), "prowl-agent") {
 		t.Fatalf(".vscode/mcp.json wrong shape: %s", vsc)
 	}
+	// Oh My Pi, Factory droid, and OpenCode configs are written too.
+	for _, p := range []string{
+		filepath.Join(root, ".omp", "mcp.json"),
+		filepath.Join(root, ".factory", "mcp.json"),
+		filepath.Join(root, "opencode.json"),
+	} {
+		if d, _ := os.ReadFile(p); !strings.Contains(string(d), "prowl-agent") {
+			t.Fatalf("%s missing prowl-agent: %s", p, d)
+		}
+	}
+	// OpenCode uses its own shape: an `mcp` map with a local command array.
+	oc, _ := os.ReadFile(filepath.Join(root, "opencode.json"))
+	if !strings.Contains(string(oc), "\"mcp\"") || !strings.Contains(string(oc), "\"local\"") {
+		t.Fatalf("opencode.json wrong shape: %s", oc)
+	}
 }

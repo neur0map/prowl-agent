@@ -44,9 +44,12 @@ answers about a project's files, served over MCP.
   `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
   `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
-- CLI: `init` (setup wizard), `status`, `doctor`, and `restart`, plus hidden
-  `serve` (MCP) and `lsp` (editor language server) commands launched over stdio.
-  `restart` rebuilds the structural index from scratch and stops running serve/lsp
+- CLI surface kept small: `init`, `status`, `doctor`, `restart`, `update`, and
+  `version` (plus `help`). The MCP `serve` and editor `lsp` commands stay hidden
+  because agents and editors launch them over stdio; you never run them by hand.
+  `init` is the single setup command and is idempotent: re-running it (after a
+  reboot, say) keeps your settings instead of re-prompting.
+- `restart` rebuilds the structural index from scratch and stops running serve/lsp
   processes so the agent or editor relaunches the current binary; the relaunched
   server re-embeds lazily, so an Ollama or model issue cannot block the restart.
 - Setup writes MCP configs: the standard `.mcp.json` (most agents), Cursor, VS Code, Oh My
@@ -75,11 +78,12 @@ answers about a project's files, served over MCP.
 - One-line installer (`install.sh`) that downloads, checksum-verifies, and drops
   the binary in `~/.local/bin`.
 - `prowl-agent update` replaces the running binary with the latest published build
-  (downloaded and checksum-verified). `prowl-agent status` shows update status
-  ("up to date" or "update available") by comparing the build's commit against the
-  latest commit on main (cached briefly, recomputed against the running build so
-  it is correct right after an update); it works for source builds too via the
-  embedded VCS revision.
+  (downloaded and checksum-verified), then stops running serve/lsp processes so the
+  agent or editor relaunches the new build, so it goes live without a manual
+  restart. `prowl-agent status` shows update status ("up to date" or "update
+  available") by comparing the build's commit against the latest commit on main
+  (cached briefly, recomputed against the running build so it is correct right
+  after an update); it works for source builds too via the embedded VCS revision.
 - Redesigned `prowl-agent status`: a bordered card (in a terminal) with index
   stats, a language breakdown, and a token-savings report. Savings are measured
   per answer (the bytes each answer returned versus the size of the files it
@@ -93,7 +97,9 @@ answers about a project's files, served over MCP.
 - `doctor`, as both a command and an MCP tool, reports cyclic includes,
   fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan
   scripts, dangling references, hardcoded colors, forbidden layer crossings, and
-  git-churn hotspots, with a 0-100 score.
+  git-churn hotspots, with a 0-100 score. The command renders a colored card in a
+  terminal (score bar, severity breakdown, per-check counts, grouped findings) and
+  plain text when piped; `--json` carries the report.
 - Tuned to keep false positives low: references are emitted only for path-shaped
   targets, commands resolve against the project, checks skip lifecycle directories
   (migrations, installers, CI, vendor), and only project-relative broken includes
@@ -109,11 +115,14 @@ answers about a project's files, served over MCP.
 - Resilience: if the configured embed model is missing or Ollama is unreachable,
   the server logs a notice and runs structural-only instead of failing to start,
   and an embedding error during a refresh never fails the index.
-- The `init` wizard offers model tiers (`fast` / `smart` / `max`, or `--tier`),
-  but prefers models already installed on Ollama over the tier preset, so it never
-  points the config at an absent model or asks you to pull a redundant one when a
-  usable embedder (for example `nomic-embed-text`) is already present. It offers to
-  run the official Ollama installer and pulls only genuinely missing models. Tier
+- `init` sets up the semantic layer end to end: it offers model tiers (`fast` /
+  `smart` / `max`, or `--tier`), prefers models already installed on Ollama over
+  the tier preset (so it never points the config at an absent model or asks for a
+  redundant pull), offers the official Ollama installer, brings the daemon up
+  (reusing a service, installing a user service that survives reboot, or spawning
+  it), pulls only missing models, and warms the embed model. AI on/off and tier
+  persist in a global config so a fresh project inherits your last choice and a
+  re-init never silently disables AI; `--reconfigure` re-opens the prompts. Tier
   presets track current best local models: `qwen3-embedding` for retrieval,
   `embeddinggemma` on the fast tier, `gemma4:e2b`/`e4b` for the smart/max assist,
   and `gemma3:1b` for the fast assist.

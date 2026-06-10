@@ -66,12 +66,20 @@ MCP-compatible agent, wires your editor's language server, and writes a short
 `AGENTS.md`. Everything lives in a local `.prowl/` folder that gets added to
 `.gitignore`. Nothing leaves your machine.
 
-Two commands are handy day to day:
+`init` is the only command you run to set up, and it is safe to re-run (after a
+reboot, say): it remembers whether you enabled AI instead of asking again, and
+when AI is on it makes sure Ollama is running and the model is warm for the
+session. Settings persist for the binary, so a fresh project inherits your last
+choice.
+
+A few commands, day to day:
 
 ```sh
-prowl-agent status   # index, token savings, and update notice
-prowl-agent doctor   # broken includes, dead scripts, keybind clashes
-prowl-agent update   # upgrade to the latest build
+prowl-agent status    # index, token savings, and update notice
+prowl-agent doctor    # broken includes, dead scripts, keybind clashes
+prowl-agent restart   # rebuild the index and restart running servers
+prowl-agent update    # upgrade to the latest build, then restart servers
+prowl-agent version   # version and whether an update is available
 ```
 
 The agent launches the server itself through the generated config, and the index
@@ -205,8 +213,10 @@ took a few seconds to a few tens of seconds depending on size.
 
 If you turn it on, `init` walks you through a local semantic layer powered by
 [Ollama](https://ollama.com), with no cloud and no API keys. You pick a model
-tier; the wizard detects Ollama (offering to run the official installer if it is
-missing), then pulls the models for you:
+tier; `init` detects Ollama (offering to run the official installer if it is
+missing), starts it (installing a user service so it survives a reboot, or
+running it in the background otherwise), pulls the models, and warms the embed
+model so the first query is hot:
 
 | tier | embed | assist | needs |
 |---|---|---|---|
@@ -230,9 +240,10 @@ The `fast` tier stays on `gemma3:1b` because there is no smaller Gemma 4 that fi
 a CPU budget. Gemma 4 is a generative model, so retrieval embeddings come from
 `qwen3-embedding` (or `embeddinggemma` on `fast`), not Gemma.
 
-The model warms up once when the server starts and stays loaded for a few minutes
-between queries, so it is not paying a cold start every time (about 2.4 s on the
-first query after idle, then around 20 ms on the repo we tried).
+`init` warms the embed model up front, and the server keeps it loaded between
+queries, so you do not pay a cold start every time (about 2.4 s on the first
+query after a long idle, then around 20 ms on the repo we tried). Re-running
+`init` after a reboot brings Ollama back and re-warms.
 
 ## Supported formats
 

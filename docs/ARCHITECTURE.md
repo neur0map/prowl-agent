@@ -17,8 +17,8 @@ internal/query       structural queries and hybrid/semantic search
 internal/doctor      health checks (cycles, conflicts, hotspots)
 internal/mcp         MCP stdio server
 internal/lsp         Language Server (stdio) for editors (definition, references, hover, ...)
-internal/cli         init wizard, status, doctor, hidden serve, file watcher, injection
-internal/config      config.toml / rules.toml
+internal/cli         init (setup wizard + Ollama lifecycle), status, doctor, restart, update, version, hidden serve/lsp, file watcher, injection
+internal/config      per-project config.toml / rules.toml and a global ~/.config/prowl-agent/config.toml that remembers AI on/off and tier
 internal/workspace   .prowl/ workspace, global registry, gitignore wiring
 internal/assist      local Ollama inferencer for the semantic layer
 ```
@@ -51,6 +51,12 @@ rank fusion), and a small helper model can rewrite and re-rank queries for
 `smart_search`. The helper only reorders and rewrites; it never invents results
 and is never exposed as its own tool. The embed model warms once at startup and
 stays resident for a keep-alive window, so queries are hot after the first.
+
+`init` owns the Ollama lifecycle: when AI is enabled it ensures the daemon is
+running (reusing a service, installing a user `ollama.service` that survives a
+reboot, or spawning it in the background) and warms the embed model, so a long
+session stays hot. Re-running `init` after a reboot brings it all back, and AI
+settings persist in the global config so it never re-prompts or resets them.
 
 ## Development
 

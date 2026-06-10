@@ -70,3 +70,27 @@ func TestOllamaRerank(t *testing.T) {
 		t.Fatalf("order = %v, want %v", order, want)
 	}
 }
+
+func TestOllamaWarm(t *testing.T) {
+	var gotKeepAlive, gotModel any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/embed", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotKeepAlive, gotModel = body["keep_alive"], body["model"]
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0.1}}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	o := NewOllama(srv.URL, "embed", "gen")
+	if err := o.Warm(context.Background(), "warm-model", "30m"); err != nil {
+		t.Fatal(err)
+	}
+	if gotModel != "warm-model" {
+		t.Fatalf("model = %v, want warm-model", gotModel)
+	}
+	if gotKeepAlive != "30m" {
+		t.Fatalf("keep_alive = %v, want 30m", gotKeepAlive)
+	}
+}

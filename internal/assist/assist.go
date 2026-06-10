@@ -76,6 +76,17 @@ func (o *Ollama) Embed(ctx context.Context, texts []string) ([][]float32, error)
 	return out.Embeddings, nil
 }
 
+// Warm loads model into memory and pins it for keepAlive (e.g. "30m") via a tiny
+// embed, so the first real query after init is hot instead of paying a cold
+// start. Best-effort: callers ignore the error.
+func (o *Ollama) Warm(ctx context.Context, model, keepAlive string) error {
+	var out struct {
+		Embeddings [][]float32 `json:"embeddings"`
+	}
+	body := map[string]any{"model": model, "input": " ", "keep_alive": keepAlive}
+	return o.post(ctx, "/api/embed", body, &out)
+}
+
 // Generate runs a deterministic (temperature 0) completion via /api/generate.
 func (o *Ollama) Generate(ctx context.Context, prompt string) (string, error) {
 	var out struct {

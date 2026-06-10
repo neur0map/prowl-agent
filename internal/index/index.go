@@ -3,6 +3,7 @@ package index
 import (
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -33,6 +34,9 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 		return sum, err
 	}
 	current := make(map[string]bool, len(rels))
+	ver := indexVersion()
+	prevVer, _ := s.GetMeta("index_version")
+	force := prevVer != ver // a binary upgrade re-parses everything, not just changed files
 
 	for _, rel := range rels {
 		full := filepath.Join(root, filepath.FromSlash(rel))
@@ -54,7 +58,7 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 		hash := strconv.FormatUint(xxhash.Sum64(data), 16)
 		if existing, ok, err := s.GetFileByPath(rel); err != nil {
 			return sum, err
-		} else if ok && existing.Hash == hash {
+		} else if !force && ok && existing.Hash == hash {
 			sum.Skipped++
 			continue
 		}
@@ -113,7 +117,25 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	if err := s.SetMeta("last_index", strconv.FormatInt(time.Now().Unix(), 10)); err != nil {
 		return sum, err
 	}
+	if err := s.SetMeta("index_version", ver); err != nil {
+		return sum, err
+	}
 	return sum, nil
+}
+
+// indexVersion identifies the extraction/resolution logic the index was built
+// with, from the binary's VCS revision. When it changes (a binary upgrade), Index
+// forces a full re-parse so extractor and resolver fixes take effect, instead of
+// incremental hashing skipping unchanged files and serving stale data.
+func indexVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && s.Value != "" {
+				return s.Value
+			}
+		}
+	}
+	return "dev"
 }
 
 func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {

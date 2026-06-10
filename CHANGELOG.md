@@ -15,6 +15,9 @@ answers about a project's files, served over MCP.
 
 - Incremental indexing. An ignore-aware walk hashes files and reparses only what
   changed; deleted files are pruned, and graph resolution re-runs each time.
+- A binary upgrade forces a full re-parse: the index records the binary's version,
+  so extractor and resolver fixes apply on update instead of incremental hashing
+  skipping unchanged files and serving stale data.
 - Tree-sitter extraction for Lua, Python, Bash, Fish, C++, QML, CSS, SCSS, JSON,
   YAML, TOML, INI, and Hyprland, plus a line-based reader for other config formats
   (sway/i3, rofi `rasi`, polybar, and similar).
@@ -37,8 +40,10 @@ answers about a project's files, served over MCP.
   `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
   `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
-- CLI: `init` (setup wizard), `status`, and `doctor`, plus hidden `serve` (MCP)
-  and `lsp` (editor language server) commands launched over stdio.
+- CLI: `init` (setup wizard), `status`, `doctor`, and `restart`, plus hidden
+  `serve` (MCP) and `lsp` (editor language server) commands launched over stdio.
+  `restart` rebuilds the index from scratch and stops running serve/lsp processes
+  so the agent or editor relaunches the current binary.
 - Setup writes MCP configs: the standard `.mcp.json` (most agents), Cursor, VS Code, Oh My
   Pi (`.omp/mcp.json`), Factory droid (`.factory/mcp.json`), and OpenCode
   (`opencode.json`, its own shape), plus an `AGENTS.md` block; state stays in a

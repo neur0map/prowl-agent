@@ -13,48 +13,54 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
+// ollamaKeepAlive is how long a warmed model stays resident between queries:
+// long enough to cover a coding session without pinning VRAM indefinitely.
+const ollamaKeepAlive = "30m"
+
 // ollamaEnv abstracts the side-effecting calls the lifecycle makes, so the
 // decision logic is unit-tested with fakes instead of spawning ollama/systemctl.
 type ollamaEnv struct {
 	reachable      func(ctx context.Context) bool // ollama daemon answers
-	hasUnit        func() (user bool, ok bool)     // an ollama.service exists (system or user)
-	systemdUser    func() bool                     // a user systemd manager is usable
-	startUnit      func(user bool) error           // systemctl [--user] start ollama.service
-	writeAndEnable func() error                     // install + enable a user ollama.service
-	spawnDetached  func() error                     // setsid ollama serve in the background
-	warm           func(ctx context.Context) error // pin the embed model so the first query is hot
+	hasUnit        func() (user bool, ok bool)    // an ollama.service exists (system or user)
+	systemdUser    func() bool                    // a user systemd manager is usable
+	startUnit      func(user bool) error          // systemctl [--user] start ollama.service
+	writeAndEnable func() error                   // install + enable a user ollama.service
+	spawnDetached  func() error                   // setsid ollama serve in the background
 }
 
-// ensureOllamaRunning brings Ollama up and warms the model, preferring the least
-// invasive option that works: reuse a running daemon, then an existing
-// ollama.service, then a systemd user unit (survives reboot), then a detached
-// background process. Every step is best-effort; semantic search degrades to
-// structural-only if Ollama cannot be started.
-func ensureOllamaRunning(ctx context.Context, e ollamaEnv) {
+// ensureOllamaRunning brings the Ollama daemon up, preferring the least invasive
+// option that works: reuse a running daemon, then an existing ollama.service,
+// then a systemd user unit (survives reboot), then a detached background
+// process. It returns whether the daemon ended up reachable. Best-effort:
+// semantic search degrades to structural-only when it cannot be started.
+func ensureOllamaRunning(ctx context.Context, e ollamaEnv) bool {
 	if e.reachable(ctx) {
-		_ = e.warm(ctx)
-		return
+		return true
 	}
 	if user, ok := e.hasUnit(); ok {
 		if e.startUnit(user) == nil && e.reachable(ctx) {
-			_ = e.warm(ctx)
-			return
+			return true
 		}
 	}
 	if e.systemdUser() {
 		if e.writeAndEnable() == nil && e.reachable(ctx) {
-			_ = e.warm(ctx)
-			return
+			return true
 		}
 	}
 	_ = e.spawnDetached()
-	_ = e.warm(ctx)
+	return e.reachable(ctx)
+}
+
+// ensureOllama is the daemon-management hook setupAI calls; a package variable so
+// tests can stub it out instead of touching systemd or spawning ollama.
+var ensureOllama = func(ctx context.Context, oll *assist.Ollama, root string) bool {
+	return ensureOllamaRunning(ctx, realOllamaEnv(oll, root))
 }
 
 // realOllamaEnv wires the lifecycle to the local system: systemctl for service
-// management and a detached `ollama serve` fallback. embedModel/keepAlive drive
-// the warm step; root locates the per-project log directory for the fallback.
-func realOllamaEnv(oll *assist.Ollama, embedModel, keepAlive, root string) ollamaEnv {
+// management and a detached `ollama serve` fallback. root locates the per-project
+// log directory used by the fallback.
+func realOllamaEnv(oll *assist.Ollama, root string) ollamaEnv {
 	return ollamaEnv{
 		reachable: oll.Available,
 		hasUnit: func() (bool, bool) {
@@ -110,13 +116,6 @@ func realOllamaEnv(oll *assist.Ollama, embedModel, keepAlive, root string) ollam
 				uiLog.Warn("Ollama is starting but did not answer yet; semantic search activates once it is up")
 			}
 			return nil
-		},
-		warm: func(ctx context.Context) error {
-			if embedModel == "" {
-				return nil
-			}
-			uiLog.Infof("warming model %s", embedModel)
-			return oll.Warm(ctx, embedModel, keepAlive)
 		},
 	}
 }

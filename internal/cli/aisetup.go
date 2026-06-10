@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"charm.land/huh/v2"
 
@@ -35,45 +34,59 @@ func selectTier() string {
 	return tier
 }
 
-// setupAI gets Ollama and the chosen tier's models ready. When interactive it
-// offers to run the official installer and to pull missing models; otherwise it
-// prints the commands to run.
+// setupAI gets Ollama and the chosen tier's models ready: it ensures Ollama is
+// installed, brings the daemon up (reusing a service, installing a user service,
+// or spawning it), pulls any missing models, and warms the embed model. It keeps
+// semantic search working across long sessions and degrades to structural-only
+// if Ollama cannot be started.
 func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interactive bool) {
 	fmt.Fprintf(out, "AI tier %q: embed %s, assist %s\n", p.Name, p.EmbedModel, p.AssistModel)
 	oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
+	root, _ := os.Getwd()
 
+	// Ensure Ollama is installed before trying to start it.
 	if !oll.Available(ctx) {
 		if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
 			if interactive && confirmAI("Ollama is not installed. Install it now? (runs the official installer; may ask for sudo)") {
 				installOllama(out)
-				waitForOllama(ctx, oll)
 			} else {
-				fmt.Fprintln(out, "  Install Ollama: curl -fsSL https://ollama.com/install.sh | sh")
-				fmt.Fprintf(out, "  Then pull: ollama pull %s && ollama pull %s\n", p.EmbedModel, p.AssistModel)
+				uiLog.Warn("Ollama is not installed; semantic search stays off (structural search still works)")
+				uiLog.Info("install it: curl -fsSL https://ollama.com/install.sh | sh")
 				return
 			}
 		}
 	}
-	if !oll.Available(ctx) {
-		fmt.Fprintln(out, "  Ollama is installed but not reachable. Start it, then pull the models:")
-		fmt.Fprintf(out, "    ollama serve &\n    ollama pull %s\n    ollama pull %s\n", p.EmbedModel, p.AssistModel)
+
+	// Bring the daemon up and keep it up for long coding sessions.
+	if !ensureOllama(ctx, oll, root) {
+		uiLog.Warn("Ollama is not reachable yet; semantic search activates once it is up")
 		return
 	}
 
+	// Pull any missing models now that the daemon is up.
 	for _, m := range []string{p.EmbedModel, p.AssistModel} {
-		if oll.HasModel(ctx, m) {
-			fmt.Fprintf(out, "  %s already installed\n", m)
+		if m == "" || oll.HasModel(ctx, m) {
 			continue
 		}
 		if interactive && confirmAI(fmt.Sprintf("Pull %s now?", m)) {
 			if err := pullModel(m); err != nil {
-				fmt.Fprintf(out, "  pull failed: %v (run: ollama pull %s)\n", err, m)
+				uiLog.Warnf("pull %s failed: %v (run: ollama pull %s)", m, err, m)
 			}
 		} else {
-			fmt.Fprintf(out, "  Pull it: ollama pull %s\n", m)
+			uiLog.Infof("pull it: ollama pull %s", m)
 		}
 	}
-	fmt.Fprintln(out, "  Semantic search activates on 'prowl-agent serve'.")
+
+	// Warm the embed model so the first query does not pay a cold start.
+	if p.EmbedModel != "" && oll.HasModel(ctx, p.EmbedModel) {
+		if err := oll.Warm(ctx, p.EmbedModel, ollamaKeepAlive); err != nil {
+			uiLog.Warnf("warm %s: %v", p.EmbedModel, err)
+		} else {
+			uiLog.Infof("warmed %s; semantic search ready", p.EmbedModel)
+		}
+	} else {
+		uiLog.Info("semantic search activates once the embed model is pulled")
+	}
 }
 
 func confirmAI(title string) bool {
@@ -100,16 +113,6 @@ func pullModel(model string) error {
 	cmd := exec.Command("ollama", "pull", model)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
-}
-
-// waitForOllama gives a just-installed daemon a few seconds to come up.
-func waitForOllama(ctx context.Context, oll *assist.Ollama) {
-	for i := 0; i < 10; i++ {
-		if oll.Available(ctx) {
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
 }
 
 // resolveModels prefers models already installed on the local Ollama so init does

@@ -15,7 +15,6 @@ func fakeOllamaEnv(rec *[]string) ollamaEnv {
 		startUnit:      func(bool) error { *rec = append(*rec, "start"); return nil },
 		writeAndEnable: func() error { *rec = append(*rec, "write"); return nil },
 		spawnDetached:  func() error { *rec = append(*rec, "spawn"); return nil },
-		warm:           func(context.Context) error { *rec = append(*rec, "warm"); return nil },
 	}
 }
 
@@ -31,12 +30,14 @@ func assertCallOrder(t *testing.T, got, want []string) {
 	}
 }
 
-func TestEnsureOllamaWarmsWhenReachable(t *testing.T) {
+func TestEnsureOllamaReachable(t *testing.T) {
 	var rec []string
 	e := fakeOllamaEnv(&rec)
 	e.reachable = func(context.Context) bool { return true }
-	ensureOllamaRunning(context.Background(), e)
-	assertCallOrder(t, rec, []string{"warm"})
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true")
+	}
+	assertCallOrder(t, rec, nil) // already up: takes no action
 }
 
 func TestEnsureOllamaReusesExistingUnit(t *testing.T) {
@@ -46,8 +47,10 @@ func TestEnsureOllamaReusesExistingUnit(t *testing.T) {
 	e.reachable = func(context.Context) bool { return reach }
 	e.hasUnit = func() (bool, bool) { return false, true } // a system unit exists
 	e.startUnit = func(bool) error { rec = append(rec, "start"); reach = true; return nil }
-	ensureOllamaRunning(context.Background(), e)
-	assertCallOrder(t, rec, []string{"start", "warm"})
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true after start")
+	}
+	assertCallOrder(t, rec, []string{"start"})
 }
 
 func TestEnsureOllamaWritesUserUnitWhenSystemd(t *testing.T) {
@@ -57,13 +60,29 @@ func TestEnsureOllamaWritesUserUnitWhenSystemd(t *testing.T) {
 	e.reachable = func(context.Context) bool { return reach }
 	e.systemdUser = func() bool { return true }
 	e.writeAndEnable = func() error { rec = append(rec, "write"); reach = true; return nil }
-	ensureOllamaRunning(context.Background(), e)
-	assertCallOrder(t, rec, []string{"write", "warm"})
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true after enabling the user unit")
+	}
+	assertCallOrder(t, rec, []string{"write"})
 }
 
 func TestEnsureOllamaSpawnsWhenNoSystemd(t *testing.T) {
 	var rec []string
-	e := fakeOllamaEnv(&rec) // not reachable, no unit, no systemd
-	ensureOllamaRunning(context.Background(), e)
-	assertCallOrder(t, rec, []string{"spawn", "warm"})
+	reach := false
+	e := fakeOllamaEnv(&rec)
+	e.reachable = func(context.Context) bool { return reach }
+	e.spawnDetached = func() error { rec = append(rec, "spawn"); reach = true; return nil }
+	if !ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable true after spawn")
+	}
+	assertCallOrder(t, rec, []string{"spawn"})
+}
+
+func TestEnsureOllamaReturnsFalseWhenNothingWorks(t *testing.T) {
+	var rec []string
+	e := fakeOllamaEnv(&rec) // never reachable, no unit, no systemd, spawn does not help
+	if ensureOllamaRunning(context.Background(), e) {
+		t.Fatal("want reachable false when ollama cannot be started")
+	}
+	assertCallOrder(t, rec, []string{"spawn"})
 }

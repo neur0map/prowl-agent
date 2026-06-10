@@ -76,5 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_edges_src      ON edges(src_type, src_id, kind);
 CREATE INDEX IF NOT EXISTS idx_edges_resolved ON edges(resolved);
 CREATE INDEX IF NOT EXISTS idx_symbols_name   ON symbols(name);
 CREATE INDEX IF NOT EXISTS idx_symbols_file   ON symbols(file_id);
+CREATE INDEX IF NOT EXISTS idx_edges_file     ON edges(file_id);
+CREATE INDEX IF NOT EXISTS idx_resources_file ON resources(file_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_file    ON chunks(file_id);
 CREATE INDEX IF NOT EXISTS idx_resources_name ON resources(name);
 CREATE INDEX IF NOT EXISTS idx_files_role     ON files(role);

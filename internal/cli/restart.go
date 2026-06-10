@@ -34,10 +34,9 @@ func newRestartCmd(string) *cobra.Command {
 			cfg, _ := config.Load(ws.Path)
 			out := cmd.OutOrStdout()
 
-			if n := stopWorkspaceServers(ws.Root); n > 0 {
-				fmt.Fprintf(out, "Stopped %d running server(s); your agent/editor relaunches them on next use.\n", n)
-			}
-
+			// Rebuild first: restart is then the sole writer while any live server
+			// just reads via WAL. Stopping servers first would make the agent respawn
+			// one that re-indexes concurrently and contends on the database.
 			fmt.Fprintf(out, "Rebuilding index for %s ...\n", ws.Root)
 			if err := s.SetMeta("index_version", ""); err != nil { // force a full reparse
 				return err
@@ -48,6 +47,10 @@ func newRestartCmd(string) *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(out, "Rebuilt:", msg)
+
+			if n := stopWorkspaceServers(ws.Root); n > 0 {
+				fmt.Fprintf(out, "Stopped %d running server(s); your agent/editor relaunches them on next use.\n", n)
+			}
 			return nil
 		},
 	}

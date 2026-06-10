@@ -37,6 +37,11 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	ver := indexVersion()
 	prevVer, _ := s.GetMeta("index_version")
 	force := prevVer != ver // a binary upgrade re-parses everything, not just changed files
+	if force {
+		if err := s.ResetDerived(); err != nil { // fast bulk clear for a full re-parse
+			return sum, err
+		}
+	}
 
 	for _, rel := range rels {
 		full := filepath.Join(root, filepath.FromSlash(rel))

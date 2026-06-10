@@ -11,9 +11,9 @@ import (
 // relPath is relative to the project root; head is the first bytes of the file
 // (for shebang sniffing) and may be empty.
 //
-// Language ids: lua, python, bash, css, scss, json, yaml, toml, ini, qml,
-// hyprlang (real grammars); rasi, generic (handled by the line-oriented
-// generic extractor).
+// Language ids: lua, python, javascript, bash, css, scss, json, yaml, toml,
+// ini, qml, markdown, hyprlang (real grammars); rasi, generic (handled by the
+// line-oriented generic extractor).
 func Detect(relPath string, head []byte) string {
 	base := filepath.Base(relPath)
 	ext := strings.ToLower(filepath.Ext(base))
@@ -32,6 +32,10 @@ func Detect(relPath string, head []byte) string {
 		return "lua"
 	case ".py":
 		return "python"
+	case ".js", ".mjs", ".cjs", ".jsx":
+		return "javascript"
+	case ".md", ".mdx", ".markdown":
+		return "markdown"
 	case ".sh", ".bash", ".zsh":
 		return "bash"
 	case ".css":

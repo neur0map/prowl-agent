@@ -28,7 +28,10 @@ func TestDetect(t *testing.T) {
 		{"widgets/theme.hpp", "", "cpp"},
 		{"fish/config.fish", "", "fish"},
 		{"scripts/frun", "#!/usr/bin/fish\n", "fish"},
-		{"README.md", "", ""},
+		{"README.md", "", "markdown"},
+		{"docs/install.mdx", "", "markdown"},
+		{"shell/config.js", "", "javascript"},
+		{"app.mjs", "", "javascript"},
 		{"random", "", ""},
 	}
 	for _, c := range cases {

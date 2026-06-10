@@ -236,9 +236,10 @@ first query after idle, then around 20 ms on the repo we tried).
 
 ## Supported formats
 
-Lua, Python, Bash, Fish, C++, QML, CSS/SCSS, TOML, YAML, JSON/JSONC, INI, and
-Hyprland (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
-`rasi`, polybar, kitty, dunst, and similar). More languages are on the way.
+Lua, Python, JavaScript, Bash, Fish, C++, QML, CSS/SCSS, Markdown, TOML, YAML,
+JSON/JSONC, INI, and Hyprland (`hyprlang`), plus a line-based reader for
+everything else (sway/i3, rofi `rasi`, polybar, kitty, dunst, and similar). More
+languages are on the way.
 
 ## More
 

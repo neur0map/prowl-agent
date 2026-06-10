@@ -56,7 +56,7 @@ func TestServeProcessE2E(t *testing.T) {
 		return res.Content[0].(*sdk.TextContent).Text
 	}
 
-	if out := call("status", nil); !strings.Contains(out, "\"files\":11") {
+	if out := call("status", nil); !strings.Contains(out, "\"files\":12") {
 		t.Fatalf("status over process: %s", out)
 	}
 	if out := call("blast_radius", map[string]any{"path": "hypr/colors.conf"}); !strings.Contains(out, "hypr/hyprland.conf") {

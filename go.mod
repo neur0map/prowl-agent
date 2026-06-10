@@ -12,8 +12,10 @@ require (
 	github.com/alexaandru/go-sitter-forest/fish v1.9.2
 	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4
 	github.com/alexaandru/go-sitter-forest/ini v1.9.1
+	github.com/alexaandru/go-sitter-forest/javascript v1.9.2
 	github.com/alexaandru/go-sitter-forest/json v1.9.1
 	github.com/alexaandru/go-sitter-forest/lua v1.9.3
+	github.com/alexaandru/go-sitter-forest/markdown v1.9.5
 	github.com/alexaandru/go-sitter-forest/python v1.9.10
 	github.com/alexaandru/go-sitter-forest/qmljs v1.9.3
 	github.com/alexaandru/go-sitter-forest/scss v1.9.0

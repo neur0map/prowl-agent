@@ -11,8 +11,10 @@ import (
 	"github.com/alexaandru/go-sitter-forest/fish"
 	"github.com/alexaandru/go-sitter-forest/hyprlang"
 	"github.com/alexaandru/go-sitter-forest/ini"
+	"github.com/alexaandru/go-sitter-forest/javascript"
 	"github.com/alexaandru/go-sitter-forest/json"
 	"github.com/alexaandru/go-sitter-forest/lua"
+	"github.com/alexaandru/go-sitter-forest/markdown"
 	"github.com/alexaandru/go-sitter-forest/python"
 	"github.com/alexaandru/go-sitter-forest/qmljs"
 	"github.com/alexaandru/go-sitter-forest/scss"
@@ -25,19 +27,21 @@ import (
 // Languages without an entry (rasi, generic) are handled by the generic,
 // line-oriented extractor instead.
 var grammars = map[string]func() unsafe.Pointer{
-	"lua":      lua.GetLanguage,
-	"python":   python.GetLanguage,
-	"bash":     bash.GetLanguage,
-	"css":      css.GetLanguage,
-	"scss":     scss.GetLanguage,
-	"json":     json.GetLanguage,
-	"yaml":     yaml.GetLanguage,
-	"toml":     toml.GetLanguage,
-	"ini":      ini.GetLanguage,
-	"hyprlang": hyprlang.GetLanguage,
-	"qml":      qmljs.GetLanguage,
-	"cpp":      cpp.GetLanguage,
-	"fish":     fish.GetLanguage,
+	"lua":        lua.GetLanguage,
+	"python":     python.GetLanguage,
+	"bash":       bash.GetLanguage,
+	"css":        css.GetLanguage,
+	"scss":       scss.GetLanguage,
+	"json":       json.GetLanguage,
+	"yaml":       yaml.GetLanguage,
+	"toml":       toml.GetLanguage,
+	"ini":        ini.GetLanguage,
+	"hyprlang":   hyprlang.GetLanguage,
+	"qml":        qmljs.GetLanguage,
+	"cpp":        cpp.GetLanguage,
+	"fish":       fish.GetLanguage,
+	"javascript": javascript.GetLanguage,
+	"markdown":   markdown.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

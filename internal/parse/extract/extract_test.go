@@ -133,3 +133,40 @@ func TestQMLExtractor(t *testing.T) {
 		t.Fatalf("includes=%v", edgeRaws(r, "includes"))
 	}
 }
+
+func TestMarkdownExtractor(t *testing.T) {
+	r := mustExtract(t, "markdown", "# Title\n\nbody text\n\n## Install steps\n\nSetext Head\n===========\n")
+	h := symNames(r, "heading")
+	if !has(h, "Title") || !has(h, "Install steps") || !has(h, "Setext Head") {
+		t.Fatalf("headings=%v", h)
+	}
+	if len(r.Chunks) == 0 {
+		t.Fatalf("expected chunks for full-text search")
+	}
+}
+
+func TestJavaScriptExtractor(t *testing.T) {
+	src := ".pragma library\nimport {a} from \"./mod.js\";\nconst lib = require(\"./other.js\");\nexport function build(x) { return x; }\nexport const make = (y) => y;\nclass Widget {\n  render() { return 1; }\n}\nvar data = { k: 1 };\nfunction helper(o) {\n  var local = 1;\n  return local;\n}\n"
+	r := mustExtract(t, "javascript", src)
+	fns := symNames(r, "function")
+	if !has(fns, "build") || !has(fns, "make") || !has(fns, "helper") {
+		t.Fatalf("funcs=%v", fns)
+	}
+	if !has(symNames(r, "class"), "Widget") {
+		t.Fatalf("classes=%v", symNames(r, "class"))
+	}
+	if !has(symNames(r, "method"), "render") {
+		t.Fatalf("methods=%v", symNames(r, "method"))
+	}
+	vars := symNames(r, "variable")
+	if !has(vars, "data") {
+		t.Fatalf("vars=%v", vars)
+	}
+	if has(vars, "local") {
+		t.Fatalf("local inside a function body should not be a symbol: %v", vars)
+	}
+	inc := edgeRaws(r, "includes")
+	if !has(inc, "./mod.js") || !has(inc, "./other.js") {
+		t.Fatalf("includes=%v", inc)
+	}
+}

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"charm.land/huh/v2"
@@ -19,6 +20,10 @@ import (
 type InitOptions struct {
 	Root string
 	AI   bool
+	// AISet marks AI as an explicit decision (a flag or the interactive prompt).
+	// When false, RunInit derives AI from the existing project config, then the
+	// global default, so a plain re-init never resets a prior choice.
+	AISet bool
 	Tier string
 	// EmbedModel and AssistModel override the tier preset when non-empty. The
 	// init command fills them from models already installed on Ollama.
@@ -38,11 +43,40 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err != nil {
 		return index.Summary{}, err
 	}
-	cfg := config.Default()
-	cfg.AI.Enabled = opt.AI
-	if opt.AI {
-		p := config.PresetByName(opt.Tier)
-		cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
+
+	// Was this project already initialized? A re-init must preserve the saved AI
+	// choice rather than reset it (the historic ai=false-on-reinit bug).
+	existed := false
+	if _, statErr := os.Stat(filepath.Join(ws.Path, "config.toml")); statErr == nil {
+		existed = true
+	}
+
+	// Base config is the project's existing config when present, else defaults,
+	// so a re-init preserves user-edited ignore/languages and the prior AI value.
+	cfg, _ := config.Load(ws.Path)
+	g, _ := config.LoadGlobal()
+
+	// AI-enable precedence: explicit decision > existing project > global default.
+	aiOn := cfg.AI.Enabled
+	if !existed {
+		aiOn = g.AIEnabled
+	}
+	if opt.AISet {
+		aiOn = opt.AI
+	}
+	cfg.AI.Enabled = aiOn
+
+	tier := firstNonEmpty(opt.Tier, g.Tier, config.DefaultTier)
+	if aiOn {
+		switch {
+		case opt.Tier != "":
+			p := config.PresetByName(opt.Tier)
+			cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
+		case !existed:
+			p := config.PresetByName(tier)
+			cfg.AI.EmbedModel = firstNonEmpty(g.EmbedModel, p.EmbedModel)
+			cfg.AI.AssistModel = firstNonEmpty(g.AssistModel, p.AssistModel)
+		}
 		if opt.EmbedModel != "" {
 			cfg.AI.EmbedModel = opt.EmbedModel
 		}
@@ -50,18 +84,34 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 			cfg.AI.AssistModel = opt.AssistModel
 		}
 	}
+
 	if err := config.Save(ws.Path, cfg); err != nil {
 		return index.Summary{}, err
 	}
-	if err := config.SaveRules(ws.Path, config.DefaultRules()); err != nil {
-		return index.Summary{}, err
+	// Remember the choice binary-wide so future inits inherit it, but only on an
+	// explicit decision or a brand-new project: a plain re-index of an existing
+	// project must not silently change the global default.
+	if opt.AISet || !existed {
+		_ = config.SaveGlobal(config.GlobalConfig{
+			AIEnabled:   aiOn,
+			Tier:        tier,
+			EmbedModel:  cfg.AI.EmbedModel,
+			AssistModel: cfg.AI.AssistModel,
+		})
+	}
+
+	// Write starter rules only when absent, so a re-init keeps user-edited rules.
+	if _, statErr := os.Stat(filepath.Join(ws.Path, "rules.toml")); os.IsNotExist(statErr) {
+		if err := config.SaveRules(ws.Path, config.DefaultRules()); err != nil {
+			return index.Summary{}, err
+		}
 	}
 	s, err := store.Open(ws.DB)
 	if err != nil {
 		return index.Summary{}, err
 	}
 	defer s.Close()
-	_ = s.SetMeta("ai_enabled", strconv.FormatBool(opt.AI))
+	_ = s.SetMeta("ai_enabled", strconv.FormatBool(aiOn))
 	sum, err := index.Index(s, root, cfg.Ignore)
 	if err != nil {
 		return sum, err
@@ -75,10 +125,20 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err := workspace.EnsureIgnored(root, workspace.Dir+"/"); err != nil {
 		return sum, err
 	}
-	if err := workspace.Register(root, opt.AI); err != nil {
+	if err := workspace.Register(root, aiOn); err != nil {
 		return sum, err
 	}
 	return sum, nil
+}
+
+// firstNonEmpty returns the first non-empty string, or "" when all are empty.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func newInitCmd() *cobra.Command {
@@ -120,7 +180,7 @@ func newInitCmd() *cobra.Command {
 				embedModel, assistModel = resolveModels(cmd.Context(), oll, config.PresetByName(tier))
 			}
 			fmt.Fprintf(out, "Indexing %s ...\n", root)
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel})
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: true, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel})
 			if err != nil {
 				return err
 			}

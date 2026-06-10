@@ -28,6 +28,7 @@ func TestServeProcessE2E(t *testing.T) {
 	root := t.TempDir()
 	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
 	if _, err := RunInit(InitOptions{Root: root}); err != nil {
 		t.Fatal(err)
 	}

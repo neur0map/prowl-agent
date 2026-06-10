@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -34,6 +35,7 @@ func copyDir(t *testing.T, src, dst string) {
 
 func TestRunInit(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := t.TempDir()
 	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
 
@@ -117,5 +119,58 @@ func TestInjectMergePreservesServers(t *testing.T) {
 	oc, _ := os.ReadFile(filepath.Join(root, "opencode.json"))
 	if !strings.Contains(string(oc), "\"mcp\"") || !strings.Contains(string(oc), "\"local\"") {
 		t.Fatalf("opencode.json wrong shape: %s", oc)
+	}
+}
+
+func TestRunInitPreservesAI(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
+
+	// First init explicitly enables AI.
+	if _, err := RunInit(InitOptions{Root: root, AI: true, AISet: true, Tier: "fast"}); err != nil {
+		t.Fatal(err)
+	}
+	// Re-init without an AI decision must NOT reset it to false (the bug).
+	if _, err := RunInit(InitOptions{Root: root}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Load(filepath.Join(root, ".prowl"))
+	if !cfg.AI.Enabled {
+		t.Fatal("re-init disabled AI; it must stay enabled")
+	}
+}
+
+func TestRunInitInheritsGlobalDefault(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := config.SaveGlobal(config.GlobalConfig{AIEnabled: true, Tier: "fast"}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
+	// New project, no explicit AI: inherits the global default (on).
+	if _, err := RunInit(InitOptions{Root: root}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Load(filepath.Join(root, ".prowl"))
+	if !cfg.AI.Enabled {
+		t.Fatal("new project should inherit global ai_enabled=true")
+	}
+}
+
+func TestRunInitExplicitNoAIOverridesGlobal(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_ = config.SaveGlobal(config.GlobalConfig{AIEnabled: true, Tier: "fast"})
+	root := t.TempDir()
+	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
+	if _, err := RunInit(InitOptions{Root: root, AI: false, AISet: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Load(filepath.Join(root, ".prowl"))
+	if cfg.AI.Enabled {
+		t.Fatal("explicit --no-ai must win over the global default")
 	}
 }

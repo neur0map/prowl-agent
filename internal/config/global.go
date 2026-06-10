@@ -58,3 +58,14 @@ func SaveGlobal(g GlobalConfig) error {
 	}
 	return encode(p, g)
 }
+
+// GlobalExists reports whether a global config has been written (so init knows
+// whether a remembered preference exists, distinct from a zero-value default).
+func GlobalExists() bool {
+	p, err := globalPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
+	return err == nil
+}

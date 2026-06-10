@@ -142,7 +142,7 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func newInitCmd() *cobra.Command {
-	var withAI, noAI, yes bool
+	var withAI, noAI, yes, reconfigure bool
 	var tier string
 	c := &cobra.Command{
 		Use:   "init",
@@ -150,8 +150,35 @@ func newInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, _ := os.Getwd()
 			out := cmd.OutOrStdout()
-			ai := withAI
-			if !yes && !withAI && !noAI {
+
+			// What do we already know? A project config and/or a remembered global
+			// default mean we should not re-prompt unless --reconfigure is passed.
+			projDir := filepath.Join(root, workspace.Dir)
+			projInit := false
+			if _, e := os.Stat(filepath.Join(projDir, "config.toml")); e == nil {
+				projInit = true
+			}
+			g, _ := config.LoadGlobal()
+			remembered := projInit || config.GlobalExists()
+
+			// Inherited AI value by precedence: existing project, else global.
+			inheritedAI := g.AIEnabled
+			if projInit {
+				if pc, e := config.Load(projDir); e == nil {
+					inheritedAI = pc.AI.Enabled
+				}
+			}
+
+			var ai, aiSet bool
+			switch {
+			case withAI:
+				ai, aiSet = true, true
+			case noAI:
+				ai, aiSet = false, true
+			case yes:
+				ai, aiSet = inheritedAI, false
+			case reconfigure || !remembered:
+				ai = inheritedAI // seed the toggle with the current value
 				form := huh.NewForm(huh.NewGroup(
 					huh.NewConfirm().
 						Title("Enable AI-assisted semantic search?").
@@ -164,31 +191,47 @@ func newInitCmd() *cobra.Command {
 				if err := form.Run(); err != nil {
 					return err
 				}
-			}
-			if noAI {
-				ai = false
-			}
-			if ai && tier == "" {
-				tier = config.DefaultTier
-				if !yes {
-					tier = selectTier()
+				aiSet = true
+			default:
+				ai, aiSet = inheritedAI, false
+				state := "off"
+				if ai {
+					state = "on"
 				}
+				uiLog.Infof("using remembered settings (AI %s); pass --reconfigure to change", state)
 			}
+
+			// Resolve tier + installed models only when (re)configuring AI; on an
+			// inherit, RunInit preserves the project's existing models.
 			var embedModel, assistModel string
-			if ai {
-				oll := assist.NewOllama("", config.PresetByName(tier).EmbedModel, config.PresetByName(tier).AssistModel)
-				embedModel, assistModel = resolveModels(cmd.Context(), oll, config.PresetByName(tier))
+			if ai && aiSet {
+				if tier == "" {
+					tier = firstNonEmpty(g.Tier, config.DefaultTier)
+					if !yes && (reconfigure || !remembered) {
+						tier = selectTier()
+					}
+				}
+				p := config.PresetByName(tier)
+				oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
+				embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
 			}
+
 			fmt.Fprintf(out, "Indexing %s ...\n", root)
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: true, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel})
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel})
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
 			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
 			fmt.Fprintln(out, "Editor LSP: configured. Your editor launches 'prowl-agent lsp' automatically; see .prowl/editor/SETUP.md.")
+
+			// Run AI setup against the final saved models (resolved or preserved).
 			if ai {
-				setupAI(cmd.Context(), out, config.ModelPreset{Name: tier, EmbedModel: embedModel, AssistModel: assistModel}, !yes)
+				final, _ := config.Load(projDir)
+				if tier == "" {
+					tier = firstNonEmpty(g.Tier, config.DefaultTier)
+				}
+				setupAI(cmd.Context(), out, config.ModelPreset{Name: tier, EmbedModel: final.AI.EmbedModel, AssistModel: final.AI.AssistModel}, !yes)
 			}
 			return nil
 		},
@@ -196,6 +239,7 @@ func newInitCmd() *cobra.Command {
 	c.Flags().BoolVar(&withAI, "with-ai", false, "enable AI-assist non-interactively")
 	c.Flags().BoolVar(&noAI, "no-ai", false, "skip AI-assist non-interactively")
 	c.Flags().BoolVar(&yes, "yes", false, "accept defaults without prompting")
+	c.Flags().BoolVar(&reconfigure, "reconfigure", false, "re-open the AI/tier prompts even if already configured")
 	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
 	return c
 }

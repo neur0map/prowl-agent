@@ -23,14 +23,16 @@ type handlers struct {
 	store   *store.Store
 	reindex ReindexFunc
 	doctor  DoctorFunc
+	onCall  func()
 }
 
 // Empty is the input type for tools that take no arguments.
 type Empty struct{}
 
-// NewServer builds an MCP server exposing the query tools, reindex, and doctor.
-func NewServer(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc) *sdk.Server {
-	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn}
+// NewServer builds an MCP server. onCall, when set, runs before each tool call
+// (used to keep the index fresh).
+func NewServer(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc, onCall func()) *sdk.Server {
+	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn, onCall: onCall}
 	s := sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
 
 	sdk.AddTool(s, &sdk.Tool{Name: "find_symbol",
@@ -231,6 +233,9 @@ func (h *handlers) doctorTool(ctx context.Context, _ *sdk.CallToolRequest, _ Emp
 // counters: the bytes prowl returned, and the size of the files it pointed at.
 func tracked[In, Out any](h *handlers, fn func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error)) func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+		if h.onCall != nil {
+			h.onCall()
+		}
 		res, out, err := fn(ctx, req, in)
 		if err == nil {
 			h.recordStats(out)

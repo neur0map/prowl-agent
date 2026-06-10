@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -91,13 +90,9 @@ func newServeCmd(version string) *cobra.Command {
 				rules, _ := config.LoadRules(ws.Path)
 				return doctor.Run(s, rules, doctor.Options{Root: ws.Root})
 			}
-			srv := mcpserver.NewServer(q, s, version, reindex, doctorFn)
-			// Keep the index fresh: debounced re-index as files change.
-			go func() {
-				_ = index.Watch(cmd.Context(), ws.Root, 750*time.Millisecond, func() {
-					_, _ = reindex(cmd.Context())
-				})
-			}()
+			fresh := newFreshness(cmd.Context(), ws.Root, reindex)
+			fresh.start()
+			srv := mcpserver.NewServer(q, s, version, reindex, doctorFn, fresh.onCall)
 			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
 			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&
 				!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&

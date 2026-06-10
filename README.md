@@ -72,13 +72,13 @@ Two commands are handy day to day:
 prowl-agent status   # index, token savings, and update notice
 prowl-agent doctor   # broken includes, dead scripts, keybind clashes
 prowl-agent update   # upgrade to the latest build
-prowl-agent watch    # keep the index fresh in the background
 ```
 
-The agent launches the server itself through the generated config, which watches
-your files and re-indexes on save during a session. To keep the index fresh even
-when no agent or editor is connected, run `prowl-agent watch` (a long-lived
-watcher you can background or run as a user service).
+The agent launches the server itself through the generated config, and the index
+stays fresh on its own: the server re-indexes the moment a change matters (right
+before a query, only when something actually changed), keeps a lightweight watcher
+active for 30 minutes after each call, and idles when unused. You never run a
+watcher by hand, and the agent never reads stale data.
 
 ## What the agent can ask
 

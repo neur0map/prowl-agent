@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,9 +25,11 @@ func TestMCPIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var calls int32
 	srv := NewServer(query.New(s), s, "test",
 		func(context.Context) (string, error) { return "reindexed", nil },
-		func(context.Context) (doctor.Report, error) { return doctor.Run(s, config.Rules{}, doctor.Options{}) })
+		func(context.Context) (doctor.Report, error) { return doctor.Run(s, config.Rules{}, doctor.Options{}) },
+		func() { atomic.AddInt32(&calls, 1) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -95,5 +98,8 @@ func TestMCPIntegration(t *testing.T) {
 	// The tracked wrapper should have recorded usage for the calls above.
 	if st, _ := s.Stats(); st.Queries == 0 || st.AnswerBytes == 0 {
 		t.Fatalf("usage stats not recorded: %+v", st)
+	}
+	if atomic.LoadInt32(&calls) < 8 {
+		t.Fatalf("onCall fired %d times, want one per tool call", calls)
 	}
 }

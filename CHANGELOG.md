@@ -30,13 +30,15 @@ answers about a project's files, served over MCP.
   `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
   `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
-- CLI: `init` (setup wizard), `status`, `doctor`, and `watch`, plus hidden `serve`
-  (MCP) and `lsp` (editor language server) commands launched over stdio.
+- CLI: `init` (setup wizard), `status`, and `doctor`, plus hidden `serve` (MCP)
+  and `lsp` (editor language server) commands launched over stdio.
 - Setup writes `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, and an
   `AGENTS.md` block, and keeps state in a gitignored `.prowl/` folder.
-- File watcher (fsnotify, debounced): `serve` and `lsp` re-index on save while
-  they run, and `prowl-agent watch` is a standalone long-lived watcher that keeps
-  the index (and embeddings, when AI is on) fresh even with nothing connected.
+- Automatic freshness (no daemon, no extra command): the MCP server re-indexes
+  right before a request when a change is pending, keeps a featherweight fsnotify
+  watcher active for 30 minutes after each call, then suspends and resumes (with a
+  catch-up re-index) on the next call, so agents never read stale data. `lsp` also
+  re-indexes on save while it runs.
 
 #### Editor (LSP)
 

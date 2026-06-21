@@ -157,7 +157,7 @@ func (s *Store) scanDeps(q string, args ...any) ([]Dep, error) {
 // SymbolsInFile lists symbols defined in a file.
 func (s *Store) SymbolsInFile(fileID int64) ([]SymbolHit, error) {
 	return s.scanSymbolHits(`
-		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
 		FROM symbols sy JOIN files f ON f.id=sy.file_id WHERE sy.file_id=? ORDER BY sy.start_line`, fileID)
 }
 

@@ -103,12 +103,13 @@ type SymbolHit struct {
 	Signature string `json:"signature,omitempty"`
 	File      string `json:"file"`
 	Line      int    `json:"line"`
+	EndLine   int    `json:"end_line,omitempty"`
 }
 
 // SymbolsByName returns exact-name matches.
 func (s *Store) SymbolsByName(name string, limit int) ([]SymbolHit, error) {
 	return s.scanSymbolHits(`
-		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
 		FROM symbols sy JOIN files f ON f.id=sy.file_id
 		WHERE sy.name=? ORDER BY f.rel_path, sy.start_line LIMIT ?`, name, limit)
 }
@@ -116,7 +117,7 @@ func (s *Store) SymbolsByName(name string, limit int) ([]SymbolHit, error) {
 // SearchSymbols runs an FTS5 phrase query over symbol names/signatures.
 func (s *Store) SearchSymbols(query string, limit int) ([]SymbolHit, error) {
 	return s.scanSymbolHits(`
-		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
 		FROM fts_symbols ft JOIN symbols sy ON sy.id=ft.rowid JOIN files f ON f.id=sy.file_id
 		WHERE fts_symbols MATCH ? ORDER BY rank, sy.name LIMIT ?`, ftsQuote(query), limit)
 }
@@ -124,7 +125,7 @@ func (s *Store) SearchSymbols(query string, limit int) ([]SymbolHit, error) {
 // SymbolByID returns a single symbol.
 func (s *Store) SymbolByID(id int64) (SymbolHit, bool, error) {
 	hits, err := s.scanSymbolHits(`
-		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
 		FROM symbols sy JOIN files f ON f.id=sy.file_id WHERE sy.id=?`, id)
 	if err != nil || len(hits) == 0 {
 		return SymbolHit{}, false, err
@@ -141,7 +142,7 @@ func (s *Store) scanSymbolHits(q string, args ...any) ([]SymbolHit, error) {
 	var out []SymbolHit
 	for rows.Next() {
 		var h SymbolHit
-		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Signature, &h.File, &h.Line); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Kind, &h.Signature, &h.File, &h.Line, &h.EndLine); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

@@ -49,6 +49,7 @@ the index by walking up to .prowl/.
 ### When to use which
 
 - New or unfamiliar project: overview, then clusters to pull a whole subsystem.
+- After a find: results carry line and end_line, so read just that range, not the whole file.
 - Fuzzy / natural-language question: search "<text>" (add --smart); --compact lists files first.
 - Before changing a color/font/variable: find it, then references <id> for every usage; check violations.
 - Before editing or deleting a file: impact <path> for what breaks, callers <path> for what invokes it.

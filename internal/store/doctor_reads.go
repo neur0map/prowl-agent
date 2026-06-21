@@ -26,7 +26,7 @@ func (s *Store) FanOut(limit int, exclude ...string) ([]FanRow, error) {
 // SymbolsByKind returns all symbols of a given kind.
 func (s *Store) SymbolsByKind(kind string) ([]SymbolHit, error) {
 	return s.scanSymbolHits(`
-		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
 		FROM symbols sy JOIN files f ON f.id=sy.file_id WHERE sy.kind=? ORDER BY f.rel_path, sy.start_line`, kind)
 }
 

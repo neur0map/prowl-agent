@@ -103,7 +103,7 @@ func (s *Store) NamedResources(limit int) ([]ResourceRow, error) {
 // completion), ordered by name and capped at limit.
 func (s *Store) SymbolsLike(sub string, limit int) ([]SymbolHit, error) {
 	return s.scanSymbolHits(`
-		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
 		FROM symbols sy JOIN files f ON f.id=sy.file_id
 		WHERE sy.name LIKE '%'||?||'%' ORDER BY sy.name LIMIT ?`, sub, limit)
 }

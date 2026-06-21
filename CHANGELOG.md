@@ -4,6 +4,17 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `find <name>` ranks its results so a project's own code definitions come
+  before config/doc entries (settings, headings) and before vendored or
+  generated files, keeping the match-quality order within each tier. On a
+  config-heavy repo a query like `find run` previously buried the actual `run`
+  methods under dozens of YAML `run:` keys; the definitions now lead. No results
+  are dropped, so config-only lookups are unaffected.
+
 ## [0.7.0] - 2026-06-21
 
 Language breadth, symbol signatures, and token-economy hardening on large

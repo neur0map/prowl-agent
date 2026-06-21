@@ -40,6 +40,9 @@ func (q *Querier) fileID(path string) (int64, bool, error) {
 // FindSymbol returns exact-name matches first, then FTS matches, then a
 // substring fallback that catches camelCase/snake_case components (e.g.
 // "cloud" finding "updateCloudClient") which the FTS tokenizer keeps whole.
+// Results are then stably ranked so project code definitions outrank
+// config/doc entries (settings, headings) and project files outrank vendored
+// or generated ones, while the match-quality order is kept within each tier.
 func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 	exact, err := q.s.SymbolsByName(name, DefaultLimit)
 	if err != nil {
@@ -64,6 +67,9 @@ func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 			add(sub)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return findRank(out[i]) < findRank(out[j])
+	})
 	return out, nil
 }
 
@@ -604,6 +610,33 @@ func isVendored(p string) bool {
 		}
 	}
 	return strings.HasSuffix(p, ".pb.go") || strings.HasSuffix(p, "_pb2.py") || strings.HasSuffix(p, ".g.dart")
+}
+
+// auxiliaryKind reports whether a symbol kind is a config or documentation
+// entry (a setting, keybind, color, heading, or config section) rather than a
+// code definition. These dominate config-heavy repos and FTS ranks the tiny
+// rows high, so find floats real definitions above them without dropping them.
+func auxiliaryKind(kind string) bool {
+	switch kind {
+	case "setting", "keybind", "color", "heading", "config_section":
+		return true
+	}
+	return false
+}
+
+// findRank orders FindSymbol results into four tiers: project code definitions,
+// then project config/doc entries, then vendored definitions, then vendored
+// config/doc. A stable sort keeps the prior order (exact, FTS, substring)
+// within each tier, so the highest-precision match still leads.
+func findRank(h store.SymbolHit) int {
+	r := 0
+	if auxiliaryKind(h.Kind) {
+		r++
+	}
+	if isVendored(h.File) {
+		r += 2
+	}
+	return r
 }
 
 // RepoHotspots returns fan-in and size rankings over the project's own code

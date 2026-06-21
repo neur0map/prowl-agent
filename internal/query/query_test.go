@@ -257,6 +257,47 @@ func TestFindSymbolSubstringFallback(t *testing.T) {
 	}
 }
 
+func TestFindSymbolRanksCodeOverConfigAndVendored(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// Three symbols named "build": a config setting and a vendored function
+	// both sort alphabetically before the project's own code, so only ranking
+	// (not the alphabetical exact-match order) can float the code definition up.
+	mk := func(rel, kind string) {
+		fid, err := s.UpsertFile(store.File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, []store.Symbol{{Name: "build", Kind: kind, StartLine: 1, EndLine: 1}}, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("aaa_config.yml", "setting")
+	mk("vendor/dep/lib.go", "function")
+	mk("zzz_app.go", "function")
+
+	hits, err := New(s).FindSymbol("build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]string, len(hits))
+	for i, h := range hits {
+		files[i] = h.File
+	}
+	want := []string{"zzz_app.go", "aaa_config.yml", "vendor/dep/lib.go"}
+	if len(files) != len(want) {
+		t.Fatalf("FindSymbol(build) files = %v, want %v", files, want)
+	}
+	for i := range want {
+		if files[i] != want[i] {
+			t.Fatalf("FindSymbol(build) order = %v, want %v (code, then config, then vendored)", files, want)
+		}
+	}
+}
+
 func TestSimilarCodeHybrid(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {

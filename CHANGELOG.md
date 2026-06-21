@@ -4,7 +4,7 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-06-21
 
 The first working version: a local index that gives AI coding agents fast, cited
 answers about a project's files, served over MCP.

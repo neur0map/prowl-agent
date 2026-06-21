@@ -9,7 +9,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/cli"
 )
 
-var version = "0.1.0-dev"
+var version = "v0.6.0"
 
 func main() {
 	root := &cobra.Command{

@@ -460,24 +460,109 @@ func (q *Querier) EntrypointsFor(path string) (EntrypointSet, error) {
 	return out, nil
 }
 
-// TestsResult is the (deliberately limited) analogue of tests_for.
+// TestsResult reports the test files covering a file -- colocated tests or tests
+// that import it -- and, for a config/script with no tests, the configs/keybinds
+// that launch it (the dotfile analogue).
 type TestsResult struct {
-	Limited bool            `json:"limited"`
+	File    string          `json:"file"`
+	Tests   []string        `json:"tests,omitempty"`
+	Runners []store.EdgeRow `json:"runners,omitempty"`
+	Limited bool            `json:"limited,omitempty"`
 	Note    string          `json:"note"`
-	Runners []store.EdgeRow `json:"runners"`
 }
 
-// TestsFor returns configs/keybinds that launch or reload a file. Configs rarely
-// have formal tests, so this is best-effort and marked limited.
+// TestsFor returns the test files covering a file: first the test files in its
+// own directory (the common layout where tests sit beside source), then, if
+// there are none, the test files that import it (Java/C# src/test mirrors, an
+// external test package). The conventional match (os.go -> os_test.go) is listed
+// first. With no test files -- the usual case for a config or script -- it falls
+// back to the configs/keybinds that launch or reload the file.
 func (q *Querier) TestsFor(path string) (TestsResult, error) {
-	res := TestsResult{
-		Limited: true,
-		Note:    "no formal tests detected; showing configs/keybinds that launch or reload this file",
+	res := TestsResult{File: path}
+	seen := map[string]bool{path: true}
+	collect := func(p string) {
+		if isTestPath(p) && !seen[p] {
+			seen[p] = true
+			res.Tests = append(res.Tests, p)
+		}
 	}
+	dir := dirOf(path)
+	if files, err := q.s.AllFiles(); err == nil {
+		for _, f := range files {
+			if dirOf(f.RelPath) == dir {
+				collect(f.RelPath)
+			}
+		}
+	}
+	if len(res.Tests) == 0 {
+		if id, ok, err := q.fileID(path); err == nil && ok {
+			if in, err := q.s.IncomingEdges("file", id, depKinds...); err == nil {
+				for _, e := range in {
+					collect(e.File)
+				}
+			}
+		}
+	}
+	if len(res.Tests) > 0 {
+		stem := baseStem(path)
+		sort.SliceStable(res.Tests, func(i, j int) bool {
+			return testCoversStem(res.Tests[i], stem) && !testCoversStem(res.Tests[j], stem)
+		})
+		const maxTests = 25
+		if len(res.Tests) > maxTests {
+			res.Tests = res.Tests[:maxTests]
+		}
+		res.Note = "test files covering this file (colocated, or importing it); run them after changing it"
+		return res, nil
+	}
+	res.Limited = true
+	res.Note = "no test files detected; showing configs/keybinds that launch or reload this file"
 	if id, ok, err := q.fileID(path); err == nil && ok {
 		res.Runners, _ = q.s.IncomingEdges("file", id, "execs", "binds", "autostarts")
 	}
 	return res, nil
+}
+
+// dirOf returns the directory portion of a slash path ("" for a bare filename).
+func dirOf(p string) string {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[:i]
+	}
+	return ""
+}
+
+// baseStem returns a path's filename without directory or extension, cutting at
+// the first dot (so foo.test.ts -> foo).
+func baseStem(p string) string {
+	b := p
+	if i := strings.LastIndex(b, "/"); i >= 0 {
+		b = b[i+1:]
+	}
+	if i := strings.IndexByte(b, '.'); i >= 0 {
+		b = b[:i]
+	}
+	return b
+}
+
+// testCoversStem reports whether a test file is the conventional test for a
+// source file with the given stem: os.go<->os_test.go, foo<->test_foo /
+// foo.test / foo.spec / foo_spec / FooTest.
+func testCoversStem(testPath, stem string) bool {
+	lt, ls := strings.ToLower(baseStem(testPath)), strings.ToLower(stem)
+	if lt == ls {
+		return true // foo.test.ts / foo.spec.ts -> baseStem "foo"
+	}
+	for _, suf := range []string{"_test", "_spec", "test"} {
+		if strings.TrimSuffix(lt, suf) == ls {
+			return true
+		}
+	}
+	for _, pre := range []string{"test_", "spec_"} {
+		if strings.TrimPrefix(lt, pre) == ls {
+			return true
+		}
+	}
+	return false
 }
 
 // SimilarCode returns ranked snippets. With an inferencer and a vector index it

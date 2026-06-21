@@ -825,3 +825,34 @@ func TestSearchChunksRanksSourceOverTestsAndDocs(t *testing.T) {
 		}
 	}
 }
+
+func TestTestsForFindsColocatedTests(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, rel := range []string{"pkg/os.go", "pkg/os_test.go", "pkg/cmd_test.go", "pkg/helper.go", "other/x_test.go"} {
+		if _, err := s.UpsertFile(store.File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tf, err := New(s).TestsFor("pkg/os.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tf.Limited {
+		t.Errorf("TestsFor(os.go) limited=true, want false when colocated tests exist: %+v", tf)
+	}
+	if len(tf.Tests) != 2 {
+		t.Fatalf("TestsFor(os.go) tests = %v, want the 2 colocated test files (not helper.go, not other/)", tf.Tests)
+	}
+	if tf.Tests[0] != "pkg/os_test.go" {
+		t.Errorf("TestsFor(os.go) first = %q, want pkg/os_test.go (conventional match first)", tf.Tests[0])
+	}
+	for _, x := range tf.Tests {
+		if x == "other/x_test.go" {
+			t.Errorf("TestsFor(os.go) wrongly included a test from another directory: %v", tf.Tests)
+		}
+	}
+}

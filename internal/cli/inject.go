@@ -39,7 +39,7 @@ only after a query points you to the exact lines.
     prowl-agent hotspots            # structurally central / large files
     prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
     prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands
-    prowl-agent tests <path>        # configs/keybinds that launch or reload a file
+    prowl-agent tests <path>        # test files covering a file (or, for a config, what launches it)
     prowl-agent changed             # your git changes mapped to the files they could affect
 
 Every command accepts --json for JSON instead of TOON, and --limit N to cap

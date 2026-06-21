@@ -49,7 +49,7 @@ func NewServer(q *query.Querier, st *store.Store, version string, reindex Reinde
 	sdk.AddTool(s, &sdk.Tool{Name: "entrypoints_for",
 		Description: "Root files from which a file is reachable (its entry points)."}, tracked(h, h.entrypointsFor))
 	sdk.AddTool(s, &sdk.Tool{Name: "tests_for",
-		Description: "Configs/keybinds that launch or reload a file (best-effort)."}, tracked(h, h.testsFor))
+		Description: "Test files covering a file: colocated tests or tests that import it (conventional match first). For a config/script with no tests, the configs/keybinds that launch it."}, tracked(h, h.testsFor))
 	sdk.AddTool(s, &sdk.Tool{Name: "similar_code",
 		Description: "Search file content. Hybrid vector and full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, tracked(h, h.similarCode))
 	sdk.AddTool(s, &sdk.Tool{Name: "smart_search",

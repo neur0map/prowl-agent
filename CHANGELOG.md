@@ -4,6 +4,19 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `tests <path>` now finds the test files covering a source file -- the test
+  files in its own directory (the common layout where tests sit beside source),
+  or, failing that, the test files that import it (a Java/C# `src/test` mirror or
+  an external test package) -- with the conventional match (`os.go` ->
+  `os_test.go`) listed first. It previously only reported configs/keybinds that
+  launch a file, so on a code repo `tests os.go` wrongly said "no tests detected"
+  while `os_test.go` sat right beside it. The launcher behavior remains as the
+  fallback for a config or script with no tests.
+
 ## [0.8.1] - 2026-06-21
 
 ### Fixed

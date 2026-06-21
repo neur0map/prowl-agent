@@ -257,7 +257,7 @@ func newViolationsCmd() *cobra.Command {
 }
 
 func newTestsCmd() *cobra.Command {
-	return newQueryCmd("tests <path>", "Configs/keybinds that launch or reload a file (best-effort)", false, cobra.ExactArgs(1),
+	return newQueryCmd("tests <path>", "Test files covering a file (colocated or importing it), or for a config what launches it", false, cobra.ExactArgs(1),
 		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.TestsFor(a[0]) })
 }
 

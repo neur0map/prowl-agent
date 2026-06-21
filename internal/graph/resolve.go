@@ -116,7 +116,77 @@ func Resolve(s *store.Store) error {
 	if err := resolveCSharpNamespaces(s, byID); err != nil {
 		return err
 	}
+	// Pass 7: Java imports -> the file for that class under any module's source root.
+	if err := resolveJavaPackages(s, files, byID); err != nil {
+		return err
+	}
 	return nil
+}
+
+// resolveJavaPackages resolves Java imports across a multi-module project. A
+// java file's package-relative path (after src/main/java, src/test/java, or
+// src/) is its key, so `import com.foo.Bar` resolves to <module>/.../com/foo/
+// Bar.java in any module, and `import com.foo.*` fans out to every file in that
+// package. Third-party and JDK imports match nothing and stay informational.
+func resolveJavaPackages(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	pkgFiles := map[string]int64{} // com/foo/Bar.java -> id
+	pkgDir := map[string][]int64{} // com/foo -> ids (for wildcard imports)
+	for _, f := range files {
+		if f.Lang != "java" {
+			continue
+		}
+		rel := javaPkgPath(f.RelPath)
+		if rel == "" {
+			continue
+		}
+		pkgFiles[rel] = f.ID
+		pkgDir[path.Dir(rel)] = append(pkgDir[path.Dir(rel)], f.ID)
+	}
+	if len(pkgFiles) == 0 {
+		return nil
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	var pkgEdges []store.PkgEdge
+	for _, e := range inc {
+		if byID[e.FileID].Lang != "java" {
+			continue
+		}
+		if pkg, ok := strings.CutSuffix(e.Raw, ".*"); ok {
+			dir := strings.ReplaceAll(pkg, ".", "/")
+			for _, dst := range pkgDir[dir] {
+				if dst != e.FileID {
+					pkgEdges = append(pkgEdges, store.PkgEdge{FileID: e.FileID, DstFileID: dst, Line: e.Line, Raw: e.Raw})
+				}
+			}
+			continue
+		}
+		key := strings.ReplaceAll(e.Raw, ".", "/") + ".java"
+		if dst, ok := pkgFiles[key]; ok && dst != e.FileID {
+			if err := s.SetEdgeResolved(e.ID, "file", dst); err != nil {
+				return err
+			}
+		}
+	}
+	return s.AddPackageEdges(pkgEdges)
+}
+
+// javaPkgPath returns a java file's path relative to its source root (the part
+// after src/main/java, src/test/java, src/main/kotlin, or src/), i.e. its
+// package directory plus filename. Files with no recognizable root keep their
+// full path.
+func javaPkgPath(rel string) string {
+	for _, m := range []string{"/src/main/java/", "/src/test/java/", "/src/main/kotlin/", "/src/"} {
+		if i := strings.Index(rel, m); i >= 0 {
+			return rel[i+len(m):]
+		}
+	}
+	if strings.HasPrefix(rel, "src/") {
+		return rel[len("src/"):]
+	}
+	return rel
 }
 
 // resolveCSharpNamespaces materializes C# namespace dependencies. A file with a

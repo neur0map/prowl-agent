@@ -54,6 +54,12 @@ answers about a project's files, served over MCP.
   `namespace Foo.Bar` (synthetic `pkg` edges, like Go), so `callers`, `impact`,
   `changed`, and `clusters` work across a C# solution. Framework and third-party
   usings match no declared namespace and stay informational.
+- Java import graph: `import com.foo.Bar` resolves to that class's file under any
+  module's source root (the part after `src/main/java`, `src/test/java`, or
+  `src/`), so a multi-module Gradle/Maven project links across modules; wildcard
+  `import com.foo.*` fans out to every file in the package. JDK and third-party
+  imports stay informational. On the retrofit repo this took resolved edges from
+  105 to 704 and produced real per-module clusters and cross-module blast radius.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

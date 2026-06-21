@@ -56,7 +56,7 @@ func Detect(relPath string, head []byte) string {
 		return "ini"
 	case ".qml":
 		return "qml"
-	case ".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx":
+	case ".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".c", ".h":
 		return "cpp"
 	case ".fish":
 		return "fish"

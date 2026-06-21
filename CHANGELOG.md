@@ -21,7 +21,7 @@ answers about a project's files, served over MCP.
   commit; dev and dirty builds key off the binary's mtime so each local rebuild
   also reparses.
 - Tree-sitter extraction for Go, Rust, TypeScript/TSX, Lua, Python, JavaScript,
-  Bash, Fish, C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
+  Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
   plus a line-based reader for other config formats (sway/i3, rofi `rasi`,
   polybar, and similar). Markdown headings and JavaScript declarations become
   symbols, so docs and dashboard scripts are searchable by name as well as by

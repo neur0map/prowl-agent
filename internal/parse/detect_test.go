@@ -32,6 +32,12 @@ func TestDetect(t *testing.T) {
 		{"docs/install.mdx", "", "markdown"},
 		{"shell/config.js", "", "javascript"},
 		{"app.mjs", "", "javascript"},
+		{"main.go", "", "go"},
+		{"src/lib.rs", "", "rust"},
+		{"src/app.ts", "", "typescript"},
+		{"src/app.tsx", "", "tsx"},
+		{"kernel/sched.c", "", "cpp"},
+		{"include/sched.h", "", "cpp"},
 		{"random", "", ""},
 	}
 	for _, c := range cases {

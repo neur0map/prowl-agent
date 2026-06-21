@@ -274,15 +274,16 @@ query after a long idle, then around 20 ms on the repo we tried). Re-running
 
 ## Supported formats
 
-Go, Rust, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C++, QML,
+Go, Rust, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C/C++, QML,
 CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland (`hyprlang`), plus
 a line-based reader for everything else (sway/i3, rofi `rasi`, polybar, kitty,
 dunst, and similar). The graph connects code too: Go resolves package imports,
 TypeScript/JavaScript resolve relative imports, Rust resolves `crate::` imports,
-and Python resolves absolute and relative imports, so `callers`, `impact`, `changed`, and
-`clusters` work across a Go module, a TS/React app, a Rust crate, or a Python
-package. External and standard-library imports stay informational. More languages
-are on the way.
+Python resolves absolute and relative imports, and C/C++ resolve `#include`
+headers, so `callers`, `impact`, `changed`, and `clusters` work across a Go
+module, a TS/React app, a Rust crate, a Python package, or a C codebase.
+External and standard-library imports stay informational. More languages are on
+the way.
 
 ## More
 

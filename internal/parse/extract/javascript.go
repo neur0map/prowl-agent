@@ -37,16 +37,15 @@ func (javascriptExtractor) Extract(src []byte) (Result, error) {
 			}
 		}
 		if n, ok := capNode(caps, "var.name"); ok {
-			kind := "variable"
+			kind, sig := "variable", ""
 			end, cx := line(n), 0
 			if v, ok := capNode(caps, "var.value"); ok {
 				end = endLine(v)
 				if jsIsFunc(v.Type()) {
-					kind = "function"
-					cx = complexity(v, "javascript")
+					kind, cx, sig = "function", complexity(v, "javascript"), signatureOf(v, src)
 				}
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end, Complexity: cx})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
 	r.Chunks = chunkText(src, 40)
@@ -54,21 +53,22 @@ func (javascriptExtractor) Extract(src []byte) (Result, error) {
 }
 
 // addNamed appends a symbol from a name capture, using the def capture for the
-// end line when present. For function/method kinds it also records cyclomatic
+// end line, declaration signature, and (for function/method kinds) cyclomatic
 // complexity from the def node (lang selects the decision-point set).
 func addNamed(r *Result, caps []capture, src []byte, nameCap, defCap, kind, lang string) {
 	n, ok := capNode(caps, nameCap)
 	if !ok {
 		return
 	}
-	end, cx := line(n), 0
+	end, cx, sig := line(n), 0, ""
 	if d, ok := capNode(caps, defCap); ok {
 		end = endLine(d)
+		sig = signatureOf(d, src)
 		if kind == "function" || kind == "method" {
 			cx = complexity(d, lang)
 		}
 	}
-	r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end, Complexity: cx})
+	r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 }
 
 func jsIsFunc(typ string) bool {

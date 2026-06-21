@@ -18,11 +18,11 @@ func (rubyExtractor) Extract(src []byte) (Result, error) {
 	var r Result
 	err := queryEach("ruby", src, []byte(rubySCM), func(caps []capture) {
 		if n, ok := capNode(caps, "method.name"); ok {
-			end, cx := line(n), 1
+			end, cx, sig := line(n), 1, ""
 			if d, ok := capNode(caps, "method.def"); ok {
-				end, cx = endLine(d), complexity(d, "ruby")
+				end, cx, sig = endLine(d), complexity(d, "ruby"), signatureOf(d, src)
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "method", StartLine: line(n), EndLine: end, Complexity: cx})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "method", Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 		addNamed(&r, caps, src, "class.name", "class.def", "class", "ruby")
 		addNamed(&r, caps, src, "module.name", "module.def", "module", "ruby")

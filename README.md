@@ -18,12 +18,12 @@ exact, cited answer instead of a wall of grep hits. Answers come back in
 [TOON](https://toonformat.dev), a format models read about 40% cheaper than JSON.
 
 ```console
-$ prowl-agent find NewGui            # 267 bytes, four exact hits, all cited
-[4]{end_line,file,id,kind,line,name}:
-  266,pkg/gocui/gui.go,2706,function,212,NewGui
-  799,pkg/gui/gui.go,4974,function,723,NewGui
-  44,pkg/commands/oscommands/gui_io.go,2311,function,32,NewGuiIO
-  209,pkg/gocui/gui.go,2705,type,198,NewGuiOpts
+$ prowl-agent find NewGui            # exact hits with signatures, all cited
+[4]{end_line,file,id,kind,line,name,signature}:
+  266,pkg/gocui/gui.go,2709,function,212,NewGui,"func NewGui(opts NewGuiOpts) (*Gui, error)"
+  799,pkg/gui/gui.go,4977,function,723,NewGui,"func NewGui( cmn *common.Common, configurer config.AppConfigurer, ... )"
+  44,pkg/commands/oscommands/gui_io.go,2314,function,32,NewGuiIO,"func NewGuiIO( log *logrus.Entry, ... ) *guiIO"
+  209,pkg/gocui/gui.go,2708,type,198,NewGuiOpts,"NewGuiOpts struct { OutputMode OutputMode ... }"
 
 $ prowl-agent impact pkg/gui/gui.go  # who breaks if I touch this file
 total: 7
@@ -35,10 +35,10 @@ by_subsystem[5]{count,subsystem}:
 ```
 
 The grep version of the first question dumps a hit list, then the agent opens
-each file to find the right `NewGui`: kilobytes to tens of kilobytes just to
-locate one symbol, before it reads a single line of the code it actually needs.
-Prowl answers in a few hundred bytes, and it tells you which one is the type and
-which are the functions.
+each file to find the right `NewGui` and read its signature: kilobytes to tens of
+kilobytes just to locate one symbol. Prowl answers in under a kilobyte and hands
+the agent each symbol's signature inline, so it knows which one to call without
+opening a file.
 
 ## Install
 

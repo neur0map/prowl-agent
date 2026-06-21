@@ -20,18 +20,18 @@ func (cppExtractor) Extract(src []byte) (Result, error) {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: p.Content(src), Line: line(p)})
 		}
 		if n, ok := capNode(caps, "class.name"); ok {
-			end := line(n)
+			end, sig := line(n), ""
 			if d, ok := capNode(caps, "class.def"); ok {
-				end = endLine(d)
+				end, sig = endLine(d), signatureOf(d, src)
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "class", StartLine: line(n), EndLine: end})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "class", Signature: sig, StartLine: line(n), EndLine: end})
 		}
 		if n, ok := capNode(caps, "func.name"); ok {
-			end, cx := line(n), 1
+			end, cx, sig := line(n), 1, ""
 			if d, ok := capNode(caps, "func.def"); ok {
-				end, cx = endLine(d), complexity(d, "cpp")
+				end, cx, sig = endLine(d), complexity(d, "cpp"), signatureOf(d, src)
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end, Complexity: cx})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
 	r.Chunks = chunkText(src, 40)

@@ -29,9 +29,10 @@ func (dartExtractor) Extract(src []byte) (Result, error) {
 			// A function/method body is a sibling of the signature node, not a
 			// child. For a method the signature is wrapped in method_signature, so
 			// climb to it first; then the body is the next sibling.
-			end, cx := line(n), 1
+			end, cx, sig := line(n), 1, ""
 			if d, ok := capNode(caps, "func.def"); ok {
 				end = endLine(d)
+				sig = signatureOf(d, src) // function_signature is header-only here
 				if p := d.Parent(); !p.IsNull() && p.Type() == "method_signature" {
 					d = p
 				}
@@ -40,7 +41,7 @@ func (dartExtractor) Extract(src []byte) (Result, error) {
 					cx = complexity(body, "dart")
 				}
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end, Complexity: cx})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 		if n, ok := capNode(caps, "import.uri"); ok {
 			if u := unquote(n.Content(src)); u != "" {

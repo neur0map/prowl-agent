@@ -46,16 +46,15 @@ func (e tsExtractor) Extract(src []byte) (Result, error) {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
 		}
 		if n, ok := capNode(caps, "var.name"); ok {
-			kind := "variable"
+			kind, sig := "variable", ""
 			end, cx := line(n), 0
 			if v, ok := capNode(caps, "var.value"); ok {
 				end = endLine(v)
 				if jsIsFunc(v.Type()) {
-					kind = "function"
-					cx = complexity(v, e.lang)
+					kind, cx, sig = "function", complexity(v, e.lang), signatureOf(v, src)
 				}
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end, Complexity: cx})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
 	r.Chunks = chunkText(src, 40)

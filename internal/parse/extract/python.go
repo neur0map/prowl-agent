@@ -18,18 +18,18 @@ func (pythonExtractor) Extract(src []byte) (Result, error) {
 	var r Result
 	err := queryEach("python", src, []byte(pythonSCM), func(caps []capture) {
 		if n, ok := capNode(caps, "func.name"); ok {
-			end, cx := line(n), 1
+			end, cx, sig := line(n), 1, ""
 			if d, ok := capNode(caps, "func.def"); ok {
-				end, cx = endLine(d), complexity(d, "python")
+				end, cx, sig = endLine(d), complexity(d, "python"), signatureOf(d, src)
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end, Complexity: cx})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 		if n, ok := capNode(caps, "class.name"); ok {
-			end := line(n)
+			end, sig := line(n), ""
 			if d, ok := capNode(caps, "class.def"); ok {
-				end = endLine(d)
+				end, sig = endLine(d), signatureOf(d, src)
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "class", StartLine: line(n), EndLine: end})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "class", Signature: sig, StartLine: line(n), EndLine: end})
 		}
 		if n, ok := capNode(caps, "import.mod"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})

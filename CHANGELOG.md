@@ -35,6 +35,12 @@ answers about a project's files, served over MCP.
   content. Go, Rust, and TypeScript are indexed at the symbol level (functions,
   methods, types, structs/enums/traits/interfaces, and import edges), so `find`
   and `search` cover those projects; prowl can now index its own Go source.
+- Symbol signatures: every code language records a function/method/type's
+  declaration header (name, parameters, return type, and a class's extends/
+  implements), collapsed to one line and length-capped, so `find` and `search`
+  hand the agent a symbol's interface inline. An agent can pick the right one of
+  53 `make` overloads, or read a function's parameters, without opening the file.
+  Signatures are full-text indexed too, so a search can match a parameter type.
 - Go package graph: an in-module import resolves to every file of the imported
   package (synthetic `pkg` edges, rebuilt each resolve so they never accumulate),
   so `callers`, `callees`, `impact`, `changed`, `clusters`, and `entrypoints`

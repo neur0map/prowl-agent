@@ -34,6 +34,10 @@ func Detect(relPath string, head []byte) string {
 		return "python"
 	case ".js", ".mjs", ".cjs", ".jsx":
 		return "javascript"
+	case ".ts", ".mts", ".cts":
+		return "typescript"
+	case ".tsx":
+		return "tsx"
 	case ".md", ".mdx", ".markdown":
 		return "markdown"
 	case ".sh", ".bash", ".zsh":

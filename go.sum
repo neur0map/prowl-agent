@@ -42,6 +42,10 @@ github.com/alexaandru/go-sitter-forest/scss v1.9.0 h1:pneGwflZc4D1bNCOAGxegtK1X4
 github.com/alexaandru/go-sitter-forest/scss v1.9.0/go.mod h1:W7eHAtq2sswPKPOnCSPcsd3ceXEw9UwdTDe92Hlh9o0=
 github.com/alexaandru/go-sitter-forest/toml v1.9.2 h1:L+v4HZwovnP1w0qQZYrzl7gK6lKAWaaqfRkN3cdg7rw=
 github.com/alexaandru/go-sitter-forest/toml v1.9.2/go.mod h1:aSXzrMFEjrdby4bvRiUq6OmaD6FeEtLX+b5Y4C/vK+I=
+github.com/alexaandru/go-sitter-forest/tsx v1.9.2 h1:R6CIvxcs6zGF/nwI7YbHzRM1HuRjL1g7nKYfDMR7ANE=
+github.com/alexaandru/go-sitter-forest/tsx v1.9.2/go.mod h1:JIGhuMRPOeeUQbqrNiDh3YZV9iMtWTHUmTgSH8WMTIk=
+github.com/alexaandru/go-sitter-forest/typescript v1.9.4 h1:k+zE1JbmcDjgqPxO0fVnCnsCFj0yWmRaLpp2sbC4MoA=
+github.com/alexaandru/go-sitter-forest/typescript v1.9.4/go.mod h1:fzlkFeml5odd1gUkYOgiNXK4bF2M6hBcfTitiJPlso8=
 github.com/alexaandru/go-sitter-forest/yaml v1.9.6 h1:QwFVl8fvUDlYlrYP6TbBJo23Ej3cNhCR7NXSjgFPDA8=
 github.com/alexaandru/go-sitter-forest/yaml v1.9.6/go.mod h1:ylpn3Lek1cElYsYq8ONRK6TJ78ntXYGIcLSjKAHqZ5Y=
 github.com/alexaandru/go-tree-sitter-bare v1.11.0 h1:hRg0R09Kukx2il7ZEec570L/zG4SlM9VwEYR7kkh2nY=

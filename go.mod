@@ -22,6 +22,8 @@ require (
 	github.com/alexaandru/go-sitter-forest/qmljs v1.9.3
 	github.com/alexaandru/go-sitter-forest/scss v1.9.0
 	github.com/alexaandru/go-sitter-forest/toml v1.9.2
+	github.com/alexaandru/go-sitter-forest/tsx v1.9.2
+	github.com/alexaandru/go-sitter-forest/typescript v1.9.4
 	github.com/alexaandru/go-sitter-forest/yaml v1.9.6
 	github.com/alexaandru/go-tree-sitter-bare v1.11.0
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6

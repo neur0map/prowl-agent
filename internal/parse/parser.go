@@ -20,6 +20,8 @@ import (
 	"github.com/alexaandru/go-sitter-forest/qmljs"
 	"github.com/alexaandru/go-sitter-forest/scss"
 	"github.com/alexaandru/go-sitter-forest/toml"
+	"github.com/alexaandru/go-sitter-forest/tsx"
+	"github.com/alexaandru/go-sitter-forest/typescript"
 	"github.com/alexaandru/go-sitter-forest/yaml"
 	sitter "github.com/alexaandru/go-tree-sitter-bare"
 )
@@ -44,6 +46,8 @@ var grammars = map[string]func() unsafe.Pointer{
 	"javascript": javascript.GetLanguage,
 	"markdown":   markdown.GetLanguage,
 	"go":         golang.GetLanguage,
+	"typescript": typescript.GetLanguage,
+	"tsx":        tsx.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

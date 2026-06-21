@@ -138,6 +138,37 @@ func (s *Store) SymbolsBySubstring(query string, limit int) ([]SymbolHit, error)
 		WHERE sy.name LIKE ? ESCAPE '\' ORDER BY length(sy.name), f.rel_path, sy.start_line LIMIT ?`, like, limit)
 }
 
+// SymbolSpan is a code definition's line range, used to find the function or
+// type that encloses a usage line.
+type SymbolSpan struct {
+	Name      string
+	Kind      string
+	StartLine int
+	EndLine   int
+}
+
+// SymbolSpans returns the definitions in a file (by repo-relative path) ordered
+// by start line, so a caller can locate the innermost one enclosing a line.
+func (s *Store) SymbolSpans(relPath string) ([]SymbolSpan, error) {
+	rows, err := s.db.Query(`
+		SELECT sy.name, sy.kind, sy.start_line, sy.end_line
+		FROM symbols sy JOIN files f ON f.id=sy.file_id
+		WHERE f.rel_path=? ORDER BY sy.start_line`, relPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SymbolSpan
+	for rows.Next() {
+		var sp SymbolSpan
+		if err := rows.Scan(&sp.Name, &sp.Kind, &sp.StartLine, &sp.EndLine); err != nil {
+			return nil, err
+		}
+		out = append(out, sp)
+	}
+	return out, rows.Err()
+}
+
 // SymbolByID returns a single symbol.
 func (s *Store) SymbolByID(id int64) (SymbolHit, bool, error) {
 	hits, err := s.scanSymbolHits(`

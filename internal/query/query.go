@@ -84,10 +84,12 @@ type Usages struct {
 }
 
 // CallSite is a precise source location where a symbol name appears: the file,
-// the line, and that line's text, so the agent sees each usage in context
+// the line, that line's text, and the enclosing function or type (`in`) when
+// the usage sits inside one, so the agent sees which functions call a symbol
 // instead of a 40-line chunk.
 type CallSite struct {
 	File string `json:"file"`
+	In   string `json:"in"`
 	Line int    `json:"line"`
 	Text string `json:"text"`
 }
@@ -138,10 +140,38 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 			break
 		}
 	}
+	spansByFile := make(map[string][]store.SymbolSpan)
+	for i := range u.CallSites {
+		cs := &u.CallSites[i]
+		spans, ok := spansByFile[cs.File]
+		if !ok {
+			spans, _ = q.s.SymbolSpans(cs.File)
+			spansByFile[cs.File] = spans
+		}
+		if in := enclosingName(spans, cs.Line); in != "" && in != sym.Name {
+			cs.In = in
+		}
+	}
 	if len(u.CallSites) > 0 {
 		u.Note = "call_sites are name usages found in source (no language call graph); some may be comments or docs"
 	}
 	return u, nil
+}
+
+// enclosingName returns the innermost code definition whose line range contains
+// line, or "" when the line sits at file scope. Auxiliary config/doc kinds are
+// skipped, and the tightest range wins so a method outranks its enclosing type.
+func enclosingName(spans []store.SymbolSpan, line int) string {
+	name, best := "", 0
+	for _, sp := range spans {
+		if auxiliaryKind(sp.Kind) || sp.StartLine > line || line > sp.EndLine {
+			continue
+		}
+		if size := sp.EndLine - sp.StartLine; name == "" || size < best {
+			name, best = sp.Name, size
+		}
+	}
+	return name
 }
 
 // containsWord reports whether name appears in line as a whole identifier token,

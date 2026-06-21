@@ -37,7 +37,7 @@ func NewServer(q *query.Querier, st *store.Store, version string, reindex Reinde
 	sdk.AddTool(s, &sdk.Tool{Name: "find_symbol",
 		Description: "Find symbols (functions, settings, keybinds, components, ids) by name."}, tracked(h, h.findSymbol))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_references",
-		Description: "Where a symbol (id from find_symbol) is used: config/resource reference edges, or cited file:line:text call sites for code symbols."}, tracked(h, h.findReferences))
+		Description: "Where a symbol (id from find_symbol) is used: config/resource reference edges, or cited file:line:text call sites for code symbols, each tagged with its enclosing (calling) function when the usage sits inside one."}, tracked(h, h.findReferences))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_callers",
 		Description: "Configs/scripts that include, exec, or bind to a file."}, tracked(h, h.findCallers))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_callees",

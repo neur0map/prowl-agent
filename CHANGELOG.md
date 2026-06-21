@@ -14,6 +14,11 @@ All notable changes are recorded here. The format follows
   config-heavy repo a query like `find run` previously buried the actual `run`
   methods under dozens of YAML `run:` keys; the definitions now lead. No results
   are dropped, so config-only lookups are unaffected.
+- `references <id>` tags each code call site with its enclosing function or type
+  (an `in` column), so the answer reads as which functions call a symbol
+  (`NewGui` is called from `NewApp`, `initGocui`, `RunTUI`, ...) instead of a
+  bare file:line list. Computed from indexed line ranges; the column is empty
+  for usages at file scope (comments, top-level code).
 
 ## [0.7.0] - 2026-06-21
 

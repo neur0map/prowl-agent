@@ -553,7 +553,9 @@ func TestFindReferencesFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFileGraph(user, nil, nil, nil,
+	if err := s.ReplaceFileGraph(user,
+		[]store.Symbol{{Name: "run", Kind: "function", StartLine: 1, EndLine: 3}},
+		nil, nil,
 		[]store.Chunk{{StartLine: 1, EndLine: 3, Text: "func run() { _ = DoThing() }"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +572,7 @@ func TestFindReferencesFallback(t *testing.T) {
 		t.Errorf("Symbol = %q, want DoThing", u.Symbol)
 	}
 	// No symbol-reference edges -> falls back to call sites, excluding the def,
-	// and pinpoints the exact usage line and its text.
+	// pinpointing the exact usage line, its text, and the enclosing function.
 	var userSite *CallSite
 	for i := range u.CallSites {
 		if u.CallSites[i].File == "svc.go" {
@@ -585,6 +587,9 @@ func TestFindReferencesFallback(t *testing.T) {
 	}
 	if userSite.Line != 1 || !strings.Contains(userSite.Text, "DoThing()") {
 		t.Errorf("user.go call site = %+v, want line 1 with the DoThing() call text", *userSite)
+	}
+	if userSite.In != "run" {
+		t.Errorf("user.go call site In = %q, want enclosing function run", userSite.In)
 	}
 }
 

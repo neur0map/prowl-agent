@@ -38,8 +38,10 @@ answers about a project's files, served over MCP.
 - TypeScript and JavaScript relative imports resolve to files: `./x` and `../x`
   try `.ts/.tsx/.js/.jsx/.mjs/.cjs` and an `index` file in a directory, so
   `callers`, `impact`, `changed`, and `clusters` work across a TS/React app.
-  Package imports (bare or scoped) stay external and informational. Rust imports
-  stay informational for now.
+  Package imports (bare or scoped) stay external and informational.
+- Rust `crate::` imports resolve to the module file under `src/` (longest match
+  first, falling back to the crate root), so the graph works across a Rust crate.
+  `super::`/`self::` and external crates stay informational.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

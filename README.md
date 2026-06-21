@@ -276,11 +276,11 @@ query after a long idle, then around 20 ms on the repo we tried). Re-running
 Go, Rust, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C++, QML,
 CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland (`hyprlang`), plus
 a line-based reader for everything else (sway/i3, rofi `rasi`, polybar, kitty,
-dunst, and similar). The graph connects code too: Go resolves its package
-imports and TypeScript/JavaScript resolve relative imports, so `callers`,
-`impact`, `changed`, and `clusters` work across a Go module or a TS/React app.
-Rust is symbol-level for now (`find` and `search`), and package imports stay
-external. More languages are on the way.
+dunst, and similar). The graph connects code too: Go resolves package imports,
+TypeScript/JavaScript resolve relative imports, and Rust resolves `crate::`
+imports, so `callers`, `impact`, `changed`, and `clusters` work across a Go
+module, a TS/React app, or a Rust crate. External and standard-library imports
+stay informational. More languages are on the way.
 
 ## More
 

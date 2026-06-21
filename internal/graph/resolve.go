@@ -257,6 +257,23 @@ func pathCandidates(fromRel, raw, lang string) []string {
 			c = append(c, joined+ext, path.Join(joined, "index"+ext))
 		}
 	}
+	// Rust crate-relative imports (`use crate::a::b::c;`) map module path segments
+	// to files under src/, longest match first (a submodule a/b/c.rs, else the
+	// module a/b.rs that defines item c). Root items fall back to the crate root.
+	// super::/self:: and external crates stay informational.
+	if lang == "rust" {
+		if rest, ok := strings.CutPrefix(raw, "crate::"); ok {
+			if i := strings.Index(rest, "::{"); i >= 0 {
+				rest = rest[:i]
+			}
+			segs := strings.Split(rest, "::")
+			for n := len(segs); n >= 1; n-- {
+				p := "src/" + strings.Join(segs[:n], "/")
+				c = append(c, p+".rs", p+"/mod.rs")
+			}
+			c = append(c, "src/lib.rs", "src/main.rs")
+		}
+	}
 	if strings.HasPrefix(raw, "~/.config/") {
 		c = append(c, strings.TrimPrefix(raw, "~/.config/"))
 	}

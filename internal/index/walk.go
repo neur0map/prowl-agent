@@ -21,9 +21,10 @@ var alwaysSkipDirs = map[string]bool{
 }
 
 // walkFiles invokes fn for each non-ignored file under root, honoring .gitignore
-// and extra ignore globs and always skipping .prowl/, .git/, node_modules/.
+// (the root one and every nested one, each scoped to its own directory) and
+// extra ignore globs, and always skipping .prowl/, .git/, node_modules/.
 func walkFiles(root string, ignore []string, fn func(rel string, d fs.DirEntry) error) error {
-	patterns := append(loadGitignore(root), ignore...)
+	gitignores := map[string][]string{"": loadGitignore(root)} // rel dir -> patterns
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -37,16 +38,55 @@ func walkFiles(root string, ignore []string, fn func(rel string, d fs.DirEntry) 
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if alwaysSkipDirs[d.Name()] || matchAny(patterns, rel, true) {
+			if alwaysSkipDirs[d.Name()] || ignoredBy(gitignores, ignore, rel, true) {
 				return filepath.SkipDir
+			}
+			if pats := loadGitignore(p); len(pats) > 0 {
+				gitignores[rel] = pats // applies to this directory's subtree
 			}
 			return nil
 		}
-		if matchAny(patterns, rel, false) {
+		if ignoredBy(gitignores, ignore, rel, false) {
 			return nil
 		}
 		return fn(rel, d)
 	})
+}
+
+// ignoredBy reports whether rel is ignored, composing the root and every
+// ancestor-directory .gitignore (each matched against the path relative to its
+// own directory, shallowest first so a deeper directory's rule wins) and finally
+// the extra ignore globs. A directory's own .gitignore never ignores itself.
+func ignoredBy(gitignores map[string][]string, ignore []string, rel string, isDir bool) bool {
+	ignored := false
+	for _, a := range ancestorDirs(rel) {
+		pats, ok := gitignores[a]
+		if !ok {
+			continue
+		}
+		sub := rel
+		if a != "" {
+			sub = rel[len(a)+1:]
+		}
+		if v, m := matchAny(pats, sub, isDir); m {
+			ignored = v
+		}
+	}
+	if v, m := matchAny(ignore, rel, isDir); m {
+		ignored = v
+	}
+	return ignored
+}
+
+// ancestorDirs returns rel's ancestor directories from the root ("") down to its
+// parent: the directories whose .gitignore could apply to rel.
+func ancestorDirs(rel string) []string {
+	dirs := []string{""}
+	parts := strings.Split(rel, "/")
+	for i := 0; i < len(parts)-1; i++ {
+		dirs = append(dirs, strings.Join(parts[:i+1], "/"))
+	}
+	return dirs
 }
 
 // Walk returns rel paths under root, honoring .gitignore and extra ignore globs,
@@ -104,16 +144,16 @@ func loadGitignore(root string) []string {
 	return pats
 }
 
-// matchAny reports whether rel is ignored by the gitignore-style patterns,
-// honoring order: a later matching pattern overrides an earlier one, and a
-// leading "!" re-includes. A trailing "/" restricts a pattern to directories.
-// The supported subset is basename globs, anchored path globs (no "**"), and
-// bare directory names; negation lets a repo ignore a tree but keep a subtree
-// (e.g. `packages/*/*/` then `!packages/*/src/`).
-func matchAny(pats []string, rel string, isDir bool) bool {
+// matchAny reports whether rel is ignored by the gitignore-style patterns and
+// whether any pattern matched at all (so callers can compose multiple gitignore
+// files, deeper-wins). Order matters: a later matching pattern overrides an
+// earlier one, and a leading "!" re-includes. A trailing "/" restricts a pattern
+// to directories. The supported subset is basename globs, anchored path globs
+// (no "**"), and bare directory names; negation lets a repo ignore a tree but
+// keep a subtree (e.g. `packages/*/*/` then `!packages/*/src/`).
+func matchAny(pats []string, rel string, isDir bool) (ignored, matched bool) {
 	base := filepath.Base(rel)
 	segs := strings.Split(rel, "/")
-	ignored := false
 	for _, p := range pats {
 		p = strings.TrimSpace(p)
 		if p == "" || strings.HasPrefix(p, "#") {
@@ -129,10 +169,10 @@ func matchAny(pats []string, rel string, isDir bool) bool {
 			continue
 		}
 		if matchPattern(p, base, rel, segs) {
-			ignored = !negate
+			ignored, matched = !negate, true
 		}
 	}
-	return ignored
+	return
 }
 
 // matchPattern reports whether a single gitignore pattern matches rel. A pattern

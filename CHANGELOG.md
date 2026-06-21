@@ -21,7 +21,10 @@ answers about a project's files, served over MCP.
   This is what lets a JS/TS monorepo that ignores a tree but keeps its source
   (`packages/*/*/` then `!packages/*/src/`) be indexed at all -- previously the
   whole `packages/*/src` source tree, and same-depth manifests like
-  `packages/<pkg>/package.json`, were skipped (on tRPC: 809 -> 1470 files).
+  `packages/<pkg>/package.json`, were skipped (on tRPC: 809 -> 1470 files). Nested
+  `.gitignore` files are honored too, each scoped to its own directory (deeper
+  rules win), so a monorepo's per-package `dist/`/`build/` ignores keep generated
+  output out of the index without a root rule.
 - A binary upgrade forces a full re-parse: the index records the binary's version,
   so extractor and resolver fixes apply on update instead of incremental hashing
   skipping unchanged files and serving stale data. Release builds key this off the

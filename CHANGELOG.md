@@ -172,8 +172,11 @@ answers about a project's files, served over MCP.
   reports the label, language, and file count rather than every file path (the
   full lists stay in `clusters`), and it surfaces the project's architecture docs
   (root README, ARCHITECTURE, CONTRIBUTING, `docs/**` guides) so the agent reads
-  the human-written guide before code. On a 2023-file Go repo this is a ~1.3 KB
-  map instead of ~49 KB of mostly file paths.
+  the human-written guide before code. The entrypoint list is a count plus a
+  shallow-first sample (the real roots, like `main.go` and `config/`, surface
+  first), so a large codebase with thousands of root files does not balloon the
+  answer: on the Laravel framework overview is ~2.5 KB with `entrypoint_count`
+  1142, not ~59 KB. On a 2023-file Go repo this is a ~1 KB map instead of ~49 KB.
 - `clusters` lists subsystem summaries (label, language, file count) by default,
   and `clusters <name>` returns the files of matching subsystems, so pulling one
   subsystem stays cheap instead of dumping every cluster's files. On a 2023-file

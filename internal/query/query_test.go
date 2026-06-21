@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prowl-agent/prowl-agent/internal/graph"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -542,5 +543,44 @@ func TestFindReferencesFallback(t *testing.T) {
 	}
 	if inDef {
 		t.Errorf("CallSites = %+v, must exclude the definition chunk in svc.go", u.CallSites)
+	}
+}
+
+// TestOverviewCapsEntrypoints guards the token-economy fix: on a codebase with
+// many root files, overview reports the true entrypoint count but caps the
+// inline sample so the first-call answer stays small.
+func TestOverviewCapsEntrypoints(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(rel string) int64 {
+		id, err := s.UpsertFile(store.File{RelPath: rel, Lang: "lua", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mk("core.lua") // imported by all -> not an entrypoint
+	const n = 25
+	for i := 0; i < n; i++ {
+		id := mk(fmt.Sprintf("m%02d.lua", i))
+		if err := s.ReplaceFileGraph(id, nil, nil, []store.RawEdge{{Kind: "includes", Raw: "core", Line: 1}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := graph.Resolve(s); err != nil {
+		t.Fatal(err)
+	}
+	o, err := New(s).Overview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.EntrypointCount != n {
+		t.Fatalf("EntrypointCount = %d, want %d", o.EntrypointCount, n)
+	}
+	if len(o.Entrypoints) > 20 {
+		t.Fatalf("entrypoints sample = %d, want at most 20", len(o.Entrypoints))
 	}
 }

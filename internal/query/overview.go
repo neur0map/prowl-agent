@@ -216,14 +216,15 @@ type ClusterSummary struct {
 
 // Overview is a compact map of the whole project for an agent's first call.
 type Overview struct {
-	Counts      store.Counts        `json:"counts"`
-	Roles       map[string]int      `json:"roles"`
-	Docs        []string            `json:"docs"`
-	Entrypoints []string            `json:"entrypoints"`
-	Clusters    []ClusterSummary    `json:"clusters"`
-	Palette     []store.ResourceRow `json:"palette"`
-	Keybinds    int                 `json:"keybinds"`
-	Hotspots    []store.FanRow      `json:"hotspots"`
+	Counts          store.Counts        `json:"counts"`
+	Roles           map[string]int      `json:"roles"`
+	Docs            []string            `json:"docs"`
+	Entrypoints     []string            `json:"entrypoints"`
+	EntrypointCount int                 `json:"entrypoint_count"`
+	Clusters        []ClusterSummary    `json:"clusters"`
+	Palette         []store.ResourceRow `json:"palette"`
+	Keybinds        int                 `json:"keybinds"`
+	Hotspots        []store.FanRow      `json:"hotspots"`
 }
 
 // Overview assembles a high-level map of the project from the graph.
@@ -265,7 +266,22 @@ func (q *Querier) Overview() (Overview, error) {
 			o.Entrypoints = append(o.Entrypoints, f)
 		}
 	}
-	sort.Strings(o.Entrypoints)
+	o.EntrypointCount = len(o.Entrypoints)
+	// Show a shallow-first sample, not the whole list: on a large codebase
+	// "files nothing imports" runs into the thousands (CLI mains, providers,
+	// tests, leaves) and would balloon this first-call answer. Shallow paths
+	// surface the real entry points (main.go, cmd/, config/) first.
+	sort.Slice(o.Entrypoints, func(i, j int) bool {
+		a, b := o.Entrypoints[i], o.Entrypoints[j]
+		if da, db := strings.Count(a, "/"), strings.Count(b, "/"); da != db {
+			return da < db
+		}
+		return a < b
+	})
+	const entrypointSample = 20
+	if len(o.Entrypoints) > entrypointSample {
+		o.Entrypoints = o.Entrypoints[:entrypointSample]
+	}
 
 	clusters, err := q.Clusters()
 	if err != nil {

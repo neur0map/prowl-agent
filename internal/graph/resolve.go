@@ -125,6 +125,10 @@ func Resolve(s *store.Store) error {
 	if err := resolveRustCrates(s, files, byID); err != nil {
 		return err
 	}
+	// Pass 9: TS/JS workspace package imports -> the imported package's source entry.
+	if err := resolveTSPackages(s, files, byID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -193,6 +197,116 @@ func resolveRustCrates(s *store.Store, files []store.File, byID map[int64]store.
 		}
 	}
 	return nil
+}
+
+// resolveTSPackages links a bare TypeScript/JavaScript import of a workspace
+// package (`@scope/pkg`, `pkg/subpath`) to that package's source. The package
+// name -> directory map is recorded at index time from each package.json. The
+// import resolves to a source file by the src/ convention (src/index for the
+// package root, src/<subpath> or its directory index for a subpath), not by
+// following package.json "exports", which point at built dist/ output that is
+// not indexed. External packages match no workspace package.json and stay
+// informational.
+func resolveTSPackages(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	raw, _ := s.GetMeta("ts_packages")
+	if raw == "" {
+		return nil
+	}
+	var pkgs map[string]string
+	if err := json.Unmarshal([]byte(raw), &pkgs); err != nil || len(pkgs) == 0 {
+		return nil
+	}
+	fileMap := make(map[string]int64, len(files))
+	for _, f := range files {
+		fileMap[f.RelPath] = f.ID
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	for _, e := range inc {
+		switch byID[e.FileID].Lang {
+		case "typescript", "tsx", "javascript":
+		default:
+			continue
+		}
+		name, sub := tsImportPackage(e.Raw)
+		dir, ok := pkgs[name]
+		if !ok {
+			continue // external package or relative import
+		}
+		if id, ok := tsPackageFile(fileMap, dir, sub); ok && id != e.FileID {
+			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// tsImportPackage splits a bare module specifier into its package name and the
+// subpath after it (no leading slash). A scoped specifier keeps its first two
+// segments (@scope/pkg); an unscoped one keeps the first. Relative and absolute
+// specifiers return an empty name.
+func tsImportPackage(raw string) (name, sub string) {
+	raw = strings.Trim(strings.TrimSpace(raw), `"'`)
+	if raw == "" || strings.HasPrefix(raw, ".") || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~") {
+		return "", ""
+	}
+	segs := strings.Split(raw, "/")
+	n := 1
+	if strings.HasPrefix(raw, "@") {
+		n = 2
+	}
+	if len(segs) < n {
+		return "", ""
+	}
+	return strings.Join(segs[:n], "/"), strings.Join(segs[n:], "/")
+}
+
+// tsPackageFile resolves a workspace package's directory and import subpath to
+// an indexed source file. The package root (empty subpath) resolves to its
+// index file; a subpath resolves to a matching source file, a directory index,
+// or a real asset (a CSS/JSON import). A subpath that cites a .js/.mjs/.cjs
+// extension (ESM/NodeNext) is matched against its .ts/.tsx source. Source
+// extensions are tried .ts/.tsx first; src/ is preferred over the package root
+// so built output is never hit.
+func tsPackageFile(fileMap map[string]int64, dir, sub string) (int64, bool) {
+	exts := []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+	var c []string
+	if sub == "" {
+		for _, base := range []string{path.Join(dir, "src", "index"), path.Join(dir, "index")} {
+			for _, e := range exts {
+				c = append(c, base+e)
+			}
+		}
+	} else {
+		// An ESM import cites a .js/.mjs/.cjs (or .ts) extension that points at
+		// the .ts/.tsx source; strip it to a base and try every source
+		// extension. The literal subpath is tried last for a real asset.
+		stem := sub
+		for _, e := range []string{".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"} {
+			if strings.HasSuffix(sub, e) {
+				stem = strings.TrimSuffix(sub, e)
+				break
+			}
+		}
+		for _, b := range []string{path.Join(dir, "src", stem), path.Join(dir, stem)} {
+			for _, e := range exts {
+				c = append(c, b+e)
+			}
+			for _, e := range exts {
+				c = append(c, path.Join(b, "index"+e))
+			}
+		}
+		c = append(c, path.Join(dir, "src", sub), path.Join(dir, sub)) // real asset
+	}
+	for _, cand := range c {
+		if id, ok := fileMap[cand]; ok {
+			return id, true
+		}
+	}
+	return 0, false
 }
 
 // resolveJavaPackages resolves Java imports across a multi-module project. A

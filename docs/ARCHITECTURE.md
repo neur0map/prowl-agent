@@ -42,10 +42,13 @@ internal/assist      local Ollama inferencer for the semantic layer
    basename. Each file gets a role (config, bar, theme, script, and so on).
    For code languages, Go resolves in-module package imports to every file of the
    imported package (read from `go.mod`), TypeScript/JavaScript resolve relative
-   imports, Rust resolves `mod` declarations and `crate::` imports to module
-   files (single crate or Cargo workspace), and
+   imports and first-party monorepo packages (a `@scope/pkg` / `pkg/subpath`
+   import resolves to that package's source by the `src/` convention, mapping the
+   `package.json` name to its directory; built `dist/` paths from `exports` are
+   ignored so edges land on real source), Rust resolves `mod` declarations and
+   `crate::` imports to module files (single crate or Cargo workspace), and
    Python resolves absolute imports, so the graph queries work across a Go
-   module, a TS app, a Rust crate, or a Python package. External and
+   module, a TS app or monorepo, a Rust crate, or a Python package. External and
    standard-library imports stay informational.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius loads the

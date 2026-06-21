@@ -118,6 +118,7 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	// to the files in those packages.
 	_ = s.SetMeta("go_module", goModulePath(root))
 	_ = s.SetMeta("rust_crates", rustCrates(root, all))
+	_ = s.SetMeta("ts_packages", tsPackages(root, all))
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
 	}
@@ -260,4 +261,48 @@ func cargoPackageName(path string) string {
 		}
 	}
 	return ""
+}
+
+// tsPackages maps each workspace package's name (its package.json "name" field)
+// to its repo-relative directory, so the resolver can link a bare `@scope/pkg`
+// or `pkg/subpath` import to that package's source. Returns a JSON object
+// string, or "" when no named packages exist. node_modules is gitignored, so
+// only first-party workspace packages are indexed. Reads from the indexed file
+// list (package.json entries) so it costs no extra walk.
+func tsPackages(root string, files []store.File) string {
+	pkgs := map[string]string{}
+	for _, f := range files {
+		if filepath.Base(f.RelPath) != "package.json" {
+			continue
+		}
+		name := packageJSONName(filepath.Join(root, filepath.FromSlash(f.RelPath)))
+		if name == "" {
+			continue
+		}
+		pkgs[name] = filepath.ToSlash(filepath.Dir(f.RelPath))
+	}
+	if len(pkgs) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(pkgs)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// packageJSONName returns the "name" field of a package.json, or "" (e.g. a
+// private root manifest with no name).
+func packageJSONName(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var pj struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(data, &pj) != nil {
+		return ""
+	}
+	return pj.Name
 }

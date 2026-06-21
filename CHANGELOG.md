@@ -15,6 +15,13 @@ answers about a project's files, served over MCP.
 
 - Incremental indexing. An ignore-aware walk hashes files and reparses only what
   changed; deleted files are pruned, and graph resolution re-runs each time.
+- The ignore-aware walk honors `.gitignore` negation and directory-only
+  patterns: patterns apply in order (a later match wins) so a `!` line
+  re-includes a subtree, and a trailing `/` restricts a pattern to directories.
+  This is what lets a JS/TS monorepo that ignores a tree but keeps its source
+  (`packages/*/*/` then `!packages/*/src/`) be indexed at all -- previously the
+  whole `packages/*/src` source tree, and same-depth manifests like
+  `packages/<pkg>/package.json`, were skipped (on tRPC: 809 -> 1470 files).
 - A binary upgrade forces a full re-parse: the index records the binary's version,
   so extractor and resolver fixes apply on update instead of incremental hashing
   skipping unchanged files and serving stale data. Release builds key this off the
@@ -40,7 +47,17 @@ answers about a project's files, served over MCP.
   ESM/NodeNext import that cites a `.js` extension (`./foo.js`) resolves to its
   `.ts`/`.tsx` source, and non-source assets (`./styles.css`) match as-is, so
   `callers`, `impact`, `changed`, and `clusters` work across a TS/React app.
-  Package imports (bare or scoped) stay external and informational.
+- TypeScript/JavaScript workspace packages: a bare import of a first-party
+  monorepo package (`@scope/pkg`, `pkg/subpath`) resolves to that package's
+  source by the `src/` convention (`src/index`, `src/<subpath>`, or its directory
+  index), reading each `package.json` `name` to map the package to its directory.
+  It deliberately ignores `package.json` `exports`/`main`, which point at built
+  `dist/` output that is not indexed, so edges land on real source. ESM `.js`
+  subpaths resolve to `.ts` the same way relative imports do. External (non-
+  workspace) packages stay informational. On the tRPC monorepo this resolved 878
+  previously-dangling `@trpc/*` imports and gave the core `@trpc/server` entry a
+  real cross-package blast radius (impact `0` -> `345`); on zod it resolves the
+  subpath imports (`zod/v4/core` -> `packages/zod/src/v4/core/index.ts`).
 - Rust module graph: `mod foo;` declarations resolve to the included file
   (`foo.rs` / `foo/mod.rs`, handling both `mod.rs` and `foo.rs` parent layouts),
   `crate::` imports resolve to the module file under the importing file's crate

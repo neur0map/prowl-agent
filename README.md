@@ -278,14 +278,17 @@ Go, Rust, Java, Ruby, C#, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish,
 C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
 (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
 `rasi`, polybar, kitty, dunst, and similar). The graph connects code too: Go
-resolves package imports, TypeScript/JavaScript resolve relative imports, Rust
-resolves `crate::` imports, Python resolves absolute and relative imports, C/C++
-resolve `#include` headers, Java resolves `import` class paths, Ruby resolves
-`require_relative`, and C# resolves `using` namespaces, so `callers`, `impact`,
-`changed`, and `clusters` work across a Go module, a TS/React app, a Rust crate,
-a Python package, a C codebase, a Java/Maven project, a Ruby/Rails app, or a C#
-solution. External and standard-library imports stay informational. More
-languages are on the way.
+resolves package imports, TypeScript/JavaScript resolve relative imports and
+first-party monorepo packages (a `@scope/pkg` or `pkg/subpath` import to the
+package's source), Rust resolves `crate::` imports, Python resolves absolute and
+relative imports, C/C++ resolve `#include` headers, Java resolves `import` class
+paths, Ruby resolves `require_relative`, and C# resolves `using` namespaces, so
+`callers`, `impact`, `changed`, and `clusters` work across a Go module, a
+TS/React app or pnpm/turbo monorepo, a Rust crate, a Python package, a C
+codebase, a Java/Maven project, a Ruby/Rails app, or a C# solution. The walk
+honors `.gitignore` negation, so a monorepo that ignores a tree but keeps its
+source (`packages/*/*/` then `!packages/*/src/`) is still indexed. External and
+standard-library imports stay informational. More languages are on the way.
 
 ## More
 

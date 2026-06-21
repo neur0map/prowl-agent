@@ -446,27 +446,68 @@ type FileSize struct {
 	Size int64  `json:"size"`
 }
 
-// RepoHotspots returns fan-in and size rankings (git churn arrives in M3).
+// isVendored reports whether a path is third-party or generated code, which is
+// noise in hotspots (you do not refactor your dependencies). Such files stay
+// indexed and queryable; they are only dropped from the central/largest/complex
+// rankings.
+func isVendored(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case "vendor", "third_party", "third-party", "node_modules", ".venv", "venv", "site-packages", ".yarn":
+			return true
+		}
+	}
+	return strings.HasSuffix(p, ".pb.go") || strings.HasSuffix(p, "_pb2.py") || strings.HasSuffix(p, ".g.dart")
+}
+
+// RepoHotspots returns fan-in and size rankings over the project's own code
+// (vendored and generated files are excluded as noise). Git churn arrives in M3.
 func (q *Querier) RepoHotspots() (Hotspots, error) {
 	var h Hotspots
-	fan, err := q.s.FanIn(10)
+	const top, pool = 10, 200
+	fan, err := q.s.FanIn(pool)
 	if err != nil {
 		return h, err
 	}
-	h.FanIn = fan
+	for _, r := range fan {
+		if isVendored(r.File) {
+			continue
+		}
+		if h.FanIn = append(h.FanIn, r); len(h.FanIn) >= top {
+			break
+		}
+	}
 	files, err := q.s.AllFiles()
 	if err != nil {
 		return h, err
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Size > files[j].Size })
-	for i, f := range files {
-		if i >= 10 {
+	for _, f := range files {
+		if isVendored(f.RelPath) {
+			continue
+		}
+		if h.Largest = append(h.Largest, FileSize{File: f.RelPath, Size: f.Size}); len(h.Largest) >= top {
 			break
 		}
-		h.Largest = append(h.Largest, FileSize{File: f.RelPath, Size: f.Size})
 	}
-	h.LargestFunctions, _ = q.s.LargestFunctions(10)
-	h.ComplexFunctions, _ = q.s.MostComplex(10)
+	lf, _ := q.s.LargestFunctions(pool)
+	for _, r := range lf {
+		if isVendored(r.File) {
+			continue
+		}
+		if h.LargestFunctions = append(h.LargestFunctions, r); len(h.LargestFunctions) >= top {
+			break
+		}
+	}
+	mc, _ := q.s.MostComplex(pool)
+	for _, r := range mc {
+		if isVendored(r.File) {
+			continue
+		}
+		if h.ComplexFunctions = append(h.ComplexFunctions, r); len(h.ComplexFunctions) >= top {
+			break
+		}
+	}
 	return h, nil
 }
 

@@ -175,8 +175,11 @@ answers about a project's files, served over MCP.
   down to about 90, most of them real.
 - `hotspots` (command and the `repo_hotspots` tool) ranks the largest functions
   by line span and the most complex functions by cyclomatic complexity, alongside
-  central and large files: triage for where bugs hide. Complexity counts decision
-  points (if/for/while/switch-cases/catch/match-arms) in a function body for Go,
+  central and large files: triage for where bugs hide. Rankings cover the
+  project's own code; vendored and generated files (`vendor/`, `third_party/`,
+  `node_modules/`, `*.pb.go`, ...) stay indexed and queryable but are excluded
+  from hotspots as noise. Complexity counts decision points
+  (if/for/while/switch-cases/catch/match-arms) in a function body for Go,
   Rust, C++, Java, Ruby, C#, TypeScript/TSX, JavaScript, and Python; other languages report size only.
 
 #### Semantic search (optional)

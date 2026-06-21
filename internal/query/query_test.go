@@ -448,3 +448,30 @@ func TestGuideDocs(t *testing.T) {
 		}
 	}
 }
+
+func TestIsVendored(t *testing.T) {
+	vendored := []string{
+		"vendor/github.com/x/y/z.go",
+		"pkg/sub/vendor/lib.go",
+		"third_party/foo.c",
+		"node_modules/dep/index.js",
+		"api/service.pb.go",
+		"proto/msg_pb2.py",
+	}
+	for _, p := range vendored {
+		if !isVendored(p) {
+			t.Errorf("isVendored(%q) = false, want true", p)
+		}
+	}
+	project := []string{
+		"pkg/gui/gui.go",
+		"src/main.go",
+		"internal/vendored_thing.go", // "vendored" is not a path segment "vendor"
+		"cmd/app/main.go",
+	}
+	for _, p := range project {
+		if isVendored(p) {
+			t.Errorf("isVendored(%q) = true, want false", p)
+		}
+	}
+}

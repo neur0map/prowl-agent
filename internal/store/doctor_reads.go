@@ -1,11 +1,13 @@
 package store
 
-// FanOut returns files ranked by number of outgoing resolved dependency edges.
-func (s *Store) FanOut(limit int) ([]FanRow, error) {
+// FanOut returns files ranked by number of outgoing resolved dependency edges,
+// excluding "instantiates" and any extra kinds given.
+func (s *Store) FanOut(limit int, exclude ...string) ([]FanRow, error) {
+	clause, args := kindNotIn(exclude...)
 	rows, err := s.db.Query(`
 		SELECT f.rel_path, count(*) c FROM edges e JOIN files f ON f.id=e.file_id
-		WHERE e.dst_type='file' AND e.resolved=1 AND e.kind<>'instantiates' GROUP BY e.file_id
-		ORDER BY c DESC, f.rel_path LIMIT ?`, limit)
+		WHERE e.dst_type='file' AND e.resolved=1`+clause+` GROUP BY e.file_id
+		ORDER BY c DESC, f.rel_path LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -112,6 +113,9 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 		}
 	}
 
+	// Record the Go module path (if any) so resolution can link package imports
+	// to the files in those packages.
+	_ = s.SetMeta("go_module", goModulePath(root))
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
 	}
@@ -177,4 +181,19 @@ func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawE
 		chunks[i] = store.Chunk{StartLine: c.StartLine, EndLine: c.EndLine, Text: c.Text}
 	}
 	return syms, ress, edges, chunks
+}
+
+// goModulePath returns the module path declared in go.mod at root, or "" when
+// there is no go.mod. Used to resolve in-module Go imports to package files.
+func goModulePath(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
 }

@@ -27,8 +27,14 @@ answers about a project's files, served over MCP.
   symbols, so docs and dashboard scripts are searchable by name as well as by
   content. Go, Rust, and TypeScript are indexed at the symbol level (functions,
   methods, types, structs/enums/traits/interfaces, and import edges), so `find`
-  and `search` cover those projects; deeper graph queries stay tuned to config
-  include trees, so prowl can now index its own Go source.
+  and `search` cover those projects; prowl can now index its own Go source.
+- Go package graph: an in-module import resolves to every file of the imported
+  package (synthetic `pkg` edges, rebuilt each resolve so they never accumulate),
+  so `callers`, `callees`, `impact`, `changed`, `clusters`, and `entrypoints`
+  work across a Go module. The module path comes from `go.mod`; standard-library
+  and external imports stay informational and are not flagged. The fan-in/out
+  health check excludes `pkg` so a widely-imported core package is not mistaken
+  for a risk. Rust and TypeScript imports stay informational for now.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

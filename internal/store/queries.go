@@ -98,8 +98,10 @@ type Dep struct {
 	Depth int    `json:"depth"`
 }
 
-// blastKinds are the edge kinds traversed for dependency/impact analysis.
-var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts", "instantiates"}
+// blastKinds are the edge kinds traversed for dependency/impact analysis. "pkg"
+// is the synthetic Go package-dependency edge (an importer to each file in the
+// imported package), so impact and entrypoints work across Go packages.
+var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts", "instantiates", "pkg"}
 
 // TransitiveDependents returns files that (transitively) depend on fileID, the
 // blast radius. A dependent is a file that includes/execs/references it.
@@ -238,11 +240,27 @@ type FanRow struct {
 	In   int    `json:"in"`
 }
 
-// FanIn returns files ranked by number of incoming resolved dependency edges.
-func (s *Store) FanIn(limit int) ([]FanRow, error) {
+// kindNotIn builds an "AND e.kind NOT IN (...)" clause that always excludes
+// "instantiates" (a non-dependency edge) plus any extra kinds passed.
+func kindNotIn(extra ...string) (string, []any) {
+	kinds := append([]string{"instantiates"}, extra...)
+	ph := strings.TrimRight(strings.Repeat("?,", len(kinds)), ",")
+	args := make([]any, len(kinds))
+	for i, k := range kinds {
+		args[i] = k
+	}
+	return " AND e.kind NOT IN (" + ph + ")", args
+}
+
+// FanIn returns files ranked by number of incoming resolved dependency edges,
+// excluding "instantiates" and any extra kinds given (the doctor risk check
+// passes "pkg" so normal Go package fan-in is not flagged as a risk).
+func (s *Store) FanIn(limit int, exclude ...string) ([]FanRow, error) {
+	clause, args := kindNotIn(exclude...)
 	rows, err := s.db.Query(`
 		SELECT f.rel_path, count(*) c FROM edges e JOIN files f ON f.id=e.dst_id
-		WHERE e.dst_type='file' AND e.resolved=1 AND e.kind<>'instantiates' GROUP BY e.dst_id ORDER BY c DESC, f.rel_path LIMIT ?`, limit)
+		WHERE e.dst_type='file' AND e.resolved=1`+clause+` GROUP BY e.dst_id ORDER BY c DESC, f.rel_path LIMIT ?`,
+		append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -316,10 +334,45 @@ func (s *Store) Counts() (Counts, error) {
 	return c, rows.Err()
 }
 
-// ResetResolution clears all edge resolution so a fresh global pass can run.
+// ResetResolution clears all edge resolution so a fresh global pass can run. It
+// also drops the synthetic "pkg" edges (Go package dependencies), which the
+// resolve pass rebuilds, so they never accumulate across re-resolves.
 func (s *Store) ResetResolution() error {
+	if _, err := s.db.Exec(`DELETE FROM edges WHERE kind='pkg'`); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`UPDATE edges SET resolved=0, dst_type=NULL, dst_id=NULL`)
 	return err
+}
+
+// PkgEdge is a synthetic Go package dependency: the importing file depends on
+// one file of the imported package.
+type PkgEdge struct {
+	FileID    int64
+	DstFileID int64
+	Line      int
+	Raw       string
+}
+
+// AddPackageEdges inserts resolved "pkg" file-to-file edges in one transaction.
+func (s *Store) AddPackageEdges(es []PkgEdge) error {
+	if len(es) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, e := range es {
+		if _, err := tx.Exec(
+			`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw)
+			 VALUES('file',?,'file',?,'pkg',?,?,1,?)`,
+			e.FileID, e.DstFileID, e.FileID, e.Line, e.Raw); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // SetEdgeResolved points an edge at a resolved target.

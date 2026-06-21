@@ -65,7 +65,7 @@ func (q *Querier) FindReferences(symbolID int64) ([]store.EdgeRow, error) {
 }
 
 // callerKinds / calleeKinds are the dependency edges used for caller/callee and impact queries.
-var depKinds = []string{"includes", "execs", "binds", "autostarts", "references"}
+var depKinds = []string{"includes", "execs", "binds", "autostarts", "references", "pkg"}
 
 // FindCallers returns configs/scripts that include, exec, or bind to a file.
 func (q *Querier) FindCallers(path string) ([]store.EdgeRow, error) {

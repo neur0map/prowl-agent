@@ -109,7 +109,63 @@ func Resolve(s *store.Store) error {
 	if err := s.DeleteUnresolvedEdges("instantiates"); err != nil {
 		return err
 	}
+	// Pass 5: Go package imports -> the files of the imported in-module package.
+	if err := resolveGoPackages(s, files, byID); err != nil {
+		return err
+	}
 	return nil
+}
+
+// resolveGoPackages materializes Go package dependencies. A Go file importing an
+// in-module package gets a synthetic resolved "pkg" edge to every file of that
+// package, so impact, callers, clusters, and entrypoints work across Go
+// packages. Standard-library and external imports do not match the module
+// prefix and are left as informational unresolved imports.
+func resolveGoPackages(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	module, _ := s.GetMeta("go_module")
+	if module == "" {
+		return nil
+	}
+	// Index the .go files in each package directory.
+	goDirFiles := map[string][]int64{}
+	for _, f := range files {
+		if f.Lang == "go" {
+			goDirFiles[path.Dir(f.RelPath)] = append(goDirFiles[path.Dir(f.RelPath)], f.ID)
+		}
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	var pkgEdges []store.PkgEdge
+	for _, e := range inc {
+		if byID[e.FileID].Lang != "go" {
+			continue
+		}
+		dir, ok := moduleImportDir(module, e.Raw)
+		if !ok {
+			continue // stdlib or external import
+		}
+		for _, dst := range goDirFiles[dir] {
+			if dst == e.FileID {
+				continue
+			}
+			pkgEdges = append(pkgEdges, store.PkgEdge{FileID: e.FileID, DstFileID: dst, Line: e.Line, Raw: e.Raw})
+		}
+	}
+	return s.AddPackageEdges(pkgEdges)
+}
+
+// moduleImportDir maps an in-module Go import path to its repo-relative package
+// directory. Returns false for the module root and for out-of-module imports.
+func moduleImportDir(module, importPath string) (string, bool) {
+	if importPath == module {
+		return ".", true
+	}
+	if rest, ok := strings.CutPrefix(importPath, module+"/"); ok {
+		return rest, true
+	}
+	return "", false
 }
 
 // resolveQMLComponent links a QML component instantiation (by type name) to the

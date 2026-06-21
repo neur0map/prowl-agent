@@ -40,9 +40,10 @@ internal/assist      local Ollama inferencer for the semantic layer
    exec and keybind to script chains, and shared color/font/path/variable
    references. Bare commands resolve against the project's command files by
    basename. Each file gets a role (config, bar, theme, script, and so on).
-   Code languages (Go, Rust, TypeScript) are indexed at the symbol level, so
-   `find` and `search` work across them; their module imports are recorded but
-   not resolved to files, so the deeper graph stays tuned to config include trees.
+   For code languages, Go resolves in-module package imports to every file of the
+   imported package (read from `go.mod`), so the graph queries work across a Go
+   module; Rust and TypeScript are symbol-level (`find`/`search`) with their
+   imports recorded but not yet resolved.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius uses a
    recursive CTE.

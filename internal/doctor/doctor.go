@@ -205,7 +205,7 @@ func checkCycles(s *store.Store, _ Options) ([]Finding, error) {
 
 func checkFan(s *store.Store, opt Options) ([]Finding, error) {
 	var out []Finding
-	in, err := s.FanIn(100)
+	in, err := s.FanIn(100, "pkg")
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func checkFan(s *store.Store, opt Options) ([]Finding, error) {
 				Detail: fmt.Sprintf("%d files depend on this; edits ripple widely", r.In)})
 		}
 	}
-	o, err := s.FanOut(100)
+	o, err := s.FanOut(100, "pkg")
 	if err != nil {
 		return nil, err
 	}

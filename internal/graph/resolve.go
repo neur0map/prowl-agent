@@ -47,8 +47,7 @@ func Resolve(s *store.Store) error {
 		return err
 	}
 	for _, e := range inc {
-		lua := byID[e.FileID].Lang == "lua"
-		if id, ok := resolvePath(fileMap, rels, e.File, e.Raw, lua); ok && id != e.FileID {
+		if id, ok := resolvePath(fileMap, rels, e.File, e.Raw, byID[e.FileID].Lang); ok && id != e.FileID {
 			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
 				return err
 			}
@@ -204,12 +203,12 @@ func sharedPrefixLen(a, b string) int {
 }
 
 // resolvePath resolves a raw include/reference target to a file id.
-func resolvePath(fileMap map[string]int64, rels []string, fromRel, raw string, lua bool) (int64, bool) {
+func resolvePath(fileMap map[string]int64, rels []string, fromRel, raw, lang string) (int64, bool) {
 	raw = strings.Trim(strings.TrimSpace(raw), `"'`)
 	if raw == "" {
 		return 0, false
 	}
-	for _, c := range pathCandidates(fromRel, raw, lua) {
+	for _, c := range pathCandidates(fromRel, raw, lang) {
 		if id, ok := fileMap[c]; ok {
 			return id, true
 		}
@@ -236,9 +235,9 @@ func resolvePath(fileMap map[string]int64, rels []string, fromRel, raw string, l
 	return 0, false
 }
 
-func pathCandidates(fromRel, raw string, lua bool) []string {
+func pathCandidates(fromRel, raw, lang string) []string {
 	var c []string
-	if lua && !strings.Contains(raw, "/") {
+	if lang == "lua" && !strings.Contains(raw, "/") {
 		mod := strings.ReplaceAll(raw, ".", "/")
 		dir := path.Dir(fromRel)
 		c = append(c,
@@ -247,6 +246,16 @@ func pathCandidates(fromRel, raw string, lua bool) []string {
 			path.Join(dir, mod+".lua"), path.Join(dir, mod, "init.lua"),
 			path.Join(dir, "lua", mod+".lua"), path.Join(dir, "lua", mod, "init.lua"),
 		)
+	}
+	// TypeScript/JavaScript relative imports omit the extension and may point at a
+	// directory's index file; try the usual resolutions. Package imports (no ./ or
+	// ../) are external and stay informational.
+	if (lang == "typescript" || lang == "tsx" || lang == "javascript") &&
+		(strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../")) {
+		joined := path.Clean(path.Join(path.Dir(fromRel), raw))
+		for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"} {
+			c = append(c, joined+ext, path.Join(joined, "index"+ext))
+		}
 	}
 	if strings.HasPrefix(raw, "~/.config/") {
 		c = append(c, strings.TrimPrefix(raw, "~/.config/"))
@@ -277,7 +286,7 @@ func resolveCommandTarget(fileMap map[string]int64, rels []string, byBase map[st
 	for _, t := range toks {
 		t = strings.Trim(t, `"'`)
 		if strings.Contains(t, "/") || strings.HasSuffix(t, ".sh") || strings.HasSuffix(t, ".py") || strings.HasSuffix(t, ".lua") {
-			if id, ok := resolvePath(fileMap, rels, fromRel, t, false); ok {
+			if id, ok := resolvePath(fileMap, rels, fromRel, t, ""); ok {
 				return id, true
 			}
 		}

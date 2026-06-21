@@ -6,6 +6,7 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -155,9 +156,45 @@ func newOverviewCmd() *cobra.Command {
 		func(_ context.Context, q *query.Querier, _ []string) (any, error) { return q.Overview() })
 }
 
+// newClustersCmd lists subsystem summaries by default (label, language, file
+// count); given a name it returns the full file list of matching subsystems, so
+// "pull a whole subsystem" stays cheap instead of dumping every cluster's files.
 func newClustersCmd() *cobra.Command {
-	return newQueryCmd("clusters", "Group related files into subsystems", false, cobra.NoArgs,
-		func(_ context.Context, q *query.Querier, _ []string) (any, error) { return q.Clusters() })
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "clusters [subsystem]",
+		Short: "Project subsystems (summaries); with a name, the files in matching subsystems",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			format := formatTOON
+			if asJSON {
+				format = formatJSON
+			}
+			return runQuery(cmd.Context(), false, format, 0, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+				clusters, err := q.Clusters()
+				if err != nil {
+					return nil, err
+				}
+				if len(a) == 0 {
+					out := make([]query.ClusterSummary, len(clusters))
+					for i, c := range clusters {
+						out[i] = query.ClusterSummary{Label: c.Label, Lang: c.Lang, Files: len(c.Files)}
+					}
+					return out, nil
+				}
+				needle := strings.ToLower(a[0])
+				out := make([]query.Cluster, 0, len(clusters))
+				for _, c := range clusters {
+					if strings.Contains(strings.ToLower(c.Label), needle) {
+						out = append(out, c)
+					}
+				}
+				return out, nil
+			})
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	return c
 }
 
 func newCallersCmd() *cobra.Command {

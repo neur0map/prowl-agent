@@ -123,6 +123,10 @@ answers about a project's files, served over MCP.
   (root README, ARCHITECTURE, CONTRIBUTING, `docs/**` guides) so the agent reads
   the human-written guide before code. On a 2023-file Go repo this is a ~1.3 KB
   map instead of ~49 KB of mostly file paths.
+- `clusters` lists subsystem summaries (label, language, file count) by default,
+  and `clusters <name>` returns the files of matching subsystems, so pulling one
+  subsystem stays cheap instead of dumping every cluster's files. On a 2023-file
+  Go repo the summary is ~0.3 KB instead of ~47 KB.
 - Savings are tracked on every delivery path: each shell query, like each MCP
   call, records what it returned versus the size of the files it pointed at, so
   `prowl-agent status` keeps counting when agents use the CLI instead of MCP.

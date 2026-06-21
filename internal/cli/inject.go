@@ -35,7 +35,7 @@ only after a query points you to the exact lines.
     prowl-agent relations <path>    # a file's symbols and include neighbors
     prowl-agent entrypoints <path>  # root files from which this file is reachable
     prowl-agent references <id>     # where a symbol is used: ref edges, or call sites for code (id from 'find')
-    prowl-agent clusters            # subsystems (connected files)
+    prowl-agent clusters [name]     # subsystems (summaries); with a name, that subsystem's files
     prowl-agent hotspots            # structurally central / large files
     prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
     prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands
@@ -48,7 +48,7 @@ the index by walking up to .prowl/.
 
 ### When to use which
 
-- New or unfamiliar project: overview, then clusters to pull a whole subsystem.
+- New or unfamiliar project: overview for the map, then clusters <name> to pull a subsystem's files.
 - After a find: results carry line and end_line, so read just that range, not the whole file.
 - Fuzzy / natural-language question: search "<text>" (add --smart); --compact lists files first.
 - Before changing a color/font/variable: find it, then references <id> for every usage; check violations.

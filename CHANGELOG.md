@@ -19,6 +19,12 @@ All notable changes are recorded here. The format follows
   (`NewGui` is called from `NewApp`, `initGocui`, `RunTUI`, ...) instead of a
   bare file:line list. Computed from indexed line ranges; the column is empty
   for usages at file scope (comments, top-level code).
+- `search <text>` demotes vendored and generated files so a project's own code
+  leads. A dense dependency file (a generated constants table, say) used to
+  monopolize the results by raw FTS rank -- `search status` on a Go repo
+  returned 50 hits all from a vendored Windows-errors file and none of the
+  project's status code; the query now pulls from a larger pool and floats
+  project chunks first, keeping FTS order within each tier.
 
 ## [0.7.0] - 2026-06-21
 

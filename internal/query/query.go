@@ -429,15 +429,38 @@ func (q *Querier) TestsFor(path string) (TestsResult, error) {
 // fusion; otherwise it falls back to FTS only.
 func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHit, error) {
 	if q.inf == nil || !q.s.VectorsReady() {
-		return q.s.SearchChunks(text, DefaultLimit)
+		return q.searchChunksRanked(text, DefaultLimit)
 	}
 	return q.hybrid(ctx, text, DefaultLimit)
+}
+
+// searchChunksRanked runs the FTS query over a generous pool, then stably
+// demotes vendored and generated chunks so a project's own code leads even when
+// a dense dependency file (a generated constants table, say) would otherwise
+// monopolize the top results by raw FTS rank. The FTS order is kept within each
+// tier and the pool is truncated to limit.
+func (q *Querier) searchChunksRanked(text string, limit int) ([]store.ChunkHit, error) {
+	pool := limit * 4
+	if pool < 200 {
+		pool = 200
+	}
+	hits, err := q.s.SearchChunks(text, pool)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		return !isVendored(hits[i].File) && isVendored(hits[j].File)
+	})
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
 }
 
 // hybrid embeds the query, runs vector KNN and FTS, and fuses by RRF, falling
 // back to FTS alone if embedding fails.
 func (q *Querier) hybrid(ctx context.Context, text string, k int) ([]store.ChunkHit, error) {
-	fts, err := q.s.SearchChunks(text, k)
+	fts, err := q.searchChunksRanked(text, k)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +523,7 @@ type SmartResult struct {
 func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, error) {
 	res := SmartResult{Query: text}
 	if q.inf == nil || !q.s.VectorsReady() {
-		hits, err := q.s.SearchChunks(text, DefaultLimit)
+		hits, err := q.searchChunksRanked(text, DefaultLimit)
 		res.Matches = hits
 		return res, err
 	}

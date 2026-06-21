@@ -642,3 +642,39 @@ func TestOverviewCapsEntrypoints(t *testing.T) {
 		t.Fatalf("EntrypointsFor sample = %d, want at most 20", len(ep.Entrypoints))
 	}
 }
+
+func TestSearchChunksDemotesVendored(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// The dense vendored chunk repeats the term, so FTS ranks it above the lone
+	// project hit; demotion must still surface the project file first.
+	mk := func(rel, text string) {
+		fid, err := s.UpsertFile(store.File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil,
+			[]store.Chunk{{StartLine: 1, EndLine: 1, Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("vendor/dep/consts.go", "status status status status status status status status")
+	mk("app/status.go", "func refresh() { return status }")
+
+	hits, err := New(s).SimilarCode(context.Background(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) < 2 {
+		t.Fatalf("SimilarCode(status) = %d hits, want both files", len(hits))
+	}
+	if hits[0].File != "app/status.go" {
+		t.Errorf("SimilarCode(status)[0].File = %q, want the project file first (vendored demoted)", hits[0].File)
+	}
+	if !strings.HasPrefix(hits[len(hits)-1].File, "vendor/") {
+		t.Errorf("SimilarCode(status) last = %q, want vendored demoted to the end", hits[len(hits)-1].File)
+	}
+}

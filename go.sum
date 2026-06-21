@@ -20,6 +20,8 @@ github.com/alexaandru/go-sitter-forest/css v1.9.4 h1:MBdaNeWhmIBqrxetO0HBiyit9Sf
 github.com/alexaandru/go-sitter-forest/css v1.9.4/go.mod h1:5lnhmNpkGjiHgp6LfEyUtcS11G4MDwgvaV0naJeJEY8=
 github.com/alexaandru/go-sitter-forest/fish v1.9.2 h1:TmlzrIQgtJh0mLDviGYFB/namZOofm/cPkftQoMOh9A=
 github.com/alexaandru/go-sitter-forest/fish v1.9.2/go.mod h1:GPTSS+k7af3yOKfo7WH6ubXkqc4/spBs8xl4/2ojqq0=
+github.com/alexaandru/go-sitter-forest/go v1.9.4 h1:Xpq8HijvTp2+AHL4UplLLiCOdIAA20u0JyM8NGBIBWs=
+github.com/alexaandru/go-sitter-forest/go v1.9.4/go.mod h1:jCpJr1AOFPGq1DrAJevuurB04NJVk8jw3hYW3Mxc7G8=
 github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4 h1:l4/bc9oIyZxTB8xYSzbuRqiDJgxiaBd8DZfEvmD4bqU=
 github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4/go.mod h1:qcaksoN4pW/mnTxel57rzhMD9b4wA1gb1L1vTpTzgy8=
 github.com/alexaandru/go-sitter-forest/ini v1.9.1 h1:Lz+N6ea6/maKhXZpU/hzRXskB5Sn1sd0aANJ+etgi/w=

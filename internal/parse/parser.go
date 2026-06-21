@@ -9,6 +9,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/cpp"
 	"github.com/alexaandru/go-sitter-forest/css"
 	"github.com/alexaandru/go-sitter-forest/fish"
+	golang "github.com/alexaandru/go-sitter-forest/go"
 	"github.com/alexaandru/go-sitter-forest/hyprlang"
 	"github.com/alexaandru/go-sitter-forest/ini"
 	"github.com/alexaandru/go-sitter-forest/javascript"
@@ -42,6 +43,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"fish":       fish.GetLanguage,
 	"javascript": javascript.GetLanguage,
 	"markdown":   markdown.GetLanguage,
+	"go":         golang.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

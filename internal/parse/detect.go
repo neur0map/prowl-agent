@@ -56,6 +56,8 @@ func Detect(relPath string, head []byte) string {
 		return "cpp"
 	case ".fish":
 		return "fish"
+	case ".go":
+		return "go"
 	case ".conf":
 		return "generic"
 	}

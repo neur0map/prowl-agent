@@ -11,6 +11,7 @@ require (
 	github.com/alexaandru/go-sitter-forest/cpp v1.9.5
 	github.com/alexaandru/go-sitter-forest/css v1.9.4
 	github.com/alexaandru/go-sitter-forest/fish v1.9.2
+	github.com/alexaandru/go-sitter-forest/go v1.9.4
 	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4
 	github.com/alexaandru/go-sitter-forest/ini v1.9.1
 	github.com/alexaandru/go-sitter-forest/javascript v1.9.2
@@ -30,6 +31,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2
+	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
 )
 
 require (
@@ -58,7 +60,6 @@ require (
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect

@@ -20,11 +20,14 @@ answers about a project's files, served over MCP.
   skipping unchanged files and serving stale data. Release builds key this off the
   commit; dev and dirty builds key off the binary's mtime so each local rebuild
   also reparses.
-- Tree-sitter extraction for Lua, Python, JavaScript, Bash, Fish, C++, QML, CSS,
-  SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland, plus a line-based reader for
-  other config formats (sway/i3, rofi `rasi`, polybar, and similar). Markdown
-  headings and JavaScript declarations become symbols, so docs and dashboard
-  scripts are searchable by name as well as by content.
+- Tree-sitter extraction for Go, Lua, Python, JavaScript, Bash, Fish, C++, QML,
+  CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland, plus a line-based
+  reader for other config formats (sway/i3, rofi `rasi`, polybar, and similar).
+  Markdown headings and JavaScript declarations become symbols, so docs and
+  dashboard scripts are searchable by name as well as by content. Go is indexed
+  at the symbol level (functions, methods, types, and import edges), so `find`
+  and `search` cover a Go project; deeper graph queries stay tuned to config
+  include trees, so prowl can now index its own source.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

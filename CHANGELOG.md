@@ -18,7 +18,9 @@ All notable changes are recorded here. The format follows
   (an `in` column), so the answer reads as which functions call a symbol
   (`NewGui` is called from `NewApp`, `initGocui`, `RunTUI`, ...) instead of a
   bare file:line list. Computed from indexed line ranges; the column is empty
-  for usages at file scope (comments, top-level code).
+  for usages at file scope (comments, top-level code). Lines that are themselves
+  a same-named definition (an interface method, an override in another class)
+  are dropped, so an overridden method's results show real calls, not siblings.
 - `search <text>` demotes vendored and generated files so a project's own code
   leads. A dense dependency file (a generated constants table, say) used to
   monopolize the results by raw FTS rank -- `search status` on a Go repo

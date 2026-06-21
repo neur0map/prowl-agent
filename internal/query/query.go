@@ -124,7 +124,18 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 		return u, err
 	}
 	const maxSites = 40
+	spansByFile := make(map[string][]store.SymbolSpan)
+	spansFor := func(file string) []store.SymbolSpan {
+		s, ok := spansByFile[file]
+		if !ok {
+			s, _ = q.s.SymbolSpans(file)
+			spansByFile[file] = s
+		}
+		return s
+	}
+collect:
 	for _, ch := range chunks {
+		spans := spansFor(ch.File)
 		for i, ln := range strings.Split(ch.Text, "\n") {
 			abs := ch.StartLine + i
 			if ch.File == sym.File && sym.Line <= abs && abs <= sym.EndLine {
@@ -133,23 +144,17 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 			if !containsWord(ln, sym.Name) {
 				continue // name appears only as a substring of a longer identifier
 			}
-			u.CallSites = append(u.CallSites, CallSite{File: ch.File, Line: abs, Text: strings.TrimSpace(ln)})
-		}
-		if len(u.CallSites) >= maxSites {
-			u.CallSites = u.CallSites[:maxSites]
-			break
-		}
-	}
-	spansByFile := make(map[string][]store.SymbolSpan)
-	for i := range u.CallSites {
-		cs := &u.CallSites[i]
-		spans, ok := spansByFile[cs.File]
-		if !ok {
-			spans, _ = q.s.SymbolSpans(cs.File)
-			spansByFile[cs.File] = spans
-		}
-		if in := enclosingName(spans, cs.Line); in != "" && in != sym.Name {
-			cs.In = in
+			if definesName(spans, abs, sym.Name) {
+				continue // a same-named definition elsewhere (e.g. an override), not a call
+			}
+			in := enclosingName(spans, abs)
+			if in == sym.Name {
+				in = ""
+			}
+			u.CallSites = append(u.CallSites, CallSite{File: ch.File, In: in, Line: abs, Text: strings.TrimSpace(ln)})
+			if len(u.CallSites) >= maxSites {
+				break collect
+			}
 		}
 	}
 	if len(u.CallSites) > 0 {
@@ -172,6 +177,18 @@ func enclosingName(spans []store.SymbolSpan, line int) string {
 		}
 	}
 	return name
+}
+
+// definesName reports whether a symbol with the given name begins on line, so a
+// definition header (an interface method, an override) is not mistaken for a
+// call site of that name.
+func definesName(spans []store.SymbolSpan, line int, name string) bool {
+	for _, sp := range spans {
+		if sp.StartLine == line && sp.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // containsWord reports whether name appears in line as a whole identifier token,

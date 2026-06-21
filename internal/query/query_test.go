@@ -678,3 +678,62 @@ func TestSearchChunksDemotesVendored(t *testing.T) {
 		t.Errorf("SimilarCode(status) last = %q, want vendored demoted to the end", hits[len(hits)-1].File)
 	}
 }
+
+func TestFindReferencesExcludesSiblingDefs(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	def := func(rel string, start int) {
+		fid, err := s.UpsertFile(store.File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid,
+			[]store.Symbol{{Name: "Handle", Kind: "function", StartLine: start, EndLine: start + 1}},
+			nil, nil,
+			[]store.Chunk{{StartLine: start, EndLine: start + 1, Text: "func Handle() error { return nil }"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	def("a.go", 10) // queried definition
+	def("b.go", 5)  // a sibling definition of the same name
+	cid, err := s.UpsertFile(store.File{RelPath: "c.go", Lang: "go", Hash: "c", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(cid,
+		[]store.Symbol{{Name: "run", Kind: "function", StartLine: 1, EndLine: 3}},
+		nil, nil,
+		[]store.Chunk{{StartLine: 1, EndLine: 3, Text: "func run() { _ = Handle() }"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := s.SymbolsByName("Handle", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var aID int64
+	for _, h := range hits {
+		if h.File == "a.go" {
+			aID = h.ID
+		}
+	}
+	u, err := New(s).FindReferences(aID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calledInRun bool
+	for _, c := range u.CallSites {
+		if c.File == "a.go" || c.File == "b.go" {
+			t.Errorf("call site %+v is a Handle definition, not a usage; must be excluded", c)
+		}
+		if c.File == "c.go" && c.In == "run" {
+			calledInRun = true
+		}
+	}
+	if !calledInRun {
+		t.Fatalf("want the c.go usage tagged with enclosing run, got %+v", u.CallSites)
+	}
+}

@@ -294,20 +294,37 @@ func pathCandidates(fromRel, raw, lang string) []string {
 		}
 	}
 	// Rust crate-relative imports (`use crate::a::b::c;`) map module path segments
-	// to files under src/, longest match first (a submodule a/b/c.rs, else the
-	// module a/b.rs that defines item c). Root items fall back to the crate root.
-	// super::/self:: and external crates stay informational.
+	// to files under the importing file's crate root, longest match first (a
+	// submodule a/b/c.rs, else the module a/b.rs that defines item c). The crate
+	// root is the enclosing `src/` dir, so this works for both a single crate at
+	// the repo root and a Cargo workspace (crates/<name>/src/...). super::/self::
+	// and cross-crate imports stay informational.
 	if lang == "rust" {
 		if rest, ok := strings.CutPrefix(raw, "crate::"); ok {
 			if i := strings.Index(rest, "::{"); i >= 0 {
 				rest = rest[:i]
 			}
 			segs := strings.Split(rest, "::")
+			srcRoot := "src/"
+			if i := strings.Index(fromRel, "/src/"); i >= 0 {
+				srcRoot = fromRel[:i+len("/src/")]
+			}
 			for n := len(segs); n >= 1; n-- {
-				p := "src/" + strings.Join(segs[:n], "/")
+				p := srcRoot + strings.Join(segs[:n], "/")
 				c = append(c, p+".rs", p+"/mod.rs")
 			}
-			c = append(c, "src/lib.rs", "src/main.rs")
+			c = append(c, srcRoot+"lib.rs", srcRoot+"main.rs")
+		}
+		// `mod foo;` includes a sibling module file. In foo/mod.rs, lib.rs or
+		// main.rs the submodule is a sibling (dir/foo.rs); in foo.rs it lives in a
+		// subdir named after the file (dir/foo/bar.rs). Try both.
+		if rest, ok := strings.CutPrefix(raw, "mod::"); ok {
+			dir := path.Dir(fromRel)
+			c = append(c, path.Join(dir, rest)+".rs", path.Join(dir, rest, "mod.rs"))
+			base := strings.TrimSuffix(path.Base(fromRel), ".rs")
+			if base != "mod" && base != "lib" && base != "main" {
+				c = append(c, path.Join(dir, base, rest)+".rs", path.Join(dir, base, rest, "mod.rs"))
+			}
 		}
 	}
 	// Python absolute imports (`import a.b`, `from a.b import c`) map the dotted

@@ -42,13 +42,14 @@ internal/assist      local Ollama inferencer for the semantic layer
    basename. Each file gets a role (config, bar, theme, script, and so on).
    For code languages, Go resolves in-module package imports to every file of the
    imported package (read from `go.mod`), TypeScript/JavaScript resolve relative
-   imports, Rust resolves `crate::` imports to module files under `src/`, and
+   imports, Rust resolves `mod` declarations and `crate::` imports to module
+   files (single crate or Cargo workspace), and
    Python resolves absolute imports, so the graph queries work across a Go
    module, a TS app, a Rust crate, or a Python package. External and
    standard-library imports stay informational.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
-   semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius uses a
-   recursive CTE.
+   semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius loads the
+   resolved edge set once and walks it with an in-memory BFS.
 4. **Answer.** The shell query commands (in `cli`) run a querier directly and
    print TOON or JSON; `mcp` exposes the same queries to coding agents as tools;
    `lsp` exposes the index to editors (definition, references, hover,

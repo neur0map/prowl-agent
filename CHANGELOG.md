@@ -39,9 +39,12 @@ answers about a project's files, served over MCP.
   try `.ts/.tsx/.js/.jsx/.mjs/.cjs` and an `index` file in a directory, so
   `callers`, `impact`, `changed`, and `clusters` work across a TS/React app.
   Package imports (bare or scoped) stay external and informational.
-- Rust `crate::` imports resolve to the module file under `src/` (longest match
-  first, falling back to the crate root), so the graph works across a Rust crate.
-  `super::`/`self::` and external crates stay informational.
+- Rust module graph: `mod foo;` declarations resolve to the included file
+  (`foo.rs` / `foo/mod.rs`, handling both `mod.rs` and `foo.rs` parent layouts),
+  and `crate::` imports resolve to the module file under the importing file's
+  crate root, so the graph works across a single crate and a Cargo workspace
+  (`crates/<name>/src/...`) alike. `super::`/`self::`, cross-crate, and external
+  imports stay informational.
 - Python imports resolve to files: absolute (`import a.b`, `from a.b import c`)
   to `a/b.py` or `a/b/__init__.py` (also under `src/`), and relative
   (`from .x import y`, `from ..pkg.mod import z`) against the importing file's

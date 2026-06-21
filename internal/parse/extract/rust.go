@@ -31,6 +31,14 @@ func (rustExtractor) Extract(src []byte) (Result, error) {
 		addNamed(&r, caps, src, "type.name", "type.def", "type", "rust")
 		addNamed(&r, caps, src, "mod.name", "mod.def", "module", "rust")
 		addNamed(&r, caps, src, "macro.name", "macro.def", "macro", "rust")
+		// `mod foo;` (no inline body) includes the file foo.rs / foo/mod.rs.
+		if n, ok := capNode(caps, "mod.name"); ok {
+			if def, ok2 := capNode(caps, "mod.def"); ok2 {
+				if _, hasBody := firstChildOfType(def, "declaration_list"); !hasBody {
+					r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: "mod::" + n.Content(src), Line: line(n)})
+				}
+			}
+		}
 		if n, ok := capNode(caps, "use.path"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
 		}

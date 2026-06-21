@@ -101,12 +101,12 @@ the lowest-overhead path: no server, and none of the tool-schema tokens an MCP
 server injects into every request.
 
 ```sh
-prowl-agent overview            # project map: roles, entrypoints, clusters (start here)
+prowl-agent overview            # project map: docs to read, roles, entrypoints, clusters (start here)
 prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
 prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
 prowl-agent callers <path>      # what includes / execs / binds to a file
 prowl-agent callees <path>      # what a file includes / execs / binds to
-prowl-agent impact <path>       # blast radius: files that transitively depend on this one
+prowl-agent impact <path>       # blast radius: count, subsystems, direct importers (--all = full list)
 prowl-agent relations <path>    # a file's symbols and include neighbors
 prowl-agent entrypoints <path>  # root files from which this file is reachable
 prowl-agent references <id>     # references to a symbol id (the id column from find)

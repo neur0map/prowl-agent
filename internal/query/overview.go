@@ -1,6 +1,7 @@
 package query
 
 import (
+	"path"
 	"sort"
 	"strings"
 
@@ -145,10 +146,72 @@ func dominantLang(members []string, langOf map[string]string) string {
 	return best
 }
 
+// guideDocs picks the project's architecture/onboarding docs from indexed
+// markdown, so an agent's first call points it at the human-written guides
+// (README, ARCHITECTURE, CONTRIBUTING, docs/** guides) before it reads code.
+// Ranked: root README, then other root guides, then docs/ guides; capped at 8.
+func guideDocs(files []store.File) []string {
+	type scored struct {
+		path string
+		rank int
+	}
+	var picks []scored
+	rootGuides := map[string]bool{
+		"architecture.md": true, "contributing.md": true, "development.md": true,
+		"develop.md": true, "hacking.md": true, "design.md": true, "agents.md": true,
+	}
+	for _, f := range files {
+		if f.Lang != "markdown" {
+			continue
+		}
+		rel := f.RelPath
+		base := strings.ToLower(path.Base(rel))
+		lower := strings.ToLower(rel)
+		depth := strings.Count(rel, "/")
+		switch {
+		case depth == 0 && base == "readme.md":
+			picks = append(picks, scored{rel, 0})
+		case depth == 0 && rootGuides[base]:
+			picks = append(picks, scored{rel, 1})
+		case (strings.HasPrefix(lower, "docs/") || strings.HasPrefix(lower, "doc/")) && matchesGuide(lower):
+			picks = append(picks, scored{rel, 2})
+		}
+	}
+	sort.Slice(picks, func(i, j int) bool {
+		if picks[i].rank != picks[j].rank {
+			return picks[i].rank < picks[j].rank
+		}
+		return picks[i].path < picks[j].path
+	})
+	out := make([]string, 0, len(picks))
+	for _, p := range picks {
+		if len(out) >= 8 {
+			break
+		}
+		out = append(out, p.path)
+	}
+	return out
+}
+
+// matchesGuide reports whether a doc path looks like an architecture/onboarding
+// guide rather than reference material.
+func matchesGuide(s string) bool {
+	for _, kw := range []string{
+		"guide", "architecture", "develop", "contribut", "design", "overview",
+		"getting-started", "getting_started", "structure", "codebase", "hacking", "onboard",
+	} {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
+}
+
 // Overview is a compact map of the whole project for an agent's first call.
 type Overview struct {
 	Counts      store.Counts        `json:"counts"`
 	Roles       map[string]int      `json:"roles"`
+	Docs        []string            `json:"docs"`
 	Entrypoints []string            `json:"entrypoints"`
 	Clusters    []Cluster           `json:"clusters"`
 	Palette     []store.ResourceRow `json:"palette"`
@@ -177,6 +240,7 @@ func (q *Querier) Overview() (Overview, error) {
 		}
 		o.Roles[role]++
 	}
+	o.Docs = guideDocs(files)
 
 	// Entrypoints: files that depend on others but nothing depends on them.
 	dep, err := q.s.FileDepEdges()

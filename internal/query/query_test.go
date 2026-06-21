@@ -417,3 +417,34 @@ func TestSplitBlobCluster(t *testing.T) {
 		t.Fatalf("balanced clusters should be unchanged, got %+v", out2)
 	}
 }
+
+func TestGuideDocs(t *testing.T) {
+	files := []store.File{
+		{RelPath: "README.md", Lang: "markdown"},
+		{RelPath: "src/main.go", Lang: "go"},
+		{RelPath: "docs/dev/Codebase_Guide.md", Lang: "markdown"},
+		{RelPath: "docs/Config.md", Lang: "markdown"},
+		{RelPath: "CONTRIBUTING.md", Lang: "markdown"},
+		{RelPath: "docs/architecture/overview.md", Lang: "markdown"},
+	}
+	got := guideDocs(files)
+	want := []string{
+		"README.md",
+		"CONTRIBUTING.md",
+		"docs/architecture/overview.md",
+		"docs/dev/Codebase_Guide.md",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("guideDocs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("guideDocs = %v, want %v", got, want)
+		}
+	}
+	for _, g := range got {
+		if g == "docs/Config.md" || g == "src/main.go" {
+			t.Errorf("guideDocs included non-guide %q", g)
+		}
+	}
+}

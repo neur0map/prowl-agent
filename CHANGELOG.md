@@ -94,6 +94,9 @@ answers about a project's files, served over MCP.
   and the direct importers, instead of dumping every dependent. On a large Go
   package this is a 12-line summary rather than a 600+ row list. `--all` lists
   every dependent file.
+- `overview` surfaces the project's architecture/onboarding docs (root README,
+  ARCHITECTURE, CONTRIBUTING, and `docs/**` guides) so an agent's first call
+  points it at the human-written guide before it reads code.
 - Savings are tracked on every delivery path: each shell query, like each MCP
   call, records what it returned versus the size of the files it pointed at, so
   `prowl-agent status` keeps counting when agents use the CLI instead of MCP.

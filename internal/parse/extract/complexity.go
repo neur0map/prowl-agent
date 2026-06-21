@@ -50,6 +50,11 @@ var decisionNodes = map[string]map[string]bool{
 		"while_statement": true, "do_statement": true, "switch_section": true,
 		"catch_clause": true, "conditional_expression": true,
 	},
+	"php": {
+		"if_statement": true, "else_if_clause": true, "for_statement": true,
+		"foreach_statement": true, "while_statement": true, "do_statement": true,
+		"case_statement": true, "catch_clause": true, "conditional_expression": true,
+	},
 	"javascript": jsDecision,
 	"typescript": jsDecision,
 	"tsx":        jsDecision,

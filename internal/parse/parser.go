@@ -18,6 +18,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/json"
 	"github.com/alexaandru/go-sitter-forest/lua"
 	"github.com/alexaandru/go-sitter-forest/markdown"
+	"github.com/alexaandru/go-sitter-forest/php"
 	"github.com/alexaandru/go-sitter-forest/python"
 	"github.com/alexaandru/go-sitter-forest/qmljs"
 	"github.com/alexaandru/go-sitter-forest/ruby"
@@ -55,6 +56,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"rust":       rust.GetLanguage,
 	"java":       java.GetLanguage,
 	"ruby":       ruby.GetLanguage,
+	"php":        php.GetLanguage,
 	"csharp":     c_sharp.GetLanguage,
 }
 

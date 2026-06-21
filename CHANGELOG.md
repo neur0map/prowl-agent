@@ -27,7 +27,7 @@ answers about a project's files, served over MCP.
   skipping unchanged files and serving stale data. Release builds key this off the
   commit; dev and dirty builds key off the binary's mtime so each local rebuild
   also reparses.
-- Tree-sitter extraction for Go, Rust, Java, Ruby, C#, TypeScript/TSX, Lua,
+- Tree-sitter extraction for Go, Rust, Java, Ruby, C#, PHP, TypeScript/TSX, Lua,
   Python, JavaScript, Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
   plus a line-based reader for other config formats (sway/i3, rofi `rasi`,
   polybar, and similar). Markdown headings and JavaScript declarations become
@@ -80,6 +80,15 @@ answers about a project's files, served over MCP.
   `import com.foo.*` fans out to every file in the package. JDK and third-party
   imports stay informational. On the retrofit repo this took resolved edges from
   105 to 704 and produced real per-module clusters and cross-module blast radius.
+- PHP class graph: a `use Ns\Class` import (including grouped `use Ns\{A, B}`)
+  resolves to the file that declares that class, matched by the class's recorded
+  `namespace` and basename rather than a fixed PSR-4 directory map, so a class
+  whose namespace lives in an off-convention directory still resolves. Classes,
+  interfaces, traits, enums, functions, and methods are indexed with cyclomatic
+  complexity, and `require`/`include` paths resolve as files. On the Laravel
+  framework this resolved 8237 cross-component `use` imports and gave
+  `impact src/Illuminate/Support/Str.php` a 1527-file blast radius; vendor
+  imports (PHPUnit, Symfony) match no indexed namespace and stay informational.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

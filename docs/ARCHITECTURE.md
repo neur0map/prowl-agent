@@ -46,9 +46,12 @@ internal/assist      local Ollama inferencer for the semantic layer
    import resolves to that package's source by the `src/` convention, mapping the
    `package.json` name to its directory; built `dist/` paths from `exports` are
    ignored so edges land on real source), Rust resolves `mod` declarations and
-   `crate::` imports to module files (single crate or Cargo workspace), and
-   Python resolves absolute imports, so the graph queries work across a Go
-   module, a TS app or monorepo, a Rust crate, or a Python package. External and
+   `crate::` imports to module files (single crate or Cargo workspace), Python
+   resolves absolute imports, and PHP resolves a `use Ns\Class` import to the
+   file that declares that class (matching the class's recorded namespace and
+   basename, so a namespace that lives in an off-convention directory still
+   resolves), so the graph queries work across a Go module, a TS app or monorepo,
+   a Rust crate, a Python package, or a PHP project. External and
    standard-library imports stay informational.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius loads the

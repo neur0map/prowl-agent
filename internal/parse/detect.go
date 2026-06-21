@@ -70,6 +70,8 @@ func Detect(relPath string, head []byte) string {
 		return "ruby"
 	case ".cs":
 		return "csharp"
+	case ".php", ".phtml":
+		return "php"
 	case ".conf":
 		return "generic"
 	}

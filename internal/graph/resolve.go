@@ -129,6 +129,60 @@ func Resolve(s *store.Store) error {
 	if err := resolveTSPackages(s, files, byID); err != nil {
 		return err
 	}
+	// Pass 10: PHP `use Ns\Class` imports -> the file declaring that class.
+	if err := resolvePHPNamespaces(s, byID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// resolvePHPNamespaces links a PHP `use Ns\Class` import to the file that
+// declares that class. PHP `use` imports a fully-qualified class name, and PSR-4
+// gives one class per file named after the class, so a file's declared namespace
+// (recorded as a "namespace" resource at parse time, like C#) plus its basename
+// identify it. require/include path imports carry no namespace separator and are
+// resolved as paths by the include pass instead. Third-party (vendor) classes
+// declare no indexed namespace and stay informational.
+func resolvePHPNamespaces(s *store.Store, byID map[int64]store.File) error {
+	ns, err := s.NamespaceFiles()
+	if err != nil {
+		return err
+	}
+	nsFiles := map[string][]store.File{} // namespace -> php files declaring it
+	for name, ids := range ns {
+		for _, id := range ids {
+			if f, ok := byID[id]; ok && f.Lang == "php" {
+				nsFiles[name] = append(nsFiles[name], f)
+			}
+		}
+	}
+	if len(nsFiles) == 0 {
+		return nil
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	for _, e := range inc {
+		if byID[e.FileID].Lang != "php" {
+			continue
+		}
+		fqcn := strings.TrimPrefix(e.Raw, "\\")
+		i := strings.LastIndex(fqcn, "\\")
+		if i < 0 {
+			continue // a require/include path or a root-namespace class, not resolvable here
+		}
+		cands := nsFiles[fqcn[:i]]
+		class := fqcn[i+1:]
+		for _, c := range cands {
+			if strings.TrimSuffix(path.Base(c.RelPath), ".php") == class && c.ID != e.FileID {
+				if err := s.SetEdgeResolved(e.ID, "file", c.ID); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
 	return nil
 }
 

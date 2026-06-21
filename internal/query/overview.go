@@ -205,13 +205,22 @@ func matchesGuide(s string) bool {
 	return false
 }
 
+// ClusterSummary is a cluster in the overview map: its label, dominant language,
+// and file count. The full file list lives in the `clusters` command, so the
+// overview (an agent's first call) stays a compact map, not a file dump.
+type ClusterSummary struct {
+	Label string `json:"label"`
+	Lang  string `json:"lang"`
+	Files int    `json:"files"`
+}
+
 // Overview is a compact map of the whole project for an agent's first call.
 type Overview struct {
 	Counts      store.Counts        `json:"counts"`
 	Roles       map[string]int      `json:"roles"`
 	Docs        []string            `json:"docs"`
 	Entrypoints []string            `json:"entrypoints"`
-	Clusters    []Cluster           `json:"clusters"`
+	Clusters    []ClusterSummary    `json:"clusters"`
 	Palette     []store.ResourceRow `json:"palette"`
 	Keybinds    int                 `json:"keybinds"`
 	Hotspots    []store.FanRow      `json:"hotspots"`
@@ -265,7 +274,10 @@ func (q *Querier) Overview() (Overview, error) {
 	if len(clusters) > 8 {
 		clusters = clusters[:8]
 	}
-	o.Clusters = clusters
+	o.Clusters = make([]ClusterSummary, len(clusters))
+	for i, c := range clusters {
+		o.Clusters[i] = ClusterSummary{Label: c.Label, Lang: c.Lang, Files: len(c.Files)}
+	}
 
 	o.Palette, err = q.s.ColorPalette()
 	if err != nil {

@@ -113,9 +113,12 @@ answers about a project's files, served over MCP.
   and the direct importers, instead of dumping every dependent. On a large Go
   package this is a 12-line summary rather than a 600+ row list. `--all` lists
   every dependent file.
-- `overview` surfaces the project's architecture/onboarding docs (root README,
-  ARCHITECTURE, CONTRIBUTING, and `docs/**` guides) so an agent's first call
-  points it at the human-written guide before it reads code.
+- `overview` is a compact project map for an agent's first call: per-cluster it
+  reports the label, language, and file count rather than every file path (the
+  full lists stay in `clusters`), and it surfaces the project's architecture docs
+  (root README, ARCHITECTURE, CONTRIBUTING, `docs/**` guides) so the agent reads
+  the human-written guide before code. On a 2023-file Go repo this is a ~1.3 KB
+  map instead of ~49 KB of mostly file paths.
 - Savings are tracked on every delivery path: each shell query, like each MCP
   call, records what it returned versus the size of the files it pointed at, so
   `prowl-agent status` keeps counting when agents use the CLI instead of MCP.

@@ -148,13 +148,22 @@ func mergeOpenCode(path string) error {
 func ensureAgentsBlock(path string) error {
 	data, _ := os.ReadFile(path)
 	content := string(data)
-	// Refresh an existing block in place, so a re-init (after a reboot, or after a
-	// prowl-agent upgrade) replaces stale guidance instead of leaving it. Anything
-	// outside the markers (the user's own AGENTS.md) is preserved.
+	// Refresh an existing prowl block in place, so a re-init (after a reboot, or a
+	// prowl-agent upgrade) replaces stale guidance instead of leaving it. Only the
+	// span between our markers is touched, so anything outside them (the user's
+	// own AGENTS.md) is preserved. A well-formed block has both markers; if only
+	// the opening marker survives (a hand-edited or truncated file) we replace
+	// just that marker line, never the rest of the file, so user text below it is
+	// never deleted.
 	if i := strings.Index(content, agentsMarker); i >= 0 {
-		end := len(content)
-		if j := strings.Index(content[i:], agentsEndMarker); j >= 0 {
-			end = i + j + len(agentsEndMarker)
+		var end int
+		switch {
+		case strings.Contains(content[i:], agentsEndMarker):
+			end = i + strings.Index(content[i:], agentsEndMarker) + len(agentsEndMarker)
+		case strings.IndexByte(content[i:], '\n') >= 0:
+			end = i + strings.IndexByte(content[i:], '\n') // no closing marker: only the opening line
+		default:
+			end = len(content) // opening marker is the final line, nothing follows
 		}
 		updated := content[:i] + agentsBlock + content[end:]
 		if updated == content {

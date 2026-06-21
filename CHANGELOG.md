@@ -176,6 +176,10 @@ answers about a project's files, served over MCP.
   (`opencode.json`, its own shape), plus an `AGENTS.md` block; state stays in a
   gitignored `.prowl/` folder. Server entries now include `type: "stdio"` (which
   VS Code requires). The README documents the one-command setup for any other agent.
+  The `AGENTS.md` block is delimited by `<!-- prowl-agent -->` markers and only
+  that span is ever rewritten, so a re-init refreshes prowl's guidance while
+  leaving the user's own AGENTS.md untouched; a malformed block missing its
+  closing marker replaces only the marker line, never the user text below it.
 - Automatic freshness (no daemon, no extra command): the MCP server re-indexes
   right before a request when a change is pending, keeps a featherweight fsnotify
   watcher active for 30 minutes after each call, then suspends and resumes (with a

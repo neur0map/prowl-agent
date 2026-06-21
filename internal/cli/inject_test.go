@@ -57,3 +57,56 @@ func TestEnsureAgentsBlockAppendsWhenAbsent(t *testing.T) {
 		t.Errorf("expected existing content plus appended block:\n%s", s)
 	}
 }
+
+func TestEnsureAgentsBlockMissingEndMarkerKeepsUserText(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "AGENTS.md")
+	// A malformed block: the opening marker survives but the closing one was
+	// removed, with the user's own text below it. The refresh must not delete to
+	// end of file.
+	original := "# My project\n" + agentsMarker + "\nstale prowl body\n\n## Important user rules\nKeep these.\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureAgentsBlock(path); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := os.ReadFile(path)
+	got := string(s)
+	// The user's text below the orphan marker is preserved, not wiped to EOF.
+	if !strings.Contains(got, "## Important user rules") || !strings.Contains(got, "Keep these.") {
+		t.Errorf("user text deleted on missing end marker:\n%s", got)
+	}
+	if !strings.Contains(got, "# My project") {
+		t.Errorf("user heading before marker lost:\n%s", got)
+	}
+	// A well-formed block now exists (both markers, exactly once each).
+	if n := strings.Count(got, agentsMarker); n != 1 {
+		t.Errorf("expected one opening marker, got %d:\n%s", n, got)
+	}
+	if n := strings.Count(got, agentsEndMarker); n != 1 {
+		t.Errorf("expected one closing marker, got %d:\n%s", n, got)
+	}
+}
+
+func TestEnsureAgentsBlockNeverOverwritesUserFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "AGENTS.md")
+	// A user's own AGENTS.md with no prowl markers at all.
+	original := "# House rules\n\n1. Run tests before pushing.\n2. No force-push to main.\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureAgentsBlock(path); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := os.ReadFile(path)
+	got := string(s)
+	// Every byte of the user's file is still present (appended to, never replaced).
+	if !strings.HasPrefix(got, original) {
+		t.Errorf("user file content was modified, not just appended to:\n%s", got)
+	}
+	if !strings.Contains(got, agentsMarker) {
+		t.Errorf("prowl block was not appended:\n%s", got)
+	}
+}

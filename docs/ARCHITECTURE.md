@@ -1,9 +1,17 @@
 # Architecture
 
 Prowl Agent is a single Go binary. It indexes a project into a per-folder SQLite
-database and answers questions over two stdio front ends: MCP for coding agents
-and LSP for editors. There is no daemon and no network service; each client
-starts the binary itself.
+database and answers questions three ways from one index: read-only shell
+commands (the primary path coding agents use), an MCP stdio server, and an LSP
+stdio server for editors. There is no daemon and no network service; each query
+runs the binary, and MCP/LSP clients start it themselves.
+
+Shell commands are the recommended path: an agent runs `prowl-agent find foo`
+(or `overview`, `impact`, `changed`, ...) and gets a cited, token-lean answer
+with no server to start and none of MCP's upfront per-call tool-schema cost.
+Output defaults to TOON (Token-Oriented Object Notation): uniform result arrays
+collapse to one header plus CSV-style rows, which models read more cheaply than
+JSON. `--json` switches any command to JSON, the shape MCP also returns.
 
 ## Packages
 
@@ -17,7 +25,7 @@ internal/query       structural queries and hybrid/semantic search
 internal/doctor      health checks (cycles, conflicts, hotspots)
 internal/mcp         MCP stdio server
 internal/lsp         Language Server (stdio) for editors (definition, references, hover, ...)
-internal/cli         init (setup wizard + Ollama lifecycle), status, doctor, restart, update, version, hidden serve/lsp, file watcher, injection
+internal/cli         commands: init (setup + Ollama lifecycle), the read-only query commands (find, search, overview, impact, changed, hotspots, ...), status, doctor, restart, update, version, hidden serve/lsp, file watcher, injection, TOON/JSON formatting
 internal/config      per-project config.toml / rules.toml and a global ~/.config/prowl-agent/config.toml that remembers AI on/off and tier
 internal/workspace   .prowl/ workspace, global registry, gitignore wiring
 internal/assist      local Ollama inferencer for the semantic layer
@@ -32,13 +40,20 @@ internal/assist      local Ollama inferencer for the semantic layer
    exec and keybind to script chains, and shared color/font/path/variable
    references. Bare commands resolve against the project's command files by
    basename. Each file gets a role (config, bar, theme, script, and so on).
+   Code languages (Go, Rust, TypeScript) are indexed at the symbol level, so
+   `find` and `search` work across them; their module imports are recorded but
+   not resolved to files, so the deeper graph stays tuned to config include trees.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius uses a
    recursive CTE.
-4. **Serve.** `mcp` exposes the queries to coding agents as tools; `lsp` exposes
-   the same index to editors as a language server (definition, references, hover,
+4. **Answer.** The shell query commands (in `cli`) run a querier directly and
+   print TOON or JSON; `mcp` exposes the same queries to coding agents as tools;
+   `lsp` exposes the index to editors (definition, references, hover,
    document/workspace symbols, code lens, completion, and `doctor` diagnostics).
-   Both carry `file:line` provenance and share the one `.prowl/index.db`.
+   All three carry `file:line` provenance and share the one `.prowl/index.db`.
+   Each shell query and the MCP server freshen the index incrementally first, so
+   answers are never stale; both also record the token savings behind
+   `prowl-agent status`.
 
 Indexing is incremental: only files whose content hash changed are reparsed, and
 graph resolution re-runs globally so the index stays correct as files move around.

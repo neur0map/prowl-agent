@@ -40,6 +40,8 @@ github.com/alexaandru/go-sitter-forest/python v1.9.10 h1:qKbso5wI4vlkQ0EjZBO5hRr
 github.com/alexaandru/go-sitter-forest/python v1.9.10/go.mod h1:CXs3nuPcj4p3FqY8BnvJqsJ0vbsrda6Oj3sQDyRumNY=
 github.com/alexaandru/go-sitter-forest/qmljs v1.9.3 h1:7OOSJvHggtXh8DEHJx1vimGRvuufBXSTo/P61iI4ip0=
 github.com/alexaandru/go-sitter-forest/qmljs v1.9.3/go.mod h1:223A7TGlMLa3N7ecpatvH7BCXY0I9sP2J4ZIeOM88lU=
+github.com/alexaandru/go-sitter-forest/ruby v1.9.3 h1:3GdkatWtd0jXvhnxdqJCdM+9JwAQeTwtWStiDAjAgr0=
+github.com/alexaandru/go-sitter-forest/ruby v1.9.3/go.mod h1:h+TaY3e2ayXHy1jgwLZ+Jnho97roJzmaefSZjFvUM9k=
 github.com/alexaandru/go-sitter-forest/rust v1.9.13 h1:orVZVXQ+IkXkIvzeyO6YvHBwujEvbYFvpMRNAGulHmw=
 github.com/alexaandru/go-sitter-forest/rust v1.9.13/go.mod h1:ZKZRL1Yfy6siuWMvv2h/F9lt/8kMKn6VHnGj00PPNmM=
 github.com/alexaandru/go-sitter-forest/scss v1.9.0 h1:pneGwflZc4D1bNCOAGxegtK1X43zHX6/GPqG/BwWc+U=

@@ -39,6 +39,12 @@ var decisionNodes = map[string]map[string]bool{
 		"while_statement": true, "do_statement": true, "catch_clause": true,
 		"switch_block_statement_group": true, "ternary_expression": true,
 	},
+	"ruby": {
+		"if": true, "elsif": true, "unless": true, "while": true, "until": true,
+		"for": true, "when": true, "conditional": true, "rescue": true,
+		"if_modifier": true, "unless_modifier": true, "while_modifier": true,
+		"until_modifier": true, "rescue_modifier": true,
+	},
 	"javascript": jsDecision,
 	"typescript": jsDecision,
 	"tsx":        jsDecision,

@@ -274,16 +274,17 @@ query after a long idle, then around 20 ms on the repo we tried). Re-running
 
 ## Supported formats
 
-Go, Rust, Java, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C/C++, QML,
-CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland (`hyprlang`), plus
-a line-based reader for everything else (sway/i3, rofi `rasi`, polybar, kitty,
-dunst, and similar). The graph connects code too: Go resolves package imports,
-TypeScript/JavaScript resolve relative imports, Rust resolves `crate::` imports,
-Python resolves absolute and relative imports, C/C++ resolve `#include` headers,
-and Java resolves `import` class paths, so `callers`, `impact`, `changed`, and
-`clusters` work across a Go module, a TS/React app, a Rust crate, a Python
-package, a C codebase, or a Java/Maven project. External and standard-library
-imports stay informational. More languages are on the way.
+Go, Rust, Java, Ruby, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish,
+C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
+(`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
+`rasi`, polybar, kitty, dunst, and similar). The graph connects code too: Go
+resolves package imports, TypeScript/JavaScript resolve relative imports, Rust
+resolves `crate::` imports, Python resolves absolute and relative imports, C/C++
+resolve `#include` headers, Java resolves `import` class paths, and Ruby
+resolves `require_relative`, so `callers`, `impact`, `changed`, and `clusters`
+work across a Go module, a TS/React app, a Rust crate, a Python package, a C
+codebase, a Java/Maven project, or a Ruby/Rails app. External and
+standard-library imports stay informational. More languages are on the way.
 
 ## More
 

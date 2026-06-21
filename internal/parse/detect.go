@@ -66,6 +66,8 @@ func Detect(relPath string, head []byte) string {
 		return "rust"
 	case ".java":
 		return "java"
+	case ".rb":
+		return "ruby"
 	case ".conf":
 		return "generic"
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/markdown"
 	"github.com/alexaandru/go-sitter-forest/python"
 	"github.com/alexaandru/go-sitter-forest/qmljs"
+	"github.com/alexaandru/go-sitter-forest/ruby"
 	"github.com/alexaandru/go-sitter-forest/rust"
 	"github.com/alexaandru/go-sitter-forest/scss"
 	"github.com/alexaandru/go-sitter-forest/toml"
@@ -52,6 +53,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"tsx":        tsx.GetLanguage,
 	"rust":       rust.GetLanguage,
 	"java":       java.GetLanguage,
+	"ruby":       ruby.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

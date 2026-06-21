@@ -306,6 +306,13 @@ func pathCandidates(fromRel, raw, lang string) []string {
 		mod := strings.ReplaceAll(raw, ".", "/")
 		c = append(c, mod+".java", "src/main/java/"+mod+".java", "src/"+mod+".java")
 	}
+	// Ruby require/require_relative: require_relative is relative to the requiring
+	// file's directory; require resolves from the project root or lib/. Gems do
+	// not match a project file and stay informational.
+	if lang == "ruby" && raw != "" {
+		c = append(c, raw+".rb", "lib/"+raw+".rb",
+			path.Clean(path.Join(path.Dir(fromRel), raw))+".rb")
+	}
 	if strings.HasPrefix(raw, "~/.config/") {
 		c = append(c, strings.TrimPrefix(raw, "~/.config/"))
 	}

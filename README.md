@@ -153,9 +153,10 @@ Prowl resolves real edges, not text matches:
 
 - **Code imports.** Go package imports, TypeScript/JavaScript relative imports,
   Rust `mod` and `crate::` imports, Python absolute and relative imports, C/C++
-  `#include`, Java `import` class paths, Ruby `require_relative`, C# `using`
-  namespaces, and PHP `use Ns\Class` imports (resolved to the file declaring
-  that class).
+  `#include`, Java and Kotlin `import` class paths (which resolve to each other
+  in a mixed JVM project, and fold a member or nested-type import to its
+  enclosing class file), Ruby `require_relative`, C# `using` namespaces, and PHP
+  `use Ns\Class` imports (resolved to the file declaring that class).
 - **Monorepos.** A bare import of a first-party workspace package (`@scope/pkg`
   or `pkg/subpath`) resolves to that package's source, so `callers`, `impact`,
   and `clusters` work across a pnpm or turbo monorepo, not just within one
@@ -173,6 +174,7 @@ This is tested against real, popular repositories. A few results:
 | [tRPC](https://github.com/trpc/trpc) | TS monorepo | 878 cross-package imports resolved; `impact @trpc/server` went 0 to 345 dependents |
 | [zod](https://github.com/colinhacks/zod) | TS subpaths | `zod/v4/core` resolves to `packages/zod/src/v4/core/index.ts` |
 | [Laravel](https://github.com/laravel/framework) | PHP, 2955 files | 8237 `use` imports resolved across components; `impact Str.php` reaches 1527 dependents |
+| [OkHttp](https://github.com/square/okhttp) | Kotlin + Java | 1944 imports resolved across Kotlin-Multiplatform source sets, including cross-language and companion-member imports |
 
 External and standard-library imports stay informational. More languages are on
 the way.
@@ -234,8 +236,8 @@ thing even when they share no words (for example, "music spectrum" finds an
 
 ## Supported formats
 
-Go, Rust, Java, Ruby, C#, PHP, TypeScript/TSX, Lua, Python, JavaScript, Bash,
-Fish, C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
+Go, Rust, Java, Kotlin, Ruby, C#, PHP, TypeScript/TSX, Lua, Python, JavaScript,
+Bash, Fish, C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
 (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi `rasi`,
 polybar, kitty, dunst, and similar).
 

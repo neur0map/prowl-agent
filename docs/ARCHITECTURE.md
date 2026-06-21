@@ -50,9 +50,12 @@ internal/assist      local Ollama inferencer for the semantic layer
    resolves absolute imports, and PHP resolves a `use Ns\Class` import to the
    file that declares that class (matching the class's recorded namespace and
    basename, so a namespace that lives in an off-convention directory still
-   resolves), so the graph queries work across a Go module, a TS app or monorepo,
-   a Rust crate, a Python package, or a PHP project. External and
-   standard-library imports stay informational.
+   resolves), Java and Kotlin resolve an `import` to the class file under any
+   module's source root (Maven, Gradle, or Kotlin-Multiplatform layouts; Kotlin
+   and Java resolve to each other, and a member or nested-type import folds to
+   its enclosing class file), so the graph queries work across a Go module, a TS
+   app or monorepo, a Rust crate, a Python package, a PHP project, or a JVM
+   project. External and standard-library imports stay informational.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius loads the
    resolved edge set once and walks it with an in-memory BFS.

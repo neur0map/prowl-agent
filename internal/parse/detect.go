@@ -72,6 +72,8 @@ func Detect(relPath string, head []byte) string {
 		return "csharp"
 	case ".php", ".phtml":
 		return "php"
+	case ".kt", ".kts":
+		return "kotlin"
 	case ".conf":
 		return "generic"
 	}

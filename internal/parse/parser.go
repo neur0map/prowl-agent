@@ -16,6 +16,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/java"
 	"github.com/alexaandru/go-sitter-forest/javascript"
 	"github.com/alexaandru/go-sitter-forest/json"
+	"github.com/alexaandru/go-sitter-forest/kotlin"
 	"github.com/alexaandru/go-sitter-forest/lua"
 	"github.com/alexaandru/go-sitter-forest/markdown"
 	"github.com/alexaandru/go-sitter-forest/php"
@@ -57,6 +58,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"java":       java.GetLanguage,
 	"ruby":       ruby.GetLanguage,
 	"php":        php.GetLanguage,
+	"kotlin":     kotlin.GetLanguage,
 	"csharp":     c_sharp.GetLanguage,
 }
 

@@ -18,6 +18,7 @@ require (
 	github.com/alexaandru/go-sitter-forest/java v1.9.5
 	github.com/alexaandru/go-sitter-forest/javascript v1.9.2
 	github.com/alexaandru/go-sitter-forest/json v1.9.1
+	github.com/alexaandru/go-sitter-forest/kotlin v1.9.4
 	github.com/alexaandru/go-sitter-forest/lua v1.9.3
 	github.com/alexaandru/go-sitter-forest/markdown v1.9.5
 	github.com/alexaandru/go-sitter-forest/php v1.9.5

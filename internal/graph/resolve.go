@@ -117,8 +117,8 @@ func Resolve(s *store.Store) error {
 	if err := resolveCSharpNamespaces(s, byID); err != nil {
 		return err
 	}
-	// Pass 7: Java imports -> the file for that class under any module's source root.
-	if err := resolveJavaPackages(s, files, byID); err != nil {
+	// Pass 7: Java/Kotlin imports -> the file for that class under any module's source root.
+	if err := resolveJVMPackages(s, files, byID); err != nil {
 		return err
 	}
 	// Pass 8: cross-crate Rust imports -> the module file in the target workspace crate.
@@ -363,16 +363,18 @@ func tsPackageFile(fileMap map[string]int64, dir, sub string) (int64, bool) {
 	return 0, false
 }
 
-// resolveJavaPackages resolves Java imports across a multi-module project. A
-// java file's package-relative path (after src/main/java, src/test/java, or
-// src/) is its key, so `import com.foo.Bar` resolves to <module>/.../com/foo/
-// Bar.java in any module, and `import com.foo.*` fans out to every file in that
-// package. Third-party and JDK imports match nothing and stay informational.
-func resolveJavaPackages(s *store.Store, files []store.File, byID map[int64]store.File) error {
-	pkgFiles := map[string]int64{} // com/foo/Bar.java -> id
+// resolveJVMPackages resolves Java and Kotlin imports across a multi-module
+// project. A file's package-relative path (after src/main/java, src/main/kotlin,
+// a src/test root, or src/) is its key, so `import com.foo.Bar` resolves to
+// <module>/.../com/foo/Bar.java or Bar.kt in any module; Java and Kotlin resolve
+// to each other in a mixed JVM project, and `import com.foo.*` fans out to every
+// file in that package. Third-party and JDK imports match nothing and stay
+// informational.
+func resolveJVMPackages(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	pkgFiles := map[string]int64{} // com/foo/Bar.java or .kt -> id
 	pkgDir := map[string][]int64{} // com/foo -> ids (for wildcard imports)
 	for _, f := range files {
-		if f.Lang != "java" {
+		if f.Lang != "java" && f.Lang != "kotlin" {
 			continue
 		}
 		rel := javaPkgPath(f.RelPath)
@@ -391,7 +393,7 @@ func resolveJavaPackages(s *store.Store, files []store.File, byID map[int64]stor
 	}
 	var pkgEdges []store.PkgEdge
 	for _, e := range inc {
-		if byID[e.FileID].Lang != "java" {
+		if l := byID[e.FileID].Lang; l != "java" && l != "kotlin" {
 			continue
 		}
 		if pkg, ok := strings.CutSuffix(e.Raw, ".*"); ok {
@@ -403,30 +405,54 @@ func resolveJavaPackages(s *store.Store, files []store.File, byID map[int64]stor
 			}
 			continue
 		}
-		key := strings.ReplaceAll(e.Raw, ".", "/") + ".java"
-		if dst, ok := pkgFiles[key]; ok && dst != e.FileID {
-			if err := s.SetEdgeResolved(e.ID, "file", dst); err != nil {
-				return err
+		// Resolve to the file declaring the imported class, trying the full path
+		// first and then progressively shorter prefixes, so a member or
+		// nested-type import (com.foo.Outer.Inner, okhttp3.HttpUrl.Companion.toX)
+		// links to its enclosing class file. The fallback only fires when the
+		// exact path is not a file, so it cannot mislink a real class.
+		for base := strings.ReplaceAll(e.Raw, ".", "/"); base != ""; {
+			dst, ok := pkgFiles[base+".java"]
+			if !ok {
+				dst, ok = pkgFiles[base+".kt"]
 			}
+			if ok && dst != e.FileID {
+				if err := s.SetEdgeResolved(e.ID, "file", dst); err != nil {
+					return err
+				}
+				break
+			}
+			i := strings.LastIndex(base, "/")
+			if i < 1 {
+				break
+			}
+			base = base[:i]
 		}
 	}
 	return s.AddPackageEdges(pkgEdges)
 }
 
-// javaPkgPath returns a java file's path relative to its source root (the part
-// after src/main/java, src/test/java, src/main/kotlin, or src/), i.e. its
-// package directory plus filename. Files with no recognizable root keep their
-// full path.
+// javaPkgPath returns a JVM source file's path relative to its source root, i.e.
+// its package directory plus filename. It locates a `src/` directory, then an
+// optional `<sourceSet>/kotlin` or `<sourceSet>/java` segment (covering the
+// Maven `src/main/java`, Gradle, and Kotlin-Multiplatform `src/jvmMain/kotlin`
+// layouts); whatever follows is the package path. Files with no recognizable
+// source root keep their full path.
 func javaPkgPath(rel string) string {
-	for _, m := range []string{"/src/main/java/", "/src/test/java/", "/src/main/kotlin/", "/src/"} {
-		if i := strings.Index(rel, m); i >= 0 {
-			return rel[i+len(m):]
+	var after string
+	switch {
+	case strings.HasPrefix(rel, "src/"):
+		after = rel[len("src/"):]
+	case strings.Contains(rel, "/src/"):
+		after = rel[strings.Index(rel, "/src/")+len("/src/"):]
+	default:
+		return rel
+	}
+	for _, m := range []string{"/kotlin/", "/java/"} {
+		if i := strings.Index(after, m); i >= 0 {
+			return after[i+len(m):]
 		}
 	}
-	if strings.HasPrefix(rel, "src/") {
-		return rel[len("src/"):]
-	}
-	return rel
+	return after
 }
 
 // resolveCSharpNamespaces materializes C# namespace dependencies. A file with a

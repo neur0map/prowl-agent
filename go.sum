@@ -34,6 +34,8 @@ github.com/alexaandru/go-sitter-forest/javascript v1.9.2 h1:b8ZWUk/1bXLmGXN/tL26
 github.com/alexaandru/go-sitter-forest/javascript v1.9.2/go.mod h1:cWOFBHR7EffqM4sdVQ70WtTnFKPZxt5sAm1zS1tWaL8=
 github.com/alexaandru/go-sitter-forest/json v1.9.1 h1:MVV+keFXs6jHuu7rM1O1AzTUIA/W253J4aI8j61S8aI=
 github.com/alexaandru/go-sitter-forest/json v1.9.1/go.mod h1:w47YGXJx8OuLuU5qE2NpyFsTF1dlJgILXD1A01OeXno=
+github.com/alexaandru/go-sitter-forest/kotlin v1.9.4 h1:H2cRqquwV3rbNsUGUvyRZKWwC4TMLEDjXs0jzbIZASE=
+github.com/alexaandru/go-sitter-forest/kotlin v1.9.4/go.mod h1:QCAC6OJsnUIRMx1akoZNzKRe+slaQq4sGSLAVwMFTuQ=
 github.com/alexaandru/go-sitter-forest/lua v1.9.3 h1:A3Tas9sLRVc1kgD4Q477xhW+BfZzm2bnX4xO4bTSUNY=
 github.com/alexaandru/go-sitter-forest/lua v1.9.3/go.mod h1:7MFGPolXojnCrVMHI9TIpB1OCLY8n18Cb4XyKr+hmfE=
 github.com/alexaandru/go-sitter-forest/markdown v1.9.5 h1:59eqvaWljYcTZcbSFhx6RcYy9scZxHBuq0+vHhgcXpY=

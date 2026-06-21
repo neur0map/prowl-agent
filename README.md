@@ -277,10 +277,11 @@ Go, Rust, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C++, QML,
 CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland (`hyprlang`), plus
 a line-based reader for everything else (sway/i3, rofi `rasi`, polybar, kitty,
 dunst, and similar). The graph connects code too: Go resolves package imports,
-TypeScript/JavaScript resolve relative imports, and Rust resolves `crate::`
-imports, so `callers`, `impact`, `changed`, and `clusters` work across a Go
-module, a TS/React app, or a Rust crate. External and standard-library imports
-stay informational. More languages are on the way.
+TypeScript/JavaScript resolve relative imports, Rust resolves `crate::` imports,
+and Python resolves absolute imports, so `callers`, `impact`, `changed`, and
+`clusters` work across a Go module, a TS/React app, a Rust crate, or a Python
+package. External and standard-library imports stay informational. More languages
+are on the way.
 
 ## More
 

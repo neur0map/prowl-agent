@@ -42,6 +42,9 @@ answers about a project's files, served over MCP.
 - Rust `crate::` imports resolve to the module file under `src/` (longest match
   first, falling back to the crate root), so the graph works across a Rust crate.
   `super::`/`self::` and external crates stay informational.
+- Python absolute imports (`import a.b`, `from a.b import c`) resolve to `a/b.py`
+  or `a/b/__init__.py` (also under `src/`), so the graph works across a Python
+  package. Relative (leading-dot) and third-party imports stay informational.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

@@ -71,10 +71,19 @@ func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 // references, or, for code symbols (which have no language-level call graph),
 // full-text call sites of the symbol's name.
 type Usages struct {
-	Symbol    string           `json:"symbol"`
-	Edges     []EdgeView       `json:"edges,omitempty"`
-	CallSites []store.ChunkHit `json:"call_sites,omitempty"`
-	Note      string           `json:"note,omitempty"`
+	Symbol    string     `json:"symbol"`
+	Edges     []EdgeView `json:"edges,omitempty"`
+	CallSites []CallSite `json:"call_sites,omitempty"`
+	Note      string     `json:"note,omitempty"`
+}
+
+// CallSite is a precise source location where a symbol name appears: the file,
+// the line, and that line's text, so the agent sees each usage in context
+// instead of a 40-line chunk.
+type CallSite struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Text string `json:"text"`
 }
 
 // FindReferences returns where a symbol is used. It prefers symbol-reference
@@ -102,20 +111,55 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 	if !ok || sym.Name == "" {
 		return u, nil
 	}
-	hits, err := q.s.SearchChunks(sym.Name, DefaultLimit)
+	chunks, err := q.s.SearchChunkText(sym.Name, DefaultLimit)
 	if err != nil {
 		return u, err
 	}
-	for _, h := range hits {
-		if h.File == sym.File && h.StartLine <= sym.Line && sym.Line <= h.EndLine {
-			continue // skip the definition's own chunk
+	const maxSites = 40
+	for _, ch := range chunks {
+		for i, ln := range strings.Split(ch.Text, "\n") {
+			abs := ch.StartLine + i
+			if ch.File == sym.File && sym.Line <= abs && abs <= sym.EndLine {
+				continue // the definition's own body, not a usage
+			}
+			if !containsWord(ln, sym.Name) {
+				continue // name appears only as a substring of a longer identifier
+			}
+			u.CallSites = append(u.CallSites, CallSite{File: ch.File, Line: abs, Text: strings.TrimSpace(ln)})
 		}
-		u.CallSites = append(u.CallSites, h)
+		if len(u.CallSites) >= maxSites {
+			u.CallSites = u.CallSites[:maxSites]
+			break
+		}
 	}
 	if len(u.CallSites) > 0 {
-		u.Note = "call_sites are full-text usages of the name (no language call graph); some may be comments or docs"
+		u.Note = "call_sites are name usages found in source (no language call graph); some may be comments or docs"
 	}
 	return u, nil
+}
+
+// containsWord reports whether name appears in line as a whole identifier token,
+// not as a substring of a longer identifier.
+func containsWord(line, name string) bool {
+	for from := 0; from <= len(line)-len(name); {
+		i := strings.Index(line[from:], name)
+		if i < 0 {
+			return false
+		}
+		i += from
+		beforeOK := i == 0 || !isIdentByte(line[i-1])
+		end := i + len(name)
+		afterOK := end >= len(line) || !isIdentByte(line[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		from = i + 1
+	}
+	return false
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // depKinds are the dependency edges traversed for callers and blast radius,

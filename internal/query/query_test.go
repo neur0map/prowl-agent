@@ -528,21 +528,22 @@ func TestFindReferencesFallback(t *testing.T) {
 	if u.Symbol != "DoThing" {
 		t.Errorf("Symbol = %q, want DoThing", u.Symbol)
 	}
-	// No symbol-reference edges -> falls back to call sites, excluding the def.
-	var inUser, inDef bool
-	for _, c := range u.CallSites {
-		if c.File == "user.go" {
-			inUser = true
+	// No symbol-reference edges -> falls back to call sites, excluding the def,
+	// and pinpoints the exact usage line and its text.
+	var userSite *CallSite
+	for i := range u.CallSites {
+		if u.CallSites[i].File == "svc.go" {
+			t.Errorf("CallSites = %+v, must exclude the definition in svc.go", u.CallSites)
 		}
-		if c.File == "svc.go" {
-			inDef = true
+		if u.CallSites[i].File == "user.go" {
+			userSite = &u.CallSites[i]
 		}
 	}
-	if !inUser {
-		t.Errorf("CallSites = %+v, want a usage in user.go", u.CallSites)
+	if userSite == nil {
+		t.Fatalf("CallSites = %+v, want a usage in user.go", u.CallSites)
 	}
-	if inDef {
-		t.Errorf("CallSites = %+v, must exclude the definition chunk in svc.go", u.CallSites)
+	if userSite.Line != 1 || !strings.Contains(userSite.Text, "DoThing()") {
+		t.Errorf("user.go call site = %+v, want line 1 with the DoThing() call text", *userSite)
 	}
 }
 

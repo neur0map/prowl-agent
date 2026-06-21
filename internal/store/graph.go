@@ -197,6 +197,37 @@ func (s *Store) SearchChunks(query string, limit int) ([]ChunkHit, error) {
 	return out, rows.Err()
 }
 
+// ChunkBody is a matched chunk with its full text and starting line, so a caller
+// can pinpoint the exact lines a term appears on (SearchChunks returns only a
+// truncated snippet).
+type ChunkBody struct {
+	File      string
+	StartLine int
+	Text      string
+}
+
+// SearchChunkText runs the same FTS query as SearchChunks but returns each
+// matched chunk's full text instead of a snippet.
+func (s *Store) SearchChunkText(query string, limit int) ([]ChunkBody, error) {
+	rows, err := s.db.Query(`
+		SELECT f.rel_path, c.start_line, c.text
+		FROM fts_chunks ft JOIN chunks c ON c.id=ft.rowid JOIN files f ON f.id=c.file_id
+		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, ftsQuote(query), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChunkBody
+	for rows.Next() {
+		var c ChunkBody
+		if err := rows.Scan(&c.File, &c.StartLine, &c.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ftsQuote wraps a user query as a single FTS5 phrase, escaping embedded quotes,
 // so arbitrary input cannot trigger FTS query-syntax errors.
 func ftsQuote(q string) string {

@@ -41,10 +41,11 @@ answers about a project's files, served over MCP.
   Package imports (bare or scoped) stay external and informational.
 - Rust module graph: `mod foo;` declarations resolve to the included file
   (`foo.rs` / `foo/mod.rs`, handling both `mod.rs` and `foo.rs` parent layouts),
-  and `crate::` imports resolve to the module file under the importing file's
-  crate root, so the graph works across a single crate and a Cargo workspace
-  (`crates/<name>/src/...`) alike. `super::`/`self::`, cross-crate, and external
-  imports stay informational.
+  `crate::` imports resolve to the module file under the importing file's crate
+  root, and cross-crate `use other_crate::...` resolves to that workspace member
+  (its crate name read from each `Cargo.toml`), falling back to the crate's
+  `lib.rs` for re-exported items, so the graph works across a single crate and a
+  Cargo workspace. `super::`/`self::` and external crates stay informational.
 - Python imports resolve to files: absolute (`import a.b`, `from a.b import c`)
   to `a/b.py` or `a/b/__init__.py` (also under `src/`), and relative
   (`from .x import y`, `from ..pkg.mod import z`) against the importing file's

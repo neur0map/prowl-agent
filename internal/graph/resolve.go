@@ -5,6 +5,7 @@
 package graph
 
 import (
+	"encoding/json"
 	"path"
 	"strings"
 
@@ -119,6 +120,77 @@ func Resolve(s *store.Store) error {
 	// Pass 7: Java imports -> the file for that class under any module's source root.
 	if err := resolveJavaPackages(s, files, byID); err != nil {
 		return err
+	}
+	// Pass 8: cross-crate Rust imports -> the module file in the target workspace crate.
+	if err := resolveRustCrates(s, files, byID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// resolveRustCrates links `use other_crate::module::Item` across a Cargo
+// workspace. The crate-name -> src-root map (from each Cargo.toml [package]
+// name) is recorded at index time; the remaining path resolves to a module file
+// within that crate's src, like crate:: does within the local crate. External
+// crates match no workspace member and stay informational.
+func resolveRustCrates(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	raw, _ := s.GetMeta("rust_crates")
+	if raw == "" {
+		return nil
+	}
+	var crates map[string]string
+	if err := json.Unmarshal([]byte(raw), &crates); err != nil || len(crates) == 0 {
+		return nil
+	}
+	fileMap := make(map[string]int64, len(files))
+	for _, f := range files {
+		fileMap[f.RelPath] = f.ID
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	for _, e := range inc {
+		if byID[e.FileID].Lang != "rust" {
+			continue
+		}
+		rest := e.Raw
+		if i := strings.Index(rest, "::{"); i >= 0 {
+			rest = rest[:i]
+		}
+		rest = strings.TrimSuffix(rest, "::*")
+		segs := strings.Split(rest, "::")
+		src, ok := crates[segs[0]]
+		if !ok {
+			continue // external crate, not a workspace member
+		}
+		mod := segs[1:]
+		resolve := func(id int64, present bool) bool {
+			if present && id != e.FileID {
+				_ = s.SetEdgeResolved(e.ID, "file", id)
+				return true
+			}
+			return false
+		}
+		done := false
+		for n := len(mod); n >= 1 && !done; n-- {
+			p := src + "/" + strings.Join(mod[:n], "/")
+			id, ok := fileMap[p+".rs"]
+			done = resolve(id, ok)
+			if !done {
+				id, ok = fileMap[p+"/mod.rs"]
+				done = resolve(id, ok)
+			}
+		}
+		if !done {
+			// A type/fn re-exported at the crate root: link to the crate's entry
+			// file, whose `pub use` edges carry the dependency on to the real module.
+			id, ok := fileMap[src+"/lib.rs"]
+			if !resolve(id, ok) {
+				id, ok = fileMap[src+"/main.rs"]
+				resolve(id, ok)
+			}
+		}
 	}
 	return nil
 }

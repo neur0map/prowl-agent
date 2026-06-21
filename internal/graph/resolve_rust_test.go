@@ -98,3 +98,65 @@ func TestResolveRustWorkspaceAndMod(t *testing.T) {
 		t.Fatalf("sink.rs incoming = %+v, want lib.rs (mod) and searcher.rs (crate::)", inSink)
 	}
 }
+
+func TestResolveRustCrossCrate(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	mk := func(rel string) int64 {
+		id, err := s.UpsertFile(store.File{RelPath: rel, Lang: "rust", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	lib := mk("crates/searcher/src/lib.rs")
+	mod := mk("crates/searcher/src/searcher.rs")
+	printer := mk("crates/printer/src/standard.rs")
+
+	// searcher's lib re-exports its searcher module (intra-crate).
+	if err := s.ReplaceFileGraph(lib, nil, nil, []store.RawEdge{
+		{Kind: "includes", Raw: "mod::searcher", Line: 1},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// printer imports a type re-exported from the searcher crate (cross-crate).
+	if err := s.ReplaceFileGraph(printer, nil, nil, []store.RawEdge{
+		{Kind: "includes", Raw: "grep_searcher::Searcher", Line: 1},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// The crate-name -> src map is recorded from Cargo.toml at index time.
+	if err := s.SetMeta("rust_crates", `{"grep_searcher":"crates/searcher/src"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resolve(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// The re-exported type resolves to the searcher crate's lib.rs.
+	in, _ := s.IncomingEdges("file", lib, "includes")
+	var fromPrinter bool
+	for _, e := range in {
+		if e.File == "crates/printer/src/standard.rs" {
+			fromPrinter = true
+		}
+	}
+	if !fromPrinter {
+		t.Fatalf("searcher lib.rs incoming = %+v, want a cross-crate edge from printer", in)
+	}
+	// Blast radius of the searcher module reaches the printer crate transitively.
+	dep, _ := s.TransitiveDependents(mod)
+	var hasPrinter bool
+	for _, d := range dep {
+		if d.File == "crates/printer/src/standard.rs" {
+			hasPrinter = true
+		}
+	}
+	if !hasPrinter {
+		t.Fatalf("blast of searcher.rs = %+v, want crates/printer/src/standard.rs (cross-crate)", dep)
+	}
+}

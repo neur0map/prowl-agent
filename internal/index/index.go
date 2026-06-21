@@ -1,6 +1,7 @@
 package index
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -116,6 +117,7 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	// Record the Go module path (if any) so resolution can link package imports
 	// to the files in those packages.
 	_ = s.SetMeta("go_module", goModulePath(root))
+	_ = s.SetMeta("rust_crates", rustCrates(root, all))
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
 	}
@@ -198,6 +200,63 @@ func goModulePath(root string) string {
 	for _, line := range strings.Split(string(data), "\n") {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
 			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// rustCrates maps each workspace crate's import name (its Cargo.toml [package]
+// name with - turned to _) to its src directory, so the resolver can link
+// `use other_crate::...` across a Cargo workspace. Returns a JSON object string,
+// or "" when there are no crates. Reads from the indexed file list (Cargo.toml
+// entries) so it costs no extra walk.
+func rustCrates(root string, files []store.File) string {
+	crates := map[string]string{}
+	for _, f := range files {
+		if filepath.Base(f.RelPath) != "Cargo.toml" {
+			continue
+		}
+		name := cargoPackageName(filepath.Join(root, filepath.FromSlash(f.RelPath)))
+		if name == "" {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(f.RelPath))
+		src := "src"
+		if dir != "." {
+			src = dir + "/src"
+		}
+		crates[strings.ReplaceAll(name, "-", "_")] = src
+	}
+	if len(crates) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(crates)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// cargoPackageName returns the [package] name from a Cargo.toml, or "" (e.g. a
+// virtual workspace manifest with no [package]).
+func cargoPackageName(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	inPackage := false
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			inPackage = t == "[package]"
+			continue
+		}
+		if inPackage {
+			if rest, ok := strings.CutPrefix(t, "name"); ok {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(rest), "="); ok {
+					return strings.Trim(strings.TrimSpace(v), `"'`)
+				}
+			}
 		}
 	}
 	return ""

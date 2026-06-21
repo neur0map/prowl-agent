@@ -9,41 +9,54 @@ import (
 
 func TestFormatValueTOONTabular(t *testing.T) {
 	hits := []store.SymbolHit{
-		{ID: 1, Name: "battery", Kind: "widget", File: "bar/battery.lua", Line: 12},
-		{ID: 2, Name: "battery_low", Kind: "function", File: "bar/battery.lua", Line: 40},
+		{ID: 1, Name: "battery", Kind: "widget", Signature: "", File: "bar/battery.lua", Line: 12, EndLine: 20},
+		{ID: 2, Name: "battery_low", Kind: "function", Signature: "sig", File: "bar/battery.lua", Line: 40, EndLine: 45},
 	}
 	got, err := formatValue(hits, formatTOON)
 	if err != nil {
 		t.Fatalf("formatValue toon: %v", err)
 	}
-	// Uniform array of structs must collapse to one header + CSV-style rows,
-	// (fields alphabetized via the json round-trip, named once in the header).
-	if !strings.Contains(got, "{file,id,kind,line,name}") {
-		t.Errorf("expected tabular header naming the columns, got:\n%s", got)
+	// A uniform array of structs collapses to one header + CSV-style rows, fields
+	// alphabetized via the json round-trip and named once in the header. SymbolHit
+	// emits every column (no omitempty) so a mixed result set stays tabular.
+	if !strings.Contains(got, "{end_line,file,id,kind,line,name,signature}") {
+		t.Errorf("expected tabular header naming all columns, got:\n%s", got)
 	}
-	if !strings.Contains(got, "bar/battery.lua,1,widget,12,battery") {
+	if !strings.Contains(got, "45,bar/battery.lua,2,function,40,battery_low,sig") {
 		t.Errorf("expected a CSV-style data row in header order, got:\n%s", got)
 	}
 	if strings.Count(got, "name") != 1 {
 		t.Errorf("field name should appear once (header only), got:\n%s", got)
 	}
-	// signature is omitempty and unset here, so it must be dropped, not emitted.
-	if strings.Contains(got, "signature") {
-		t.Errorf("omitempty field should be dropped, got:\n%s", got)
+}
+
+func TestFormatValueOmitemptyDropped(t *testing.T) {
+	// The formatter honors json omitempty (relied on by EdgeRow/ResourceRow):
+	// an empty omitempty field is dropped while the array stays tabular.
+	rows := []struct {
+		A string `json:"a"`
+		B string `json:"b,omitempty"`
+	}{
+		{A: "x"},
+		{A: "y"},
+	}
+	got, err := formatValue(rows, formatTOON)
+	if err != nil {
+		t.Fatalf("formatValue toon: %v", err)
+	}
+	if strings.Contains(got, "b") {
+		t.Errorf("omitempty field b should be dropped when empty, got:\n%s", got)
 	}
 }
 
 func TestFormatValueJSONMatchesTags(t *testing.T) {
-	hits := []store.SymbolHit{{ID: 1, Name: "x", Kind: "k", File: "f", Line: 1}}
+	hits := []store.SymbolHit{{ID: 1, Name: "x", Kind: "k", File: "f", Line: 1, EndLine: 2}}
 	got, err := formatValue(hits, formatJSON)
 	if err != nil {
 		t.Fatalf("formatValue json: %v", err)
 	}
-	if !strings.Contains(got, `"start_line"`) && !strings.Contains(got, `"line"`) {
-		t.Errorf("json should use json tags, got: %s", got)
-	}
-	if strings.Contains(got, "signature") {
-		t.Errorf("omitempty signature should be absent, got: %s", got)
+	if !strings.Contains(got, `"end_line"`) || !strings.Contains(got, `"line"`) {
+		t.Errorf("json should use json tags (end_line, line), got: %s", got)
 	}
 }
 

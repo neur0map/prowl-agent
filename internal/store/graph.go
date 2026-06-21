@@ -96,15 +96,17 @@ func (s *Store) ReplaceFileGraph(fileID int64, syms []Symbol, res []Resource, ed
 	return tx.Commit()
 }
 
-// SymbolHit is a search/lookup result for a symbol.
+// SymbolHit is a search/lookup result for a symbol. Signature and EndLine are
+// always emitted (no omitempty) so a mixed result set stays a uniform TOON
+// table instead of degrading to the verbose per-item form.
 type SymbolHit struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	Kind      string `json:"kind"`
-	Signature string `json:"signature,omitempty"`
+	Signature string `json:"signature"`
 	File      string `json:"file"`
 	Line      int    `json:"line"`
-	EndLine   int    `json:"end_line,omitempty"`
+	EndLine   int    `json:"end_line"`
 }
 
 // SymbolsByName returns exact-name matches.

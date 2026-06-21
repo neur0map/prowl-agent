@@ -20,6 +20,7 @@ require (
 	github.com/alexaandru/go-sitter-forest/markdown v1.9.5
 	github.com/alexaandru/go-sitter-forest/python v1.9.10
 	github.com/alexaandru/go-sitter-forest/qmljs v1.9.3
+	github.com/alexaandru/go-sitter-forest/rust v1.9.13
 	github.com/alexaandru/go-sitter-forest/scss v1.9.0
 	github.com/alexaandru/go-sitter-forest/toml v1.9.2
 	github.com/alexaandru/go-sitter-forest/tsx v1.9.2

@@ -273,10 +273,10 @@ query after a long idle, then around 20 ms on the repo we tried). Re-running
 
 ## Supported formats
 
-Go, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C++, QML, CSS/SCSS,
-Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland (`hyprlang`), plus a
-line-based reader for everything else (sway/i3, rofi `rasi`, polybar, kitty,
-dunst, and similar). Go and TypeScript are indexed at the symbol level
+Go, Rust, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C++, QML,
+CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland (`hyprlang`), plus
+a line-based reader for everything else (sway/i3, rofi `rasi`, polybar, kitty,
+dunst, and similar). Go, Rust, and TypeScript are indexed at the symbol level
 (functions, methods, types, imports), so `find` and `search` work across those
 projects; the deeper graph (callers, blast radius) stays tuned to config include
 trees for now. More languages are on the way.

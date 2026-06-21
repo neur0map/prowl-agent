@@ -43,3 +43,20 @@ func TestDartExtractor(t *testing.T) {
 		}
 	}
 }
+
+// TestDartPartDirectives checks that a `part` directive becomes an include edge
+// but its reverse `part of` does not (which would fake a cycle with a generated
+// companion file).
+func TestDartPartDirectives(t *testing.T) {
+	lib := mustExtract(t, "dart", "import 'other.dart';\npart 'model.g.dart';\n")
+	if !has(edgeRaws(lib, "includes"), "model.g.dart") {
+		t.Errorf("part directive missing: %v", edgeRaws(lib, "includes"))
+	}
+	if !has(edgeRaws(lib, "includes"), "other.dart") {
+		t.Errorf("import missing: %v", edgeRaws(lib, "includes"))
+	}
+	part := mustExtract(t, "dart", "part of 'model.dart';\n")
+	if has(edgeRaws(part, "includes"), "model.dart") {
+		t.Errorf("part of should not emit an edge (fakes a cycle): %v", edgeRaws(part, "includes"))
+	}
+}

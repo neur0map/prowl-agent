@@ -7,15 +7,18 @@ type dartExtractor struct{}
 func (dartExtractor) Lang() string { return "dart" }
 
 // dartSCM captures classes, mixins, enums, extensions, top-level and member
-// functions, and the URI of every import/export/part directive (all of which
-// wrap a (uri (string_literal)) in this grammar).
+// functions, and the URI of every import/export (under configurable_uri) and
+// `part` directive. A `part of` directive is deliberately not captured: it is
+// the reverse of the library's own `part`, so emitting it would fake a cycle
+// between a file and its generated companion (.g.dart / .freezed.dart).
 const dartSCM = `
 (class_definition name: (identifier) @class.name) @class.def
 (mixin_declaration (identifier) @mixin.name) @mixin.def
 (enum_declaration name: (identifier) @enum.name) @enum.def
 (extension_declaration name: (identifier) @ext.name) @ext.def
 (function_signature name: (identifier) @func.name) @func.def
-(uri (string_literal) @import.uri)
+(configurable_uri (uri (string_literal) @import.uri))
+(part_directive (uri (string_literal) @import.uri))
 `
 
 func (dartExtractor) Extract(src []byte) (Result, error) {

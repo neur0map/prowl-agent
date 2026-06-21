@@ -165,9 +165,14 @@ answers about a project's files, served over MCP.
   edit before committing without a flood of rows. `--all` includes unindexed paths.
 - `impact` summarizes the blast radius by default: a total dependent count, a
   breakdown by subsystem (which surfaces the dependency hubs driving the radius),
-  and the direct importers, instead of dumping every dependent. On a large Go
-  package this is a 12-line summary rather than a 600+ row list. `--all` lists
-  every dependent file.
+  and a capped sample of the direct importers (the count is exact; the inline
+  list stays small even for a hub imported hundreds of times). On the Laravel
+  framework `impact src/Illuminate/Support/Str.php` is ~1.2 KB (total 1527,
+  direct 237) instead of ~12 KB. `--all` lists every dependent file.
+- `entrypoints <file>` reports the root count plus a shallow-first sample rather
+  than every reachable root, so a widely-used file does not dump thousands of
+  paths: on Laravel a hub's entrypoints answer is ~0.8 KB (count 927), not
+  ~47 KB.
 - `overview` is a compact project map for an agent's first call: per-cluster it
   reports the label, language, and file count rather than every file path (the
   full lists stay in `clusters`), and it surfaces the project's architecture docs

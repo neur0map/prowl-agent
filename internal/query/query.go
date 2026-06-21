@@ -252,6 +252,12 @@ func (q *Querier) BlastSummarize(path string) (BlastSummary, error) {
 		sum.BySubsystem = sum.BySubsystem[:15]
 	}
 	sort.Strings(sum.DirectFiles)
+	// The Direct count above is the full depth-1 total; inline only a sample so a
+	// hub file (hundreds of direct importers) does not balloon the summary. The
+	// complete list is available with --all.
+	if len(sum.DirectFiles) > 20 {
+		sum.DirectFiles = sum.DirectFiles[:20]
+	}
 	return sum, nil
 }
 
@@ -269,19 +275,30 @@ func subsystem(file string) string {
 	}
 }
 
-// EntrypointsFor returns the root configs (no incoming dependency edges) from
-// which path is reachable.
-func (q *Querier) EntrypointsFor(path string) ([]string, error) {
+// EntrypointSet is the set of root files from which a file is reachable: the full
+// count plus a shallow-first sample. A widely-used utility is reachable from
+// nearly every root, so the inline list is capped to keep the answer token-lean.
+type EntrypointSet struct {
+	File        string   `json:"file"`
+	Count       int      `json:"count"`
+	Entrypoints []string `json:"entrypoints"`
+}
+
+// EntrypointsFor returns the root files (no incoming dependency edges) from which
+// path is reachable, as a count plus a shallow-first sample.
+func (q *Querier) EntrypointsFor(path string) (EntrypointSet, error) {
+	out := EntrypointSet{File: path}
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
-		return nil, err
+		return out, err
 	}
 	deps, err := q.s.TransitiveDependents(id)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if len(deps) == 0 {
-		return []string{path}, nil // nothing depends on it -> it is the entrypoint
+		out.Count, out.Entrypoints = 1, []string{path} // nothing depends on it -> it is the entrypoint
+		return out, nil
 	}
 	var roots []string
 	for _, d := range deps {
@@ -289,13 +306,22 @@ func (q *Querier) EntrypointsFor(path string) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		in, _ := q.s.IncomingEdges("file", did, depKinds...)
-		if len(in) == 0 {
+		if in, _ := q.s.IncomingEdges("file", did, depKinds...); len(in) == 0 {
 			roots = append(roots, d.File)
 		}
 	}
-	sort.Strings(roots)
-	return roots, nil
+	out.Count = len(roots)
+	sort.Slice(roots, func(i, j int) bool {
+		if a, b := strings.Count(roots[i], "/"), strings.Count(roots[j], "/"); a != b {
+			return a < b
+		}
+		return roots[i] < roots[j]
+	})
+	if len(roots) > 20 {
+		roots = roots[:20]
+	}
+	out.Entrypoints = roots
+	return out, nil
 }
 
 // TestsResult is the (deliberately limited) analogue of tests_for.

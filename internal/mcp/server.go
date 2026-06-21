@@ -100,9 +100,7 @@ type symbolsOut struct {
 type edgesOut struct {
 	Edges []query.EdgeView `json:"edges"`
 }
-type entrypointsOut struct {
-	Entrypoints []string `json:"entrypoints"`
-}
+type entrypointsOut = query.EntrypointSet
 type chunksOut struct {
 	Matches []store.ChunkHit `json:"matches"`
 }
@@ -147,7 +145,7 @@ func (h *handlers) blastRadius(ctx context.Context, _ *sdk.CallToolRequest, in p
 
 func (h *handlers) entrypointsFor(ctx context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, entrypointsOut, error) {
 	e, err := h.q.EntrypointsFor(in.Path)
-	return nil, entrypointsOut{Entrypoints: e}, err
+	return nil, e, err
 }
 
 func (h *handlers) testsFor(ctx context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, query.TestsResult, error) {

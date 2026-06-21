@@ -82,7 +82,7 @@ func TestRelationsBlastEntrypoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ep) != 1 || ep[0] != "hypr/hyprland.conf" {
+	if ep.Count != 1 || len(ep.Entrypoints) != 1 || ep.Entrypoints[0] != "hypr/hyprland.conf" {
 		t.Fatalf("entrypoints screenshot.sh = %+v", ep)
 	}
 }
@@ -582,5 +582,16 @@ func TestOverviewCapsEntrypoints(t *testing.T) {
 	}
 	if len(o.Entrypoints) > 20 {
 		t.Fatalf("entrypoints sample = %d, want at most 20", len(o.Entrypoints))
+	}
+	// EntrypointsFor on the hub reports the full count but caps its sample too.
+	ep, err := New(s).EntrypointsFor("core.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Count != n {
+		t.Fatalf("EntrypointsFor count = %d, want %d", ep.Count, n)
+	}
+	if len(ep.Entrypoints) > 20 {
+		t.Fatalf("EntrypointsFor sample = %d, want at most 20", len(ep.Entrypoints))
 	}
 }

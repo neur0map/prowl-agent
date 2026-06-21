@@ -79,7 +79,8 @@ answers about a project's files, served over MCP.
 - Token-lean output: query results default to TOON (Token-Oriented Object
   Notation), which encodes uniform result arrays as one header plus CSV-style
   rows. Models read it about 40% cheaper than JSON, and slightly more accurately.
-  `--json` switches any query command back to JSON.
+  `--json` switches any query command back to JSON, and `--limit N` caps a result
+  list so an agent can ask for the top N and pay for fewer tokens.
 - 17 MCP tools: `overview`, `clusters`, `find_symbol`, `find_references`,
   `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
   `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,

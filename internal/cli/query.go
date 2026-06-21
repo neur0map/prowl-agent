@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"reflect"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -22,7 +23,7 @@ import (
 // This is the CLI-first delivery path: an agent shells out to `prowl-agent find
 // battery` and gets a cited, token-lean answer. No MCP server, no `serve`, no
 // per-client process spawn, and none of MCP's upfront tool-schema token cost.
-func runQuery(ctx context.Context, needsAI bool, format outputFormat, w io.Writer, fn func(*query.Querier) (any, error)) error {
+func runQuery(ctx context.Context, needsAI bool, format outputFormat, limit int, w io.Writer, fn func(*query.Querier) (any, error)) error {
 	q, _, s, closer, err := openQuerier(ctx, needsAI)
 	if err != nil {
 		return err
@@ -32,6 +33,10 @@ func runQuery(ctx context.Context, needsAI bool, format outputFormat, w io.Write
 	if err != nil {
 		return err
 	}
+	// --limit caps a top-level result slice, so an agent can ask for the top N and
+	// pay for fewer tokens. The cap is applied before stats and output, so both
+	// reflect what was actually returned.
+	out = capSlice(out, limit)
 	// Count this answer toward the savings report, so 'prowl-agent status'
 	// reflects shell usage, not just MCP. Never fail a query over a stat write.
 	_ = s.RecordAnswer(out)
@@ -41,6 +46,19 @@ func runQuery(ctx context.Context, needsAI bool, format outputFormat, w io.Write
 	}
 	_, err = fmt.Fprintln(w, str)
 	return err
+}
+
+// capSlice truncates a top-level result slice to limit (limit <= 0 means no cap).
+// Struct results (overview, relations) are returned unchanged.
+func capSlice(out any, limit int) any {
+	if limit <= 0 {
+		return out
+	}
+	rv := reflect.ValueOf(out)
+	if rv.Kind() == reflect.Slice && rv.Len() > limit {
+		return rv.Slice(0, limit).Interface()
+	}
+	return out
 }
 
 // openQuerier resolves the workspace, freshens the index incrementally, and
@@ -87,6 +105,7 @@ func freshenStructural(ctx context.Context, s *store.Store, root string, ignore 
 // the result. Output defaults to TOON (token-lean); --json switches to JSON.
 func newQueryCmd(use, short string, needsAI bool, args cobra.PositionalArgs, run func(context.Context, *query.Querier, []string) (any, error)) *cobra.Command {
 	var asJSON bool
+	var limit int
 	c := &cobra.Command{
 		Use:   use,
 		Short: short,
@@ -96,12 +115,13 @@ func newQueryCmd(use, short string, needsAI bool, args cobra.PositionalArgs, run
 			if asJSON {
 				format = formatJSON
 			}
-			return runQuery(cmd.Context(), needsAI, format, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+			return runQuery(cmd.Context(), needsAI, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
 				return run(cmd.Context(), q, a)
 			})
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
 }
 
@@ -175,6 +195,7 @@ func newReferencesCmd() *cobra.Command {
 // --compact), so it is not built from the generic helper.
 func newSearchCmd() *cobra.Command {
 	var asJSON, smart, compact bool
+	var limit int
 	c := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search file content (hybrid semantic+full-text when AI is on, else full-text)",
@@ -185,7 +206,7 @@ func newSearchCmd() *cobra.Command {
 				format = formatJSON
 			}
 			text := joinArgs(a)
-			return runQuery(cmd.Context(), true, format, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+			return runQuery(cmd.Context(), true, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
 				if smart {
 					r, err := q.SmartSearch(cmd.Context(), text)
 					if err != nil {
@@ -210,6 +231,7 @@ func newSearchCmd() *cobra.Command {
 	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
 	c.Flags().BoolVar(&smart, "smart", false, "rewrite and rerank the query (assist-augmented)")
 	c.Flags().BoolVar(&compact, "compact", false, "list files without snippets (most token-lean)")
+	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
 }
 

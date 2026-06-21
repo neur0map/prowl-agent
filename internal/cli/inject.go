@@ -42,8 +42,9 @@ only after a query points you to the exact lines.
     prowl-agent tests <path>        # configs/keybinds that launch or reload a file
     prowl-agent changed             # your git changes mapped to the files they could affect
 
-Every command accepts --json for JSON instead of TOON. Run from anywhere inside
-the project; prowl-agent finds the index by walking up to .prowl/.
+Every command accepts --json for JSON instead of TOON, and --limit N to cap
+results (fewer tokens). Run from anywhere inside the project; prowl-agent finds
+the index by walking up to .prowl/.
 
 ### When to use which
 

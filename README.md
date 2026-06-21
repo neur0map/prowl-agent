@@ -118,7 +118,8 @@ prowl-agent tests <path>        # configs/keybinds that launch or reload a file
 prowl-agent changed             # your git changes mapped to the files they could affect
 ```
 
-Output defaults to TOON (compact, cited, `file:line`); add `--json` for JSON. Run
+Output defaults to TOON (compact, cited, `file:line`); add `--json` for JSON, or
+`--limit N` to cap results for fewer tokens. Run
 from anywhere inside the project; prowl-agent finds the index by walking up to
 `.prowl/`. The generated `AGENTS.md` documents all of this for your agent.
 

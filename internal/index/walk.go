@@ -104,21 +104,44 @@ func loadGitignore(root string) []string {
 	return pats
 }
 
-// matchAny reports whether rel matches any gitignore-style pattern. It supports
-// a pragmatic subset: basename globs, full-path globs, and bare directory names.
+// matchAny reports whether rel is ignored by the gitignore-style patterns,
+// honoring order: a later matching pattern overrides an earlier one, and a
+// leading "!" re-includes. A trailing "/" restricts a pattern to directories.
+// The supported subset is basename globs, anchored path globs (no "**"), and
+// bare directory names; negation lets a repo ignore a tree but keep a subtree
+// (e.g. `packages/*/*/` then `!packages/*/src/`).
 func matchAny(pats []string, rel string, isDir bool) bool {
 	base := filepath.Base(rel)
 	segs := strings.Split(rel, "/")
+	ignored := false
 	for _, p := range pats {
 		p = strings.TrimSpace(p)
-		if p == "" || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "!") {
+		if p == "" || strings.HasPrefix(p, "#") {
 			continue
 		}
-		p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
-		if ok, _ := filepath.Match(p, base); ok {
-			return true
+		negate := strings.HasPrefix(p, "!")
+		if negate {
+			p = p[1:]
 		}
-		if ok, _ := filepath.Match(p, rel); ok {
+		dirOnly := strings.HasSuffix(p, "/")
+		p = strings.TrimSuffix(strings.TrimPrefix(p, "/"), "/")
+		if p == "" || (dirOnly && !isDir) {
+			continue
+		}
+		if matchPattern(p, base, rel, segs) {
+			ignored = !negate
+		}
+	}
+	return ignored
+}
+
+// matchPattern reports whether a single gitignore pattern matches rel. A pattern
+// with no slash is a basename glob matching at any depth (or a bare directory
+// name matching any path segment); a pattern with a slash is anchored to the
+// project root and matched against the whole path.
+func matchPattern(p, base, rel string, segs []string) bool {
+	if !strings.Contains(p, "/") {
+		if ok, _ := filepath.Match(p, base); ok {
 			return true
 		}
 		for _, s := range segs {
@@ -126,6 +149,8 @@ func matchAny(pats []string, rel string, isDir bool) bool {
 				return true
 			}
 		}
+		return false
 	}
-	return false
+	ok, _ := filepath.Match(p, rel)
+	return ok
 }

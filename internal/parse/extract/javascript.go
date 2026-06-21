@@ -25,9 +25,9 @@ const javascriptSCM = `
 func (javascriptExtractor) Extract(src []byte) (Result, error) {
 	var r Result
 	err := queryEach("javascript", src, []byte(javascriptSCM), func(caps []capture) {
-		addNamed(&r, caps, src, "func.name", "func.def", "function")
-		addNamed(&r, caps, src, "class.name", "class.def", "class")
-		addNamed(&r, caps, src, "method.name", "method.def", "method")
+		addNamed(&r, caps, src, "func.name", "func.def", "function", "javascript")
+		addNamed(&r, caps, src, "class.name", "class.def", "class", "javascript")
+		addNamed(&r, caps, src, "method.name", "method.def", "method", "javascript")
 		if n, ok := capNode(caps, "import.src"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
 		}
@@ -38,14 +38,15 @@ func (javascriptExtractor) Extract(src []byte) (Result, error) {
 		}
 		if n, ok := capNode(caps, "var.name"); ok {
 			kind := "variable"
-			end := line(n)
+			end, cx := line(n), 0
 			if v, ok := capNode(caps, "var.value"); ok {
 				end = endLine(v)
 				if jsIsFunc(v.Type()) {
 					kind = "function"
+					cx = complexity(v, "javascript")
 				}
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
 	r.Chunks = chunkText(src, 40)
@@ -53,17 +54,21 @@ func (javascriptExtractor) Extract(src []byte) (Result, error) {
 }
 
 // addNamed appends a symbol from a name capture, using the def capture for the
-// end line when present.
-func addNamed(r *Result, caps []capture, src []byte, nameCap, defCap, kind string) {
+// end line when present. For function/method kinds it also records cyclomatic
+// complexity from the def node (lang selects the decision-point set).
+func addNamed(r *Result, caps []capture, src []byte, nameCap, defCap, kind, lang string) {
 	n, ok := capNode(caps, nameCap)
 	if !ok {
 		return
 	}
-	end := line(n)
+	end, cx := line(n), 0
 	if d, ok := capNode(caps, defCap); ok {
 		end = endLine(d)
+		if kind == "function" || kind == "method" {
+			cx = complexity(d, lang)
+		}
 	}
-	r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end})
+	r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end, Complexity: cx})
 }
 
 func jsIsFunc(typ string) bool {

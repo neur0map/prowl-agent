@@ -15,6 +15,7 @@ import (
 type Symbol struct {
 	Name, Kind, Signature, Parent string
 	StartLine, EndLine            int
+	Complexity                    int
 }
 
 // Resource is a shared value (color/font/path/var) declared or used in a file.

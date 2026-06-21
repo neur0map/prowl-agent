@@ -24,13 +24,13 @@ const rustSCM = `
 func (rustExtractor) Extract(src []byte) (Result, error) {
 	var r Result
 	err := queryEach("rust", src, []byte(rustSCM), func(caps []capture) {
-		addNamed(&r, caps, src, "func.name", "func.def", "function")
-		addNamed(&r, caps, src, "struct.name", "struct.def", "struct")
-		addNamed(&r, caps, src, "enum.name", "enum.def", "enum")
-		addNamed(&r, caps, src, "trait.name", "trait.def", "trait")
-		addNamed(&r, caps, src, "type.name", "type.def", "type")
-		addNamed(&r, caps, src, "mod.name", "mod.def", "module")
-		addNamed(&r, caps, src, "macro.name", "macro.def", "macro")
+		addNamed(&r, caps, src, "func.name", "func.def", "function", "rust")
+		addNamed(&r, caps, src, "struct.name", "struct.def", "struct", "rust")
+		addNamed(&r, caps, src, "enum.name", "enum.def", "enum", "rust")
+		addNamed(&r, caps, src, "trait.name", "trait.def", "trait", "rust")
+		addNamed(&r, caps, src, "type.name", "type.def", "type", "rust")
+		addNamed(&r, caps, src, "mod.name", "mod.def", "module", "rust")
+		addNamed(&r, caps, src, "macro.name", "macro.def", "macro", "rust")
 		if n, ok := capNode(caps, "use.path"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
 		}

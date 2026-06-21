@@ -166,7 +166,7 @@ func newEntrypointsCmd() *cobra.Command {
 }
 
 func newHotspotsCmd() *cobra.Command {
-	return newQueryCmd("hotspots", "Structurally central files, largest files, and largest functions", false, cobra.NoArgs,
+	return newQueryCmd("hotspots", "Central files, largest files, largest functions, and most complex functions", false, cobra.NoArgs,
 		func(_ context.Context, q *query.Querier, _ []string) (any, error) { return q.RepoHotspots() })
 }
 

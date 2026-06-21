@@ -36,25 +36,26 @@ const tsSCM = `
 func (e tsExtractor) Extract(src []byte) (Result, error) {
 	var r Result
 	err := queryEach(e.lang, src, []byte(tsSCM), func(caps []capture) {
-		addNamed(&r, caps, src, "func.name", "func.def", "function")
-		addNamed(&r, caps, src, "class.name", "class.def", "class")
-		addNamed(&r, caps, src, "iface.name", "iface.def", "interface")
-		addNamed(&r, caps, src, "type.name", "type.def", "type")
-		addNamed(&r, caps, src, "enum.name", "enum.def", "enum")
-		addNamed(&r, caps, src, "method.name", "method.def", "method")
+		addNamed(&r, caps, src, "func.name", "func.def", "function", e.lang)
+		addNamed(&r, caps, src, "class.name", "class.def", "class", e.lang)
+		addNamed(&r, caps, src, "iface.name", "iface.def", "interface", e.lang)
+		addNamed(&r, caps, src, "type.name", "type.def", "type", e.lang)
+		addNamed(&r, caps, src, "enum.name", "enum.def", "enum", e.lang)
+		addNamed(&r, caps, src, "method.name", "method.def", "method", e.lang)
 		if n, ok := capNode(caps, "import.src"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
 		}
 		if n, ok := capNode(caps, "var.name"); ok {
 			kind := "variable"
-			end := line(n)
+			end, cx := line(n), 0
 			if v, ok := capNode(caps, "var.value"); ok {
 				end = endLine(v)
 				if jsIsFunc(v.Type()) {
 					kind = "function"
+					cx = complexity(v, e.lang)
 				}
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
 	r.Chunks = chunkText(src, 40)

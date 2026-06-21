@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS symbols (
   signature  TEXT,
   start_line INTEGER NOT NULL,
   end_line   INTEGER NOT NULL,
-  parent_id  INTEGER REFERENCES symbols(id) ON DELETE CASCADE
+  parent_id  INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+  complexity INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS resources (

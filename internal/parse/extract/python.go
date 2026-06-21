@@ -18,11 +18,11 @@ func (pythonExtractor) Extract(src []byte) (Result, error) {
 	var r Result
 	err := queryEach("python", src, []byte(pythonSCM), func(caps []capture) {
 		if n, ok := capNode(caps, "func.name"); ok {
-			end := line(n)
+			end, cx := line(n), 1
 			if d, ok := capNode(caps, "func.def"); ok {
-				end = endLine(d)
+				end, cx = endLine(d), complexity(d, "python")
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 		if n, ok := capNode(caps, "class.name"); ok {
 			end := line(n)

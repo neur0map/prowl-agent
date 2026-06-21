@@ -32,6 +32,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	// Additive migration for indexes created before the symbols.complexity column
+	// existed. CREATE TABLE IF NOT EXISTS above does not alter an existing table,
+	// so add the column here; the duplicate-column error on fresh DBs is ignored.
+	_, _ = db.Exec(`ALTER TABLE symbols ADD COLUMN complexity INTEGER NOT NULL DEFAULT 1`)
 	if _, err := db.Exec(`INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)`, SchemaVersion); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set schema_version: %w", err)

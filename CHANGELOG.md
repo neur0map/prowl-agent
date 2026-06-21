@@ -150,8 +150,10 @@ answers about a project's files, served over MCP.
   are flagged. On one 2172-file project this brought the report from 2052 findings
   down to about 90, most of them real.
 - `hotspots` (command and the `repo_hotspots` tool) ranks the largest functions
-  and methods by line span alongside central and large files, a cheap,
-  language-agnostic triage for where complex, refactor-worthy code concentrates.
+  by line span and the most complex functions by cyclomatic complexity, alongside
+  central and large files: triage for where bugs hide. Complexity counts decision
+  points (if/for/while/switch-cases/catch/match-arms) in a function body for Go,
+  Rust, TypeScript/TSX, JavaScript, and Python; other languages report size only.
 
 #### Semantic search (optional)
 

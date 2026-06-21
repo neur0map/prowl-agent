@@ -361,6 +361,7 @@ type Hotspots struct {
 	FanIn            []store.FanRow   `json:"fan_in"`
 	Largest          []FileSize       `json:"largest"`
 	LargestFunctions []store.FuncSpan `json:"largest_functions"`
+	ComplexFunctions []store.FuncSpan `json:"complex_functions,omitempty"`
 }
 
 // FileSize pairs a file with its byte size.
@@ -389,6 +390,7 @@ func (q *Querier) RepoHotspots() (Hotspots, error) {
 		h.Largest = append(h.Largest, FileSize{File: f.RelPath, Size: f.Size})
 	}
 	h.LargestFunctions, _ = q.s.LargestFunctions(10)
+	h.ComplexFunctions, _ = q.s.MostComplex(10)
 	return h, nil
 }
 

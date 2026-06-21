@@ -7,6 +7,7 @@ type Symbol struct {
 	Name, Kind, Signature string
 	StartLine, EndLine    int
 	ParentName            string
+	Complexity            int
 }
 
 // Resource is a shared value (color/font/path/var) to insert.
@@ -46,8 +47,8 @@ func (s *Store) ReplaceFileGraph(fileID int64, syms []Symbol, res []Resource, ed
 	nameToID := make(map[string]int64, len(syms))
 	for _, sym := range syms {
 		r, err := tx.Exec(
-			`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line) VALUES(?,?,?,?,?,?)`,
-			fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine)
+			`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity) VALUES(?,?,?,?,?,?,?)`,
+			fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity)
 		if err != nil {
 			return err
 		}

@@ -144,11 +144,12 @@ func (s *Store) ColorPalette() ([]ResourceRow, error) {
 // FuncSpan is a function or method ranked by its line span, a cheap,
 // language-agnostic proxy for where complex, refactor-worthy code concentrates.
 type FuncSpan struct {
-	Name  string `json:"name"`
-	Kind  string `json:"kind"`
-	File  string `json:"file"`
-	Line  int    `json:"line"`
-	Lines int    `json:"lines"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Lines      int    `json:"lines,omitempty"`
+	Complexity int    `json:"complexity,omitempty"`
 }
 
 // LargestFunctions returns function/method symbols with the widest line span,
@@ -168,6 +169,30 @@ func (s *Store) LargestFunctions(limit int) ([]FuncSpan, error) {
 	for rows.Next() {
 		var fs FuncSpan
 		if err := rows.Scan(&fs.Name, &fs.Kind, &fs.File, &fs.Line, &fs.Lines); err != nil {
+			return nil, err
+		}
+		out = append(out, fs)
+	}
+	return out, rows.Err()
+}
+
+// MostComplex returns function/method symbols ranked by cyclomatic-style
+// complexity, highest first. Trivial functions (complexity <= 1) and languages
+// where complexity is not computed are excluded.
+func (s *Store) MostComplex(limit int) ([]FuncSpan, error) {
+	rows, err := s.db.Query(`
+		SELECT sy.name, sy.kind, f.rel_path, sy.start_line, sy.complexity
+		FROM symbols sy JOIN files f ON f.id=sy.file_id
+		WHERE sy.kind IN ('function','method') AND sy.complexity > 1
+		ORDER BY sy.complexity DESC, f.rel_path, sy.start_line LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FuncSpan
+	for rows.Next() {
+		var fs FuncSpan
+		if err := rows.Scan(&fs.Name, &fs.Kind, &fs.File, &fs.Line, &fs.Complexity); err != nil {
 			return nil, err
 		}
 		out = append(out, fs)

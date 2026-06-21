@@ -166,7 +166,7 @@ func indexVersion() string {
 func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
 	syms := make([]store.Symbol, len(r.Symbols))
 	for i, s := range r.Symbols {
-		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: s.Signature, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent}
+		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: s.Signature, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent, Complexity: s.Complexity}
 	}
 	ress := make([]store.Resource, len(r.Resources))
 	for i, rs := range r.Resources {

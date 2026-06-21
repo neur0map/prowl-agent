@@ -24,6 +24,10 @@ func TestComplexity(t *testing.T) {
 		{"typescript", "f", "function f(x:number){ if(x>0){ for(let i=0;i<x;i++){} } switch(x){ case 1: break; default: } try{}catch(e){} return x>0?1:2; }\n", 6},
 		// if + for + while + 2 match arms + if = 6 -> 7
 		{"rust", "f", "fn f(x:i32)->i32 { if x>0 { for _ in 0..x {} } while x>0 {} match x { 1=>{}, _=>{} } let _ = if x>0 {1} else {2}; x }\n", 7},
+		// js: if + for + ternary = 3 -> 4 (guards the shared js/ts/tsx set)
+		{"javascript", "f", "function f(x){ if(x>0){} for(let i=0;i<x;i++){} return x?1:2; }\n", 4},
+		// cpp: if + for + case x2 (incl default) + catch = 5 -> 6
+		{"cpp", "f", "int f(int x){ if(x>0){} for(int i=0;i<x;i++){} switch(x){case 1:break;default:break;} try{}catch(...){} return x; }\n", 6},
 		// trivial function -> 1
 		{"go", "g", "package m\nfunc g() int { return 1 }\n", 1},
 	}

@@ -27,11 +27,11 @@ func (cppExtractor) Extract(src []byte) (Result, error) {
 			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "class", StartLine: line(n), EndLine: end})
 		}
 		if n, ok := capNode(caps, "func.name"); ok {
-			end := line(n)
+			end, cx := line(n), 1
 			if d, ok := capNode(caps, "func.def"); ok {
-				end = endLine(d)
+				end, cx = endLine(d), complexity(d, "cpp")
 			}
-			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end})
+			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "function", StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
 	r.Chunks = chunkText(src, 40)

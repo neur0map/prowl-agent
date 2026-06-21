@@ -153,7 +153,7 @@ answers about a project's files, served over MCP.
   by line span and the most complex functions by cyclomatic complexity, alongside
   central and large files: triage for where bugs hide. Complexity counts decision
   points (if/for/while/switch-cases/catch/match-arms) in a function body for Go,
-  Rust, TypeScript/TSX, JavaScript, and Python; other languages report size only.
+  Rust, C++, TypeScript/TSX, JavaScript, and Python; other languages report size only.
 
 #### Semantic search (optional)
 

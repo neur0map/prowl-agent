@@ -29,6 +29,11 @@ var decisionNodes = map[string]map[string]bool{
 		"if_expression": true, "for_expression": true, "while_expression": true,
 		"match_arm": true,
 	},
+	"cpp": {
+		"if_statement": true, "for_statement": true, "while_statement": true,
+		"do_statement": true, "case_statement": true, "catch_clause": true,
+		"conditional_expression": true,
+	},
 	"javascript": jsDecision,
 	"typescript": jsDecision,
 	"tsx":        jsDecision,

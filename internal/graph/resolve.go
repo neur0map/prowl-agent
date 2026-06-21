@@ -112,7 +112,43 @@ func Resolve(s *store.Store) error {
 	if err := resolveGoPackages(s, files, byID); err != nil {
 		return err
 	}
+	// Pass 6: C# `using` imports -> the files declaring the imported namespace.
+	if err := resolveCSharpNamespaces(s, byID); err != nil {
+		return err
+	}
 	return nil
+}
+
+// resolveCSharpNamespaces materializes C# namespace dependencies. A file with a
+// `using Foo.Bar;` gets a synthetic resolved "pkg" edge to every file declaring
+// `namespace Foo.Bar`, so impact, callers, clusters, and entrypoints work across
+// a C# project. Framework and third-party usings match no declared namespace and
+// are left as informational unresolved imports.
+func resolveCSharpNamespaces(s *store.Store, byID map[int64]store.File) error {
+	nsFiles, err := s.NamespaceFiles()
+	if err != nil {
+		return err
+	}
+	if len(nsFiles) == 0 {
+		return nil
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	var pkgEdges []store.PkgEdge
+	for _, e := range inc {
+		if byID[e.FileID].Lang != "csharp" {
+			continue
+		}
+		for _, dst := range nsFiles[e.Raw] {
+			if dst == e.FileID {
+				continue
+			}
+			pkgEdges = append(pkgEdges, store.PkgEdge{FileID: e.FileID, DstFileID: dst, Line: e.Line, Raw: e.Raw})
+		}
+	}
+	return s.AddPackageEdges(pkgEdges)
 }
 
 // resolveGoPackages materializes Go package dependencies. A Go file importing an

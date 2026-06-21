@@ -15,6 +15,10 @@ const csharpSCM = `
 (method_declaration name: (identifier) @method.name) @method.def
 (using_directive (qualified_name) @using.path)
 (using_directive (identifier) @using.path)
+(namespace_declaration name: (qualified_name) @ns.name)
+(namespace_declaration name: (identifier) @ns.name)
+(file_scoped_namespace_declaration name: (qualified_name) @ns.name)
+(file_scoped_namespace_declaration name: (identifier) @ns.name)
 `
 
 func (csharpExtractor) Extract(src []byte) (Result, error) {
@@ -28,6 +32,9 @@ func (csharpExtractor) Extract(src []byte) (Result, error) {
 		addNamed(&r, caps, src, "method.name", "method.def", "method", "csharp")
 		if n, ok := capNode(caps, "using.path"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
+		}
+		if n, ok := capNode(caps, "ns.name"); ok {
+			r.Resources = append(r.Resources, Resource{Kind: "namespace", Name: n.Content(src), Line: line(n)})
 		}
 	})
 	r.Chunks = chunkText(src, 40)

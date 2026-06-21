@@ -280,12 +280,12 @@ C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
 `rasi`, polybar, kitty, dunst, and similar). The graph connects code too: Go
 resolves package imports, TypeScript/JavaScript resolve relative imports, Rust
 resolves `crate::` imports, Python resolves absolute and relative imports, C/C++
-resolve `#include` headers, Java resolves `import` class paths, and Ruby
-resolves `require_relative`, so `callers`, `impact`, `changed`, and `clusters`
-work across a Go module, a TS/React app, a Rust crate, a Python package, a C
-codebase, a Java/Maven project, or a Ruby/Rails app. C# is indexed at the symbol
-level (`find`, `search`, complexity); its namespace graph follows. External and
-standard-library imports stay informational. More languages are on the way.
+resolve `#include` headers, Java resolves `import` class paths, Ruby resolves
+`require_relative`, and C# resolves `using` namespaces, so `callers`, `impact`,
+`changed`, and `clusters` work across a Go module, a TS/React app, a Rust crate,
+a Python package, a C codebase, a Java/Maven project, a Ruby/Rails app, or a C#
+solution. External and standard-library imports stay informational. More
+languages are on the way.
 
 ## More
 

@@ -375,6 +375,26 @@ func (s *Store) AddPackageEdges(es []PkgEdge) error {
 	return tx.Commit()
 }
 
+// NamespaceFiles maps each declared namespace to the file ids that declare it,
+// for resolving C# `using` imports to the files of the imported namespace.
+func (s *Store) NamespaceFiles() (map[string][]int64, error) {
+	rows, err := s.db.Query(`SELECT name, file_id FROM resources WHERE kind='namespace' AND file_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := map[string][]int64{}
+	for rows.Next() {
+		var name string
+		var fid int64
+		if err := rows.Scan(&name, &fid); err != nil {
+			return nil, err
+		}
+		m[name] = append(m[name], fid)
+	}
+	return m, rows.Err()
+}
+
 // SetEdgeResolved points an edge at a resolved target.
 func (s *Store) SetEdgeResolved(edgeID int64, dstType string, dstID int64) error {
 	_, err := s.db.Exec(`UPDATE edges SET resolved=1, dst_type=?, dst_id=? WHERE id=?`, dstType, dstID, edgeID)

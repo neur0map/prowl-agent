@@ -47,6 +47,10 @@ answers about a project's files, served over MCP.
   (`from .x import y`, `from ..pkg.mod import z`) against the importing file's
   package, so the graph works across a Python package. A bare `from . import x`
   and third-party imports stay informational.
+- C# namespace graph: a `using Foo.Bar;` resolves to every file declaring
+  `namespace Foo.Bar` (synthetic `pkg` edges, like Go), so `callers`, `impact`,
+  `changed`, and `clusters` work across a C# solution. Framework and third-party
+  usings match no declared namespace and stay informational.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.

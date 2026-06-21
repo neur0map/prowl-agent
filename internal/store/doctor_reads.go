@@ -138,3 +138,37 @@ func (s *Store) ColorPalette() ([]ResourceRow, error) {
 	}
 	return out, rows.Err()
 }
+
+// FuncSpan is a function or method ranked by its line span, a cheap,
+// language-agnostic proxy for where complex, refactor-worthy code concentrates.
+type FuncSpan struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	File  string `json:"file"`
+	Line  int    `json:"line"`
+	Lines int    `json:"lines"`
+}
+
+// LargestFunctions returns function/method symbols with the widest line span,
+// longest first. Single-line definitions are excluded.
+func (s *Store) LargestFunctions(limit int) ([]FuncSpan, error) {
+	rows, err := s.db.Query(`
+		SELECT sy.name, sy.kind, f.rel_path, sy.start_line,
+		       (sy.end_line - sy.start_line + 1) AS lines
+		FROM symbols sy JOIN files f ON f.id=sy.file_id
+		WHERE sy.kind IN ('function','method') AND sy.end_line > sy.start_line
+		ORDER BY lines DESC, f.rel_path, sy.start_line LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FuncSpan
+	for rows.Next() {
+		var fs FuncSpan
+		if err := rows.Scan(&fs.Name, &fs.Kind, &fs.File, &fs.Line, &fs.Lines); err != nil {
+			return nil, err
+		}
+		out = append(out, fs)
+	}
+	return out, rows.Err()
+}

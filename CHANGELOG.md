@@ -128,6 +128,9 @@ answers about a project's files, served over MCP.
   (migrations, installers, CI, vendor), and only project-relative broken includes
   are flagged. On one 2172-file project this brought the report from 2052 findings
   down to about 90, most of them real.
+- `hotspots` (command and the `repo_hotspots` tool) ranks the largest functions
+  and methods by line span alongside central and large files, a cheap,
+  language-agnostic triage for where complex, refactor-worthy code concentrates.
 
 #### Semantic search (optional)
 

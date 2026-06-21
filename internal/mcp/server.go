@@ -57,7 +57,7 @@ func NewServer(q *query.Querier, st *store.Store, version string, reindex Reinde
 	sdk.AddTool(s, &sdk.Tool{Name: "architecture_violations",
 		Description: "Dangling references, orphan scripts, and hardcoded colors."}, tracked(h, h.architectureViolations))
 	sdk.AddTool(s, &sdk.Tool{Name: "repo_hotspots",
-		Description: "Structurally central and large files."}, tracked(h, h.repoHotspots))
+		Description: "Structurally central files, largest files, and largest functions."}, tracked(h, h.repoHotspots))
 	sdk.AddTool(s, &sdk.Tool{Name: "status",
 		Description: "Index freshness, counts, languages, and AI status."}, tracked(h, h.status))
 	sdk.AddTool(s, &sdk.Tool{Name: "overview",

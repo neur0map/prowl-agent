@@ -9,7 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
@@ -80,25 +82,43 @@ func openQuerier(ctx context.Context, needsAI bool) (*query.Querier, *workspace.
 	if needsAI && cfg.AI.Enabled {
 		if oll := maybeInferencer(ctx, cfg); oll != nil {
 			q = query.NewWithAssist(s, oll)
-			if _, err := reindexer(s, ws.Root, cfg.Ignore, cfg.AI.EmbedModel, oll)(ctx); err != nil {
+			if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, cfg.AI.EmbedModel, oll); err != nil {
 				s.Close()
 				return nil, nil, nil, nil, err
 			}
 			return q, ws, s, s.Close, nil
 		}
 	}
-	if err := freshenStructural(ctx, s, ws.Root, cfg.Ignore); err != nil {
+	if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, "", nil); err != nil {
 		s.Close()
 		return nil, nil, nil, nil, err
 	}
 	return q, ws, s, s.Close, nil
 }
 
-// freshenStructural runs an incremental, structural-only re-index (no embeddings),
-// so a query is always current without an Ollama dependency.
-func freshenStructural(ctx context.Context, s *store.Store, root string, ignore []string) error {
-	_, err := reindexer(s, root, ignore, "", nil)(ctx)
-	return err
+// freshenIndex brings the index up to date before a query, but skips the
+// expensive read-and-hash re-index when nothing changed: it compares a cheap
+// file fingerprint (paths + mtimes, no content reads) and the indexing version
+// against what was last recorded. With an inferencer it also re-embeds, and only
+// skips when the vector index is already populated. This keeps repeated shell
+// calls fast on large repositories while never serving stale data.
+func freshenIndex(ctx context.Context, s *store.Store, root string, ignore []string, embedModel string, inf assist.Inferencer) error {
+	sig, sErr := index.Signature(root, ignore)
+	ver, _ := s.GetMeta("index_version")
+	storedSig, _ := s.GetMeta("cli_sig")
+	current := sErr == nil && sig != 0 &&
+		ver == index.Version() &&
+		storedSig == strconv.FormatUint(sig, 10)
+	if current && (inf == nil || s.VectorsReady()) {
+		return nil
+	}
+	if _, err := reindexer(s, root, ignore, embedModel, inf)(ctx); err != nil {
+		return err
+	}
+	if sErr == nil {
+		_ = s.SetMeta("cli_sig", strconv.FormatUint(sig, 10))
+	}
+	return nil
 }
 
 // newQueryCmd builds a thin subcommand that runs one querier method and prints

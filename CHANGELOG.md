@@ -69,7 +69,9 @@ answers about a project's files, served over MCP.
   can run a command can use the index over a plain shell call: no MCP server, no
   `serve`, and none of the upfront tool-schema tokens MCP injects into every
   request. Each call resolves the workspace by walking up to `.prowl/` and
-  re-indexes incrementally first (tens of milliseconds), so results are current.
+  freshens the index first, so results are current. A cheap file fingerprint
+  (paths plus mtimes, no content reads) lets repeated calls skip the read-and-hash
+  re-index when nothing changed, keeping the shell path fast on large repos.
 - `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
   the indexed files each one could affect via blast radius, so an agent can see
   the impact of an edit before committing. `--all` includes unindexed paths.

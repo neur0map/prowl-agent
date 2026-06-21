@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // alwaysSkipDirs are never walked.
@@ -17,12 +20,11 @@ var alwaysSkipDirs = map[string]bool{
 	".omp": true, ".factory": true,
 }
 
-// Walk returns rel paths under root, honoring .gitignore and extra ignore globs,
-// and always skipping .prowl/, .git/, node_modules/.
-func Walk(root string, ignore []string) ([]string, error) {
+// walkFiles invokes fn for each non-ignored file under root, honoring .gitignore
+// and extra ignore globs and always skipping .prowl/, .git/, node_modules/.
+func walkFiles(root string, ignore []string, fn func(rel string, d fs.DirEntry) error) error {
 	patterns := append(loadGitignore(root), ignore...)
-	var out []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -43,11 +45,47 @@ func Walk(root string, ignore []string) ([]string, error) {
 		if matchAny(patterns, rel, false) {
 			return nil
 		}
+		return fn(rel, d)
+	})
+}
+
+// Walk returns rel paths under root, honoring .gitignore and extra ignore globs,
+// and always skipping .prowl/, .git/, node_modules/.
+func Walk(root string, ignore []string) ([]string, error) {
+	var out []string
+	err := walkFiles(root, ignore, func(rel string, _ fs.DirEntry) error {
 		out = append(out, rel)
 		return nil
 	})
 	sort.Strings(out)
 	return out, err
+}
+
+// Signature is a content-free fingerprint of the project's tracked files: a hash
+// over each file's path and modification time. It changes when any file is
+// added, removed, renamed, or edited, so the CLI can skip the expensive
+// read-and-hash re-index when nothing changed. It only reads directory entries
+// and stats, never file contents, so it stays fast on large repositories.
+func Signature(root string, ignore []string) (uint64, error) {
+	var entries []string
+	err := walkFiles(root, ignore, func(rel string, d fs.DirEntry) error {
+		var mt int64
+		if info, ierr := d.Info(); ierr == nil {
+			mt = info.ModTime().UnixNano()
+		}
+		entries = append(entries, rel+"\x00"+strconv.FormatInt(mt, 10))
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	sort.Strings(entries)
+	h := xxhash.New()
+	for _, e := range entries {
+		_, _ = h.WriteString(e)
+		_, _ = h.WriteString("\n")
+	}
+	return h.Sum64(), nil
 }
 
 func loadGitignore(root string) []string {

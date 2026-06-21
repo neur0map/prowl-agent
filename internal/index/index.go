@@ -132,6 +132,11 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	return sum, nil
 }
 
+// Version returns the indexing-logic version (the binary's VCS revision). The
+// CLI compares it against the stored value to force a re-index after a prowl
+// upgrade even when the file fingerprint is unchanged.
+func Version() string { return indexVersion() }
+
 // indexVersion identifies the extraction/resolution logic the index was built
 // with, from the binary's VCS revision. When it changes (a binary upgrade), Index
 // forces a full re-parse so extractor and resolver fixes take effect, instead of

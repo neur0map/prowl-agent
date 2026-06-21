@@ -38,6 +38,7 @@ func TestDetect(t *testing.T) {
 		{"src/app.tsx", "", "tsx"},
 		{"kernel/sched.c", "", "cpp"},
 		{"include/sched.h", "", "cpp"},
+		{"src/main/java/com/foo/Bar.java", "", "java"},
 		{"random", "", ""},
 	}
 	for _, c := range cases {

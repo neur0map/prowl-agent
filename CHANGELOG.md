@@ -20,8 +20,8 @@ answers about a project's files, served over MCP.
   skipping unchanged files and serving stale data. Release builds key this off the
   commit; dev and dirty builds key off the binary's mtime so each local rebuild
   also reparses.
-- Tree-sitter extraction for Go, Rust, TypeScript/TSX, Lua, Python, JavaScript,
-  Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
+- Tree-sitter extraction for Go, Rust, Java, TypeScript/TSX, Lua, Python,
+  JavaScript, Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
   plus a line-based reader for other config formats (sway/i3, rofi `rasi`,
   polybar, and similar). Markdown headings and JavaScript declarations become
   symbols, so docs and dashboard scripts are searchable by name as well as by
@@ -153,7 +153,7 @@ answers about a project's files, served over MCP.
   by line span and the most complex functions by cyclomatic complexity, alongside
   central and large files: triage for where bugs hide. Complexity counts decision
   points (if/for/while/switch-cases/catch/match-arms) in a function body for Go,
-  Rust, C++, TypeScript/TSX, JavaScript, and Python; other languages report size only.
+  Rust, C++, Java, TypeScript/TSX, JavaScript, and Python; other languages report size only.
 
 #### Semantic search (optional)
 

@@ -26,6 +26,8 @@ github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4 h1:l4/bc9oIyZxTB8xYSzbuRq
 github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4/go.mod h1:qcaksoN4pW/mnTxel57rzhMD9b4wA1gb1L1vTpTzgy8=
 github.com/alexaandru/go-sitter-forest/ini v1.9.1 h1:Lz+N6ea6/maKhXZpU/hzRXskB5Sn1sd0aANJ+etgi/w=
 github.com/alexaandru/go-sitter-forest/ini v1.9.1/go.mod h1:qMK0DjEEMSa3945DUsx3m2TdG24wBBYDInUpm3r7UjU=
+github.com/alexaandru/go-sitter-forest/java v1.9.5 h1:ibPa56LZBAwQ9McU2CVEAwkaB3ManNfaGUDFcSOq6qs=
+github.com/alexaandru/go-sitter-forest/java v1.9.5/go.mod h1:aWD8ZAZ6IbhsCnF7Jog1GWtx3ow//PiWkkAvVfnB8/I=
 github.com/alexaandru/go-sitter-forest/javascript v1.9.2 h1:b8ZWUk/1bXLmGXN/tL26PQf0EQ6vSM7J6pnNjN8by2Q=
 github.com/alexaandru/go-sitter-forest/javascript v1.9.2/go.mod h1:cWOFBHR7EffqM4sdVQ70WtTnFKPZxt5sAm1zS1tWaL8=
 github.com/alexaandru/go-sitter-forest/json v1.9.1 h1:MVV+keFXs6jHuu7rM1O1AzTUIA/W253J4aI8j61S8aI=

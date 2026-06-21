@@ -12,6 +12,7 @@ import (
 	golang "github.com/alexaandru/go-sitter-forest/go"
 	"github.com/alexaandru/go-sitter-forest/hyprlang"
 	"github.com/alexaandru/go-sitter-forest/ini"
+	"github.com/alexaandru/go-sitter-forest/java"
 	"github.com/alexaandru/go-sitter-forest/javascript"
 	"github.com/alexaandru/go-sitter-forest/json"
 	"github.com/alexaandru/go-sitter-forest/lua"
@@ -50,6 +51,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"typescript": typescript.GetLanguage,
 	"tsx":        tsx.GetLanguage,
 	"rust":       rust.GetLanguage,
+	"java":       java.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

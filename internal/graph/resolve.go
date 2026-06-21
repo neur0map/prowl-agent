@@ -299,6 +299,13 @@ func pathCandidates(fromRel, raw, lang string) []string {
 			c = append(c, target+".py", target+"/__init__.py")
 		}
 	}
+	// Java imports (`import com.foo.Bar;`) map the dotted class path to a file,
+	// including the Maven/Gradle src/main/java layout. Wildcard and third-party
+	// imports do not match a project file and stay informational.
+	if lang == "java" && raw != "" {
+		mod := strings.ReplaceAll(raw, ".", "/")
+		c = append(c, mod+".java", "src/main/java/"+mod+".java", "src/"+mod+".java")
+	}
 	if strings.HasPrefix(raw, "~/.config/") {
 		c = append(c, strings.TrimPrefix(raw, "~/.config/"))
 	}

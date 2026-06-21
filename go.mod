@@ -14,6 +14,7 @@ require (
 	github.com/alexaandru/go-sitter-forest/go v1.9.4
 	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4
 	github.com/alexaandru/go-sitter-forest/ini v1.9.1
+	github.com/alexaandru/go-sitter-forest/java v1.9.5
 	github.com/alexaandru/go-sitter-forest/javascript v1.9.2
 	github.com/alexaandru/go-sitter-forest/json v1.9.1
 	github.com/alexaandru/go-sitter-forest/lua v1.9.3

@@ -475,3 +475,18 @@ func TestIsVendored(t *testing.T) {
 		}
 	}
 }
+
+func TestClusterLabel(t *testing.T) {
+	// Monorepo: files under packages/zod label as "packages/zod", not "packages".
+	if got := clusterLabel([]string{"packages/zod/src/a.ts", "packages/zod/src/b.ts"}); got != "packages/zod" {
+		t.Errorf("clusterLabel monorepo = %q, want packages/zod", got)
+	}
+	// Config repo: two-segment paths label by the first segment.
+	if got := clusterLabel([]string{"hypr/a.conf", "hypr/b.conf"}); got != "hypr" {
+		t.Errorf("clusterLabel config = %q, want hypr", got)
+	}
+	// Root-only files have no subsystem.
+	if got := clusterLabel([]string{"README.md", "LICENSE"}); got != "misc" {
+		t.Errorf("clusterLabel root = %q, want misc", got)
+	}
+}

@@ -104,28 +104,26 @@ func splitBlobCluster(clusters []Cluster, langOf map[string]string) []Cluster {
 	return out
 }
 
-// clusterLabel names a cluster by the most common top-level path segment.
+// clusterLabel names a cluster by the most common directory subsystem (up to two
+// path segments), so a monorepo's packages/foo and packages/bar get distinct
+// labels instead of both collapsing to "packages".
 func clusterLabel(members []string) string {
 	counts := map[string]int{}
 	for _, m := range members {
-		seg := m
-		if i := strings.IndexByte(m, '/'); i >= 0 {
-			seg = m[:i]
-		}
-		counts[seg]++
+		counts[subsystem(m)]++
 	}
-	segs := make([]string, 0, len(counts))
+	labels := make([]string, 0, len(counts))
 	for s := range counts {
-		segs = append(segs, s)
+		labels = append(labels, s)
 	}
-	sort.Strings(segs)
+	sort.Strings(labels)
 	best, bestN := "", 0
-	for _, s := range segs {
+	for _, s := range labels {
 		if counts[s] > bestN {
 			best, bestN = s, counts[s]
 		}
 	}
-	if best == "" || strings.Contains(best, ".") {
+	if best == "" || best == "." {
 		return "misc"
 	}
 	return best

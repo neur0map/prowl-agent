@@ -65,7 +65,9 @@ answers about a project's files, served over MCP.
   connected components collapse nearly everything into one giant blob (common for
   a well-linked Go/TS project), the blob is subdivided by directory subsystem
   (e.g. `pkg/gui`, `pkg/commands`) instead of shown as one opaque cluster. Config
-  repos with several balanced include-tree components are left as-is.
+  repos with several balanced include-tree components are left as-is. Clusters are
+  labeled by directory subsystem (up to two segments), so a monorepo's
+  `packages/foo` and `packages/bar` read distinctly instead of both as `packages`.
 - SQLite store with FTS5 full-text search and an in-memory BFS blast-radius
   traversal (loads the resolved edge set once and visits each file once), in WAL
   mode so the indexer can write while the server reads. On a 2023-file Go repo a

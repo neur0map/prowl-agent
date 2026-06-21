@@ -171,7 +171,9 @@ type ChunkHit struct {
 	File      string `json:"file"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
-	Snippet   string `json:"snippet"`
+	// omitempty so --compact (which clears snippets) drops the column entirely
+	// rather than emitting an empty one for every row.
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // SearchChunks runs an FTS5 query over text chunks, returning highlighted snippets.

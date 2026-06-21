@@ -65,3 +65,43 @@ func TestResolvePythonAbsoluteImports(t *testing.T) {
 		t.Fatalf("unresolved = %+v, want only os", dang)
 	}
 }
+
+func TestResolvePythonRelativeImports(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	mk := func(rel string) int64 {
+		id, err := s.UpsertFile(store.File{RelPath: rel, Lang: "python", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	services := mk("myapp/services.py")
+	api := mk("myapp/api.py")
+	deep := mk("myapp/sub/deep.py")
+
+	// api: from .services import serve (same package)
+	if err := s.ReplaceFileGraph(api, nil, nil, []store.RawEdge{{Kind: "includes", Raw: ".services", Line: 1}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// deep: from ..services import serve (parent package)
+	if err := s.ReplaceFileGraph(deep, nil, nil, []store.RawEdge{{Kind: "includes", Raw: "..services", Line: 1}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Resolve(s); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := s.IncomingEdges("file", services, "includes")
+	if len(in) != 2 {
+		t.Fatalf("services incoming = %d (%+v), want 2 (from .services and ..services)", len(in), in)
+	}
+	files := map[string]bool{in[0].File: true, in[1].File: true}
+	if !files["myapp/api.py"] || !files["myapp/sub/deep.py"] {
+		t.Fatalf("relative imports resolved to %+v, want api.py and sub/deep.py", files)
+	}
+}

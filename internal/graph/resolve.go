@@ -276,10 +276,28 @@ func pathCandidates(fromRel, raw, lang string) []string {
 	}
 	// Python absolute imports (`import a.b`, `from a.b import c`) map the dotted
 	// module to a file: a/b.py or a/b/__init__.py, also under src/ for that
-	// layout. Relative (leading-dot) and third-party imports stay informational.
+	// layout. Third-party imports stay informational.
 	if lang == "python" && raw != "" && !strings.HasPrefix(raw, ".") {
 		mod := strings.ReplaceAll(raw, ".", "/")
 		c = append(c, mod+".py", mod+"/__init__.py", "src/"+mod+".py", "src/"+mod+"/__init__.py")
+	}
+	// Python relative imports (`from .foo import x`, `from ..pkg.mod import y`):
+	// the leading dots count levels up from the importing file's package, and the
+	// remaining dotted path maps to a file there. A bare `from . import x` has no
+	// module path and stays informational.
+	if lang == "python" && strings.HasPrefix(raw, ".") {
+		dots := 0
+		for dots < len(raw) && raw[dots] == '.' {
+			dots++
+		}
+		if modpath := strings.ReplaceAll(raw[dots:], ".", "/"); modpath != "" {
+			base := path.Dir(fromRel)
+			for i := 1; i < dots; i++ {
+				base = path.Dir(base)
+			}
+			target := path.Join(base, modpath)
+			c = append(c, target+".py", target+"/__init__.py")
+		}
 	}
 	if strings.HasPrefix(raw, "~/.config/") {
 		c = append(c, strings.TrimPrefix(raw, "~/.config/"))

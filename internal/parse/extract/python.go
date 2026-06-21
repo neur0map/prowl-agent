@@ -11,6 +11,7 @@ const pythonSCM = `
 (class_definition name: (identifier) @class.name) @class.def
 (import_statement name: (dotted_name) @import.mod)
 (import_from_statement module_name: (dotted_name) @import.mod)
+(import_from_statement module_name: (relative_import) @import.rel)
 `
 
 func (pythonExtractor) Extract(src []byte) (Result, error) {
@@ -31,6 +32,9 @@ func (pythonExtractor) Extract(src []byte) (Result, error) {
 			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "class", StartLine: line(n), EndLine: end})
 		}
 		if n, ok := capNode(caps, "import.mod"); ok {
+			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
+		}
+		if n, ok := capNode(caps, "import.rel"); ok {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: n.Content(src), Line: line(n)})
 		}
 	})

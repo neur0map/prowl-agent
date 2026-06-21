@@ -1,49 +1,56 @@
 # Prowl Agent
 
-A local index that helps AI coding agents understand a project without re-reading the whole thing.
+**One local index that answers your AI agent's questions about a codebase in a single command, cited to `file:line`, for a fraction of the tokens that grep-and-read burns.**
 
 [![build](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml/badge.svg)](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml)
-[![download](https://img.shields.io/github/v/release/neur0map/prowl-agent?include_prereleases&label=download)](https://github.com/neur0map/prowl-agent/releases/latest)
-![platform](https://img.shields.io/badge/platform-Linux-555)
+[![version](https://img.shields.io/github/v/release/neur0map/prowl-agent?label=version&color=89b4fa)](https://github.com/neur0map/prowl-agent/releases/latest)
+[![platform](https://img.shields.io/badge/platform-Linux%20x86__64-555)](#install)
 
-Coding agents spend a lot of tokens grepping and re-reading files every time you
-ask them to change something. Prowl Agent builds a small SQLite index of your
-project (files, the symbols in them, and the values they share) and answers
-questions about it from one command. The agent runs `prowl-agent find battery`
-(or `overview`, `impact`, `search`, ...) and gets a short, exact answer with
-`file:line` links instead of a wall of grep hits, in
+Every time you ask a coding agent to change something, it greps the repo and
+re-reads the same files to rebuild context it already lost. You pay for those
+tokens on every turn, the answer arrives slower, and the agent still has to guess
+how the files connect.
+
+Prowl Agent builds a small SQLite index of your project (the files, the symbols
+in them, and how they wire together) and answers from it in one shell command.
+The agent runs `prowl-agent find`, `overview`, or `impact` and gets a short,
+exact, cited answer instead of a wall of grep hits. Answers come back in
 [TOON](https://toonformat.dev), a format models read about 40% cheaper than JSON.
 
-Answers come straight from the shell, so any agent that can run a command can use
-it: nothing to start, and none of the per-call tool-schema cost an MCP server
-adds to every request.
+```console
+$ prowl-agent find NewGui            # 267 bytes, four exact hits, all cited
+[4]{end_line,file,id,kind,line,name}:
+  266,pkg/gocui/gui.go,2706,function,212,NewGui
+  799,pkg/gui/gui.go,4974,function,723,NewGui
+  44,pkg/commands/oscommands/gui_io.go,2311,function,32,NewGuiIO
+  209,pkg/gocui/gui.go,2705,type,198,NewGuiOpts
 
-It maps how files are wired together:
+$ prowl-agent impact pkg/gui/gui.go  # who breaks if I touch this file
+total: 7
+direct: 2
+by_subsystem[5]{count,subsystem}:
+  2,pkg/cheatsheet
+  2,pkg/integration
+  ...
+```
 
-- include trees (`source=`, `include`, `@import`, `require()`)
-- exec and keybind chains (`exec-once`, `bind = ... exec script`)
-- shared colors, fonts, paths, and variables across files
-
-It serves one index three ways: shell commands for your coding agent (the
-recommended path), an MCP server for agents that prefer typed tools, and a
-language server (`prowl-agent lsp`) for your editor, so a human gets the same
-go-to-definition, references, and hover.
-
-Today it is tuned for Linux dotfiles and configs (window managers, bars, widgets,
-themes, scripts). Broader language support, including web and more scripting
-languages, is in progress.
+The grep version of the first question dumps a hit list, then the agent opens
+each file to find the right `NewGui`: kilobytes to tens of kilobytes just to
+locate one symbol, before it reads a single line of the code it actually needs.
+Prowl answers in a few hundred bytes, and it tells you which one is the type and
+which are the functions.
 
 ## Install
 
-Install with one line. It downloads the binary, verifies its checksum, and drops
-it in `~/.local/bin`:
+One line. It downloads the binary, verifies its checksum, and drops it in
+`~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.sh | sh
 ```
 
-It is a Linux x86_64, cgo-linked binary, so it needs a recent glibc. Prefer to do
-it by hand, or build from source? Both work:
+It is a Linux x86_64, cgo-linked binary, so it needs a recent glibc. Prefer to
+verify by hand or build from source? Both work:
 
 ```sh
 # manual download + checksum verify
@@ -55,87 +62,80 @@ sha256sum -c prowl-agent-linux-amd64.sha256 && install -m755 prowl-agent-linux-a
 CGO_ENABLED=1 go build -tags sqlite_fts5 -o prowl-agent ./cmd/prowl-agent
 ```
 
-Update in place anytime with `prowl-agent update`. `prowl-agent status` also tells
-you when a new build is out, via a quick anonymous checksum check cached for a day.
+Update in place anytime with `prowl-agent update`. `prowl-agent status` also
+tells you when a new build is out, via a quick anonymous checksum check cached
+for a day.
 
-## Quick start
+## Set up in one command
 
-Run this once inside your project (a dotfiles repo, `~/.config`, or any folder):
+Run this once inside any project (a code repo, a dotfiles folder, `~/.config`):
 
 ```sh
-prowl-agent init                 # interactive setup
+prowl-agent init                 # interactive
 prowl-agent init --no-ai --yes   # or non-interactive
 ```
 
-That builds the index, writes a short `AGENTS.md` telling your agent how to query
-it from the shell, registers the MCP server for Cursor, VS Code, and other
+That one command builds the index, writes a short `AGENTS.md` telling your agent
+how to query it, registers the MCP server for Cursor, VS Code, and other
 MCP-compatible agents, and wires your editor's language server. Everything lives
 in a local `.prowl/` folder that gets added to `.gitignore`. Nothing leaves your
 machine.
 
-`init` is the only command you run to set up, and it is safe to re-run (after a
-reboot, say): it remembers whether you enabled AI instead of asking again, and
-when AI is on it makes sure Ollama is running and the model is warm for the
-session. Settings persist for the binary, so a fresh project inherits your last
-choice.
+`init` is the only setup command, and it is safe to re-run (after a reboot, say).
+It remembers whether you enabled AI instead of asking again, and the `AGENTS.md`
+block it writes is delimited by markers, so a re-run refreshes prowl's guidance
+and never touches the rest of your `AGENTS.md`.
 
-A few commands, day to day:
+There is no server to keep running. Each query re-indexes incrementally first
+(only what changed, in tens of milliseconds), so the agent never reads stale data
+and you never run a watcher by hand.
 
-```sh
-prowl-agent status    # index, token savings, and update notice
-prowl-agent doctor    # broken includes, dead scripts, keybind clashes
-prowl-agent restart   # rebuild the index and restart running servers
-prowl-agent update    # upgrade to the latest build, then restart servers
-prowl-agent version   # version and whether an update is available
-```
-
-There is no server to keep running. Each shell query re-indexes incrementally
-first (only what changed, in tens of milliseconds), so the agent never reads
-stale data and you never run a watcher by hand. (The MCP server, when used, stays
-fresh the same way.)
-
-## Query from your shell (recommended)
+## What your agent can ask
 
 After `init`, the agent (or you) queries the index by running a command. This is
 the lowest-overhead path: no server, and none of the tool-schema tokens an MCP
-server injects into every request.
+server adds to every request.
 
 ```sh
 prowl-agent overview            # project map: docs to read, roles, entrypoints, clusters (start here)
 prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
 prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
-prowl-agent callers <path>      # what includes / execs / binds to a file
-prowl-agent callees <path>      # what a file includes / execs / binds to
+prowl-agent callers <path>      # what includes / imports / execs / binds to a file
+prowl-agent callees <path>      # what a file includes / imports / execs / binds to
 prowl-agent impact <path>       # blast radius: count, subsystems, direct importers (--all = full list)
 prowl-agent relations <path>    # a file's symbols and include neighbors
 prowl-agent entrypoints <path>  # root files from which this file is reachable
 prowl-agent references <id>     # references to a symbol id (the id column from find)
 prowl-agent clusters [name]     # subsystems (summaries); with a name, that subsystem's files
-prowl-agent hotspots            # structurally central / large files
+prowl-agent hotspots            # structurally central / large / complex files
 prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
-prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands
+prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands, a 0-100 score
 prowl-agent tests <path>        # configs/keybinds that launch or reload a file
 prowl-agent changed             # your git changes mapped to the files they could affect
 ```
 
 Output defaults to TOON (compact, cited, `file:line`); add `--json` for JSON, or
-`--limit N` to cap results for fewer tokens. Run
-from anywhere inside the project; prowl-agent finds the index by walking up to
-`.prowl/`. The generated `AGENTS.md` documents all of this for your agent.
+`--limit N` to cap results for fewer tokens. Run from anywhere inside the
+project; prowl finds the index by walking up to `.prowl/`. Each answer is built
+to stay small: on a 2023-file Go repo, `overview` is about 1 KB and a typical
+`impact` answer is a dozen lines, not the few hundred dependent rows the raw
+graph would print.
 
-## Connect over MCP (optional)
+## One index, three ways to use it
 
-For agents that prefer typed tools, `init` also writes MCP config: the standard
-`.mcp.json` (most agents), Cursor (`.cursor/mcp.json`), VS Code
-(`.vscode/mcp.json`), Oh My Pi (`.omp/mcp.json`), Factory droid
-(`.factory/mcp.json`), and OpenCode (`opencode.json`). For any other agent, point
-it at one command:
+The same `.prowl/index.db` is served three ways, so you pick the integration that
+fits and the answers stay identical and cited:
 
-```sh
-prowl-agent serve
-```
-
-Most agents use the standard `mcpServers` shape:
+- **Shell commands (recommended).** Any agent that can run a command can use
+  prowl. Nothing to start, and none of MCP's upfront per-call tool-schema cost.
+- **MCP server.** For agents that prefer typed tools, `init` writes config for
+  the standard `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, and
+  OpenCode. It exposes 17 tools (`find_symbol`, `blast_radius`, `similar_code`,
+  `doctor`, and the rest). Point any other agent at one command, `prowl-agent serve`.
+- **Editor language server.** `prowl-agent lsp` gives a human go-to-definition,
+  find-references, hover (with use counts), document and workspace symbols, code
+  lens, completion, and inline `doctor` diagnostics. Neovim attaches it
+  automatically; Helix and VS Code setup notes are in `.prowl/editor/SETUP.md`.
 
 ```json
 {
@@ -145,105 +145,76 @@ Most agents use the standard `mcpServers` shape:
 }
 ```
 
-OpenCode uses its own shape (an `mcp` map with a command array):
+## It understands how code connects
 
-```json
-{
-  "mcp": {
-    "prowl-agent": { "type": "local", "command": ["prowl-agent", "serve"], "enabled": true }
-  }
-}
-```
+Locating a symbol is the easy half. The harder, more valuable half is the graph:
+what imports what, what a change ripples into, which files form a subsystem.
+Prowl resolves real edges, not text matches:
 
-The MCP server exposes the same queries as tools (`overview`, `find_symbol`,
-`blast_radius`, `similar_code`, `doctor`, ...). Every answer is deterministic and
-carries `file:line`, so the agent (and you) can verify it.
+- **Code imports.** Go package imports, TypeScript/JavaScript relative imports,
+  Rust `mod` and `crate::` imports, Python absolute and relative imports, C/C++
+  `#include`, Java `import` class paths, Ruby `require_relative`, and C# `using`
+  namespaces.
+- **Monorepos.** A bare import of a first-party workspace package (`@scope/pkg`
+  or `pkg/subpath`) resolves to that package's source, so `callers`, `impact`,
+  and `clusters` work across a pnpm or turbo monorepo, not just within one
+  package. The walk honors `.gitignore` negation, so a repo that ignores a tree
+  but keeps its source (`packages/*/*/` then `!packages/*/src/`) is still indexed.
+- **Configs.** Include trees (`source=`, `@import`, `require()`), exec and keybind
+  chains (`exec-once`, `bind = ... exec script`), and shared colors, fonts, paths,
+  and variables across files.
 
-## Use it in your editor
+This is tested against real, popular repositories. A few results:
 
-The same index drives a language server, so a human gets the navigation the agent
-has. `init` sets it up; the server runs as `prowl-agent lsp`.
+| repo | language | what the graph now sees |
+|---|---|---|
+| [lazygit](https://github.com/jesseduffield/lazygit) | Go, 2023 files | `impact`, `callers`, `clusters` across every package |
+| [tRPC](https://github.com/trpc/trpc) | TS monorepo | 878 cross-package imports resolved; `impact @trpc/server` went 0 to 345 dependents |
+| [zod](https://github.com/colinhacks/zod) | TS subpaths | `zod/v4/core` resolves to `packages/zod/src/v4/core/index.ts` |
 
-- **go to definition**: a keybind to the script it runs, an `@import` or `source=`
-  to the file, a `$variable` to where it is declared
-- **find references**: every place a color, font, variable, or script is used
-- **hover**: a value and how many times it is used
-- **document and workspace symbols**, **code lens** (use counts), **completion** of
-  known variables and colors, and **inline diagnostics** from `doctor`
+External and standard-library imports stay informational. More languages are on
+the way.
 
-Neovim attaches it automatically (see `.prowl/editor/nvim.lua`); Helix gets a
-project-local `.helix/languages.toml` when there is none to overwrite. Setup notes,
-including VS Code, are in `.prowl/editor/SETUP.md`.
-
-## Does it work in any repo?
-
-Yes. Point it at a dotfiles repo, `~/.config`, or any project folder. It indexes
-what the project tracks (it honors `.gitignore`) and keeps its own state in a local
-`.prowl/` folder, which it adds to `.gitignore`.
-
-Gitignoring `.prowl/` does not hide your code from the agent. The agent reads your
-real files; `.prowl/` only holds the rebuildable index, which the agent never opens
-directly (it asks prowl over MCP, and your editor asks over LSP). Because prowl
-indexes the same files git tracks, it never points the agent at a path it was told
-to ignore.
-
-## See your savings
+## What it costs to run
 
 `prowl-agent status` prints a card with what is indexed and, once your agent has
-asked a few questions, how many tokens it saved. It tracks every project you have
-initialized and shows a combined total, so the savings add up across your whole
-setup. The number is grounded per answer: for each query prowl served, it compares
-the bytes it returned against the combined size of the files that answer pointed at
-(what an agent would otherwise have read), then keeps about 70% of that as a
-deliberately conservative, under-counted estimate.
+asked a few questions, how many tokens it saved. The number is grounded per
+answer: for each query prowl served, it compares the bytes it returned against
+the combined size of the files that answer pointed at (what an agent would
+otherwise have read), then keeps about 70% of that as a deliberately
+under-counted estimate. It tracks every project you have initialized and shows a
+combined total.
 
 Run it in your terminal for the full colored card; pipe it for plain text, or add
-`--json` for the raw numbers. Want to check the math or test it on your own repos?
-See [Measuring token usage](docs/TOKENS.md).
+`--json` for the raw numbers. Want to check the math on your own repos? See
+[Measuring token usage](docs/TOKENS.md).
 
-## A quick measurement
+A rough idea of the gap, from a small test on three real dotfile repos (not a
+benchmark suite): indexed and asked the same question, `find_symbol` returned
+about 5 KB of cited results in a couple of milliseconds. The plain ripgrep hit
+list was around 50 KB, and opening every file it matched ran to a few megabytes.
+A few thousand tokens versus tens of thousands, just to locate something, before
+the agent reads anything. Your files, your question, and your editor move these
+numbers, so measure on your own setup.
 
-This is a small test on three real dotfile repos, not a benchmark suite, so take
-it as a rough idea rather than a promise. We indexed each and asked the same
-question: find the battery widget and the files near it.
+## Your code stays on your machine
 
-| repo | files indexed |
-|---|---|
-| [ryoku-arch](https://github.com/neur0map/ryoku-arch) | 2172 |
-| [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | 732 |
-| [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | 578 |
+Prowl indexes only what your project tracks (it honors `.gitignore`) and keeps
+its own state in a local `.prowl/` folder, which it adds to `.gitignore`. The
+update check is an anonymous read of public commit data and sends nothing about
+you. There is no daemon and no network service.
 
-On average, `find_symbol` returned about 5 KB of JSON with `file:line` links, in a
-couple of milliseconds against the prebuilt index. For the same word, a plain
-ripgrep hit list was around 50 KB, and opening every file it matched added up to a
-few megabytes. As a rough idea, that is a few thousand tokens versus tens of
-thousands just to locate something, before the agent reads anything.
+Gitignoring `.prowl/` does not hide your code from the agent: the agent reads your
+real files, and `.prowl/` only holds the rebuildable index. Because prowl indexes
+the same files git tracks, it never points the agent at a path it was told to
+ignore.
 
-The point is not a headline number. It is that the agent reads a small, ranked
-answer instead of scanning the repo and paging through everything that mentions a
-word. Your files, your question, and your editor will all move these numbers, so
-measure on your own setup.
-
-<details>
-<summary>How we counted tokens</summary>
-
-Tokens are estimated as characters / 4, the common rough rule, so they are
-approximate. The ripgrep figure is the size of the hits it prints (one `path:line`
-per match). The "open everything" figure is the combined size of every file that
-contained the word. The Prowl figure is the size of the JSON `find_symbol`
-returns. Same word, same machine, averaged over the three repos. Indexing them
-took a few seconds to a few tens of seconds depending on size.
-
-</details>
-
-## Semantic search (optional)
+## Optional: semantic search
 
 If you turn it on, `init` walks you through a local semantic layer powered by
-[Ollama](https://ollama.com), with no cloud and no API keys. You pick a model
-tier; `init` detects Ollama (offering to run the official installer if it is
-missing), starts it (installing a user service so it survives a reboot, or
-running it in the background otherwise), pulls the models, and warms the embed
-model so the first query is hot:
+[Ollama](https://ollama.com), with no cloud and no API keys. You pick a tier;
+`init` detects Ollama, starts it, pulls the models, and warms the embed model so
+the first query is hot:
 
 | tier | embed | assist | needs |
 |---|---|---|---|
@@ -252,47 +223,24 @@ model so the first query is hot:
 | max | `qwen3-embedding:8b` | `gemma4:e4b` | ~16 GB VRAM |
 
 Choose non-interactively with `--tier fast|smart|max`. The tiers differ mainly in
-the **embedder**, which is where recall comes from: a bigger embedder (the `smart`
-and `max` `qwen3-embedding` models) finds related code on large repos or vaguely
-worded questions that a small one misses, while `fast` is plenty for small configs
-and keyword-ish queries. The assist model only rewrites and re-ranks, so it stays
-small on purpose; a much bigger assist would just make `smart_search` slower
-without improving what gets found. Embeddings live in `sqlite-vec`, so the agent
-finds files that mean the same thing even when they share no words (for example,
-"music spectrum" finds an `AudioVisualizer`). Structural search works without it.
-
-On Gemma: the `smart` and `max` tiers use Gemma 4 for the assist (`gemma4:e2b` /
-`gemma4:e4b`, the efficient MatFormer models that infer at effective-2B/4B speed).
-The `fast` tier stays on `gemma3:1b` because there is no smaller Gemma 4 that fits
-a CPU budget. Gemma 4 is a generative model, so retrieval embeddings come from
-`qwen3-embedding` (or `embeddinggemma` on `fast`), not Gemma.
-
-`init` warms the embed model up front, and the server keeps it loaded between
-queries, so you do not pay a cold start every time (about 2.4 s on the first
-query after a long idle, then around 20 ms on the repo we tried). Re-running
-`init` after a reboot brings Ollama back and re-warms.
+the embedder, which is where recall comes from: a bigger embedder finds related
+code on large repos or vaguely worded questions that a small one misses. The
+assist model only rewrites and re-ranks, so it stays small on purpose.
+Embeddings live in `sqlite-vec`, so the agent finds files that mean the same
+thing even when they share no words (for example, "music spectrum" finds an
+`AudioVisualizer`). Structural search works without any of this.
 
 ## Supported formats
 
 Go, Rust, Java, Ruby, C#, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish,
 C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
-(`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
-`rasi`, polybar, kitty, dunst, and similar). The graph connects code too: Go
-resolves package imports, TypeScript/JavaScript resolve relative imports and
-first-party monorepo packages (a `@scope/pkg` or `pkg/subpath` import to the
-package's source), Rust resolves `crate::` imports, Python resolves absolute and
-relative imports, C/C++ resolve `#include` headers, Java resolves `import` class
-paths, Ruby resolves `require_relative`, and C# resolves `using` namespaces, so
-`callers`, `impact`, `changed`, and `clusters` work across a Go module, a
-TS/React app or pnpm/turbo monorepo, a Rust crate, a Python package, a C
-codebase, a Java/Maven project, a Ruby/Rails app, or a C# solution. The walk
-honors `.gitignore` negation, so a monorepo that ignores a tree but keeps its
-source (`packages/*/*/` then `!packages/*/src/`) is still indexed. External and
-standard-library imports stay informational. More languages are on the way.
+(`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi `rasi`,
+polybar, kitty, dunst, and similar).
 
 ## More
 
 - [Architecture](docs/ARCHITECTURE.md): how indexing, the graph, and the server fit together
+- [Measuring token usage](docs/TOKENS.md): how the savings number is computed, and how to check it
 - [Changelog](CHANGELOG.md)
 
 Linux only for now. Built with Go, Tree-sitter, and SQLite.

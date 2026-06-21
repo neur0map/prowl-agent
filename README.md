@@ -8,10 +8,15 @@ A local index that helps AI coding agents understand a project without re-readin
 
 Coding agents spend a lot of tokens grepping and re-reading files every time you
 ask them to change something. Prowl Agent builds a small SQLite index of your
-project (files, the symbols in them, and the values they share) and serves it to
-the agent over the [Model Context Protocol](https://modelcontextprotocol.io). The
-agent asks a question and gets a short, exact answer with `file:line` links instead
-of a wall of grep hits.
+project (files, the symbols in them, and the values they share) and answers
+questions about it from one command. The agent runs `prowl-agent find battery`
+(or `overview`, `impact`, `search`, ...) and gets a short, exact answer with
+`file:line` links instead of a wall of grep hits, in
+[TOON](https://toonformat.dev), a format models read about 40% cheaper than JSON.
+
+Answers come straight from the shell, so any agent that can run a command can use
+it: nothing to start, and none of the per-call tool-schema cost an MCP server
+adds to every request.
 
 It maps how files are wired together:
 
@@ -19,9 +24,10 @@ It maps how files are wired together:
 - exec and keybind chains (`exec-once`, `bind = ... exec script`)
 - shared colors, fonts, paths, and variables across files
 
-It serves two front ends from one index: the MCP server for your coding agent,
-and a language server (`prowl-agent lsp`) for your editor, so a human gets the
-same go-to-definition, references, and hover.
+It serves one index three ways: shell commands for your coding agent (the
+recommended path), an MCP server for agents that prefer typed tools, and a
+language server (`prowl-agent lsp`) for your editor, so a human gets the same
+go-to-definition, references, and hover.
 
 Today it is tuned for Linux dotfiles and configs (window managers, bars, widgets,
 themes, scripts). Broader language support, including web and more scripting
@@ -61,10 +67,11 @@ prowl-agent init                 # interactive setup
 prowl-agent init --no-ai --yes   # or non-interactive
 ```
 
-That builds the index, registers the MCP server for Cursor, VS Code, and any
-MCP-compatible agent, wires your editor's language server, and writes a short
-`AGENTS.md`. Everything lives in a local `.prowl/` folder that gets added to
-`.gitignore`. Nothing leaves your machine.
+That builds the index, writes a short `AGENTS.md` telling your agent how to query
+it from the shell, registers the MCP server for Cursor, VS Code, and other
+MCP-compatible agents, and wires your editor's language server. Everything lives
+in a local `.prowl/` folder that gets added to `.gitignore`. Nothing leaves your
+machine.
 
 `init` is the only command you run to set up, and it is safe to re-run (after a
 reboot, say): it remembers whether you enabled AI instead of asking again, and
@@ -82,18 +89,45 @@ prowl-agent update    # upgrade to the latest build, then restart servers
 prowl-agent version   # version and whether an update is available
 ```
 
-The agent launches the server itself through the generated config, and the index
-stays fresh on its own: the server re-indexes the moment a change matters (right
-before a query, only when something actually changed), keeps a lightweight watcher
-active for 30 minutes after each call, and idles when unused. You never run a
-watcher by hand, and the agent never reads stale data.
+There is no server to keep running. Each shell query re-indexes incrementally
+first (only what changed, in tens of milliseconds), so the agent never reads
+stale data and you never run a watcher by hand. (The MCP server, when used, stays
+fresh the same way.)
 
-## Connect your agent (MCP)
+## Query from your shell (recommended)
 
-`init` auto-writes the MCP config: the standard `.mcp.json` (most agents), Cursor
-(`.cursor/mcp.json`), VS Code (`.vscode/mcp.json`), Oh My Pi (`.omp/mcp.json`),
-Factory droid (`.factory/mcp.json`), and OpenCode (`opencode.json`). For any other
-agent, point it at one command:
+After `init`, the agent (or you) queries the index by running a command. This is
+the lowest-overhead path: no server, and none of the tool-schema tokens an MCP
+server injects into every request.
+
+```sh
+prowl-agent overview            # project map: roles, entrypoints, clusters (start here)
+prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
+prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
+prowl-agent callers <path>      # what includes / execs / binds to a file
+prowl-agent callees <path>      # what a file includes / execs / binds to
+prowl-agent impact <path>       # blast radius: files that transitively depend on this one
+prowl-agent relations <path>    # a file's symbols and include neighbors
+prowl-agent entrypoints <path>  # root files from which this file is reachable
+prowl-agent references <id>     # references to a symbol id (the id column from find)
+prowl-agent clusters            # subsystems (connected files)
+prowl-agent hotspots            # structurally central / large files
+prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
+prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands
+prowl-agent tests <path>        # configs/keybinds that launch or reload a file
+```
+
+Output defaults to TOON (compact, cited, `file:line`); add `--json` for JSON. Run
+from anywhere inside the project; prowl-agent finds the index by walking up to
+`.prowl/`. The generated `AGENTS.md` documents all of this for your agent.
+
+## Connect over MCP (optional)
+
+For agents that prefer typed tools, `init` also writes MCP config: the standard
+`.mcp.json` (most agents), Cursor (`.cursor/mcp.json`), VS Code
+(`.vscode/mcp.json`), Oh My Pi (`.omp/mcp.json`), Factory droid
+(`.factory/mcp.json`), and OpenCode (`opencode.json`). For any other agent, point
+it at one command:
 
 ```sh
 prowl-agent serve
@@ -119,18 +153,9 @@ OpenCode uses its own shape (an `mcp` map with a command array):
 }
 ```
 
-## What the agent can ask
-
-Once it is running, the agent has tools to:
-
-- **find things** by name or meaning (`find_symbol`, `similar_code`, `smart_search`)
-- **follow connections** (`find_callers`, `find_callees`, `file_relations`, `entrypoints_for`)
-- **check impact** before a change (`blast_radius`, `repo_hotspots`)
-- **get the lay of the land** (`overview`, `clusters`)
-- **spot problems** (`doctor`, `architecture_violations`)
-
-Every answer is deterministic and comes with `file:line`, so the agent (and you)
-can verify it.
+The MCP server exposes the same queries as tools (`overview`, `find_symbol`,
+`blast_radius`, `similar_code`, `doctor`, ...). Every answer is deterministic and
+carries `file:line`, so the agent (and you) can verify it.
 
 ## Use it in your editor
 

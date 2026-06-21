@@ -40,15 +40,28 @@ answers about a project's files, served over MCP.
 
 #### Interface
 
+- Shell query interface (the recommended, lowest-overhead path): `find`, `search`
+  (`--smart`/`--compact`), `overview`, `clusters`, `callers`, `callees`,
+  `relations`, `impact`, `entrypoints`, `references`, `hotspots`, `violations`,
+  `tests`, and `doctor` are first-class subcommands. Any agent that can run a
+  command can use the index over a plain shell call: no MCP server, no `serve`,
+  and none of the upfront tool-schema tokens MCP injects into every request. Each
+  call resolves the workspace by walking up to `.prowl/` and re-indexes
+  incrementally first (tens of milliseconds), so results are always current.
+- Token-lean output: query results default to TOON (Token-Oriented Object
+  Notation), which encodes uniform result arrays as one header plus CSV-style
+  rows. Models read it about 40% cheaper than JSON, and slightly more accurately.
+  `--json` switches any query command back to JSON.
 - 17 MCP tools: `overview`, `clusters`, `find_symbol`, `find_references`,
   `find_callers`, `find_callees`, `file_relations`, `blast_radius`,
   `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`,
   `architecture_violations`, `repo_hotspots`, `doctor`, `status`, and `reindex`.
-- CLI surface kept small: `init`, `status`, `doctor`, `restart`, `update`, and
-  `version` (plus `help`). The MCP `serve` and editor `lsp` commands stay hidden
-  because agents and editors launch them over stdio; you never run them by hand.
-  `init` is the single setup command and is idempotent: re-running it (after a
-  reboot, say) keeps your settings instead of re-prompting.
+- CLI surface: the setup and maintenance commands `init`, `status`, `doctor`,
+  `restart`, `update`, and `version`, plus the read-only query commands above.
+  The MCP `serve` and editor `lsp` commands stay hidden because agents and
+  editors launch them over stdio; you never run them by hand. `init` is the single
+  setup command and is idempotent: re-running it (after a reboot, say) keeps your
+  settings instead of re-prompting.
 - `restart` rebuilds the structural index from scratch and stops running serve/lsp
   processes so the agent or editor relaunches the current binary; the relaunched
   server re-embeds lazily, so an Ollama or model issue cannot block the restart.

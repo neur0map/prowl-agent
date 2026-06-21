@@ -9,24 +9,54 @@ import (
 
 const agentsMarker = "<!-- prowl-agent -->"
 
+// agentsEndMarker closes the prowl-agent block in AGENTS.md.
+const agentsEndMarker = "<!-- /prowl-agent -->"
+
 const agentsBlock = agentsMarker + `
 ## Prowl Agent (code intelligence)
 
-This project is indexed by **prowl-agent** (MCP server: ` + "`prowl-agent serve`" + `).
-**Prefer prowl-agent queries before reading files manually.** They return cited,
-bounded context; open raw files only after a query points you to them.
+This project is indexed by **prowl-agent**. Query the index from your shell
+instead of grepping and reading whole files. Answers are cited (file:line),
+ranked, and token-lean (TOON format, ~40% smaller than JSON, and read more
+accurately by models). The index refreshes itself on each call, so there is
+nothing to start and nothing goes stale.
 
-Tools: ` + "`overview`, `clusters`, `find_symbol`, `find_references`, `find_callers`, `find_callees`, `file_relations`, `blast_radius`, `entrypoints_for`, `tests_for`, `similar_code`, `smart_search`, `architecture_violations`, `repo_hotspots`, `doctor`, `status`" + `.
+**Prefer a prowl-agent query before reading files manually.** Open a raw file
+only after a query points you to the exact lines.
 
-### How to use these tools
+### Commands
 
-- **New session / unfamiliar project:** call ` + "`overview`" + ` first, then ` + "`clusters`" + ` to grab a whole subsystem.
-- **Fuzzy / natural-language question:** use ` + "`smart_search`" + ` (or ` + "`similar_code`" + `); pass ` + "`detail: compact`" + ` to list files before pulling snippets.
-- **Before changing a color/font/variable:** ` + "`find_symbol`" + ` it, then ` + "`find_references`" + ` to see every usage; check ` + "`architecture_violations`" + ` for hardcoded duplicates.
-- **Before editing or deleting a file or script:** run ` + "`blast_radius`" + ` to see what breaks, and ` + "`find_callers`" + ` to see what invokes it.
-- **Adding a keybind:** run ` + "`doctor`" + ` first to avoid ` + "`duplicate_keybind`" + ` conflicts.
-- **Tracing startup:** ` + "`entrypoints_for`" + ` a file to find the entry point and autostart chain.
-- **Before committing:** run ` + "`doctor`" + ` and resolve errors (cycles, dangling refs, broken commands).
+    prowl-agent overview            # project map: roles, entrypoints, clusters (start here)
+    prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
+    prowl-agent search <text>       # search content; add --smart (rerank) or --compact (files only)
+    prowl-agent callers <path>      # what includes / execs / binds to a file
+    prowl-agent callees <path>      # what a file includes / execs / binds to
+    prowl-agent impact <path>       # blast radius: files that transitively depend on this one
+    prowl-agent relations <path>    # a file's symbols and include neighbors
+    prowl-agent entrypoints <path>  # root files from which this file is reachable
+    prowl-agent references <id>     # references to a symbol id (the id column from 'find')
+    prowl-agent clusters            # subsystems (connected files)
+    prowl-agent hotspots            # structurally central / large files
+    prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
+    prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands
+    prowl-agent tests <path>        # configs/keybinds that launch or reload a file
+
+Every command accepts --json for JSON instead of TOON. Run from anywhere inside
+the project; prowl-agent finds the index by walking up to .prowl/.
+
+### When to use which
+
+- New or unfamiliar project: overview, then clusters to pull a whole subsystem.
+- Fuzzy / natural-language question: search "<text>" (add --smart); --compact lists files first.
+- Before changing a color/font/variable: find it, then references <id> for every usage; check violations.
+- Before editing or deleting a file: impact <path> for what breaks, callers <path> for what invokes it.
+- Adding a keybind: doctor first, to avoid duplicate-keybind clashes.
+- Tracing startup: entrypoints <path> for the entry point and autostart chain.
+- Before committing: doctor and resolve errors (cycles, dangling refs, broken commands).
+
+The same index is also available over MCP (server: ` + "`prowl-agent serve`" + `) for
+agents that prefer typed tools, but the shell commands above are the
+recommended, lowest-overhead path (no server, no per-call schema cost).
 <!-- /prowl-agent -->`
 
 // Inject writes MCP server configs for common agent environments and agent
@@ -115,8 +145,19 @@ func mergeOpenCode(path string) error {
 func ensureAgentsBlock(path string) error {
 	data, _ := os.ReadFile(path)
 	content := string(data)
-	if strings.Contains(content, agentsMarker) {
-		return nil
+	// Refresh an existing block in place, so a re-init (after a reboot, or after a
+	// prowl-agent upgrade) replaces stale guidance instead of leaving it. Anything
+	// outside the markers (the user's own AGENTS.md) is preserved.
+	if i := strings.Index(content, agentsMarker); i >= 0 {
+		end := len(content)
+		if j := strings.Index(content[i:], agentsEndMarker); j >= 0 {
+			end = i + j + len(agentsEndMarker)
+		}
+		updated := content[:i] + agentsBlock + content[end:]
+		if updated == content {
+			return nil
+		}
+		return os.WriteFile(path, []byte(updated), 0o644)
 	}
 	var b strings.Builder
 	b.WriteString(content)

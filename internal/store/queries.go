@@ -161,12 +161,12 @@ func (s *Store) SymbolsInFile(fileID int64) ([]SymbolHit, error) {
 
 // ResourceRow mirrors a resources row with its file path.
 type ResourceRow struct {
-	ID    int64
-	Kind  string
-	Name  string
-	Value string
-	File  string
-	Line  int
+	ID    int64  `json:"id"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+	File  string `json:"file"`
+	Line  int    `json:"line"`
 }
 
 // AllResources returns every resource (declarations and literals).

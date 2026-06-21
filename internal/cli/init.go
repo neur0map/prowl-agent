@@ -227,8 +227,11 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
-			fmt.Fprintln(out, "Registered MCP server in .mcp.json and instructions in AGENTS.md; .prowl/ is gitignored.")
-			fmt.Fprintln(out, "Editor LSP: configured. Your editor launches 'prowl-agent lsp' automatically; see .prowl/editor/SETUP.md.")
+			fmt.Fprintln(out, "Query it from your shell, no server to run:")
+			fmt.Fprintln(out, "  prowl-agent overview        a map of this project")
+			fmt.Fprintln(out, "  prowl-agent find <name>     locate any symbol")
+			fmt.Fprintln(out, "  prowl-agent search <text>   search by meaning or text")
+			fmt.Fprintln(out, "Agent instructions written to AGENTS.md; MCP and editor LSP also configured; .prowl/ is gitignored.")
 
 			// Run AI setup against the final saved models (resolved or preserved).
 			if ai {

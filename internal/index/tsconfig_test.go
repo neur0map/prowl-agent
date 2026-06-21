@@ -57,3 +57,30 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestTSConfigPathsExtends covers the Turborepo/Nx pattern: a package tsconfig
+// with no paths of its own that extends a shared base config which defines them.
+// The base's targets resolve relative to the base config's own directory.
+func TestTSConfigPathsExtends(t *testing.T) {
+	root := t.TempDir()
+	// Base config at repo root with a (suffix-wildcard) alias.
+	base := `{ "compilerOptions": { "baseUrl": ".", "paths": { "@shared/*": ["libs/shared/src/*"] } } }`
+	if err := os.WriteFile(filepath.Join(root, "tsconfig.base.json"), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A package config under apps/web that extends the base and adds no paths.
+	appDir := filepath.Join(root, "apps", "web")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := `{ "extends": "../../tsconfig.base.json", "compilerOptions": { "strict": true } }`
+	if err := os.WriteFile(filepath.Join(appDir, "tsconfig.json"), []byte(child), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := tsConfigPaths(filepath.Join(appDir, "tsconfig.json"), "apps/web")
+	// The base lives at repo root, so @shared/* -> libs/shared/src resolves there,
+	// not relative to apps/web.
+	if got["@shared/"] == nil || got["@shared/"][0] != "libs/shared/src" {
+		t.Errorf("@shared/ -> %v, want [libs/shared/src] (resolved relative to base dir)", got["@shared/"])
+	}
+}

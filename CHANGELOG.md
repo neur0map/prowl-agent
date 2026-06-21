@@ -72,7 +72,9 @@ answers about a project's files, served over MCP.
   per-package `@/` aliases resolve against the nearest config without crossing
   packages. On the shadcn/ui monorepo this resolved 8382 `@/` imports across many
   per-package configs; aliases pointing at non-existent or virtual modules stay
-  informational.
+  informational. A config with no `paths` of its own follows a local `extends`
+  to a shared base config (the Turborepo/Nx pattern), resolving the base's
+  targets relative to the base's own directory.
 - Rust module graph: `mod foo;` declarations resolve to the included file
   (`foo.rs` / `foo/mod.rs`, handling both `mod.rs` and `foo.rs` parent layouts),
   `crate::` imports resolve to the module file under the importing file's crate

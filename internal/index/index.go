@@ -384,13 +384,24 @@ func tsAliases(root string, files []store.File) string {
 
 // tsConfigPaths reads compilerOptions.baseUrl/paths from a (JSONC) tsconfig and
 // returns each wildcard alias prefix mapped to its repo-relative target dir
-// prefix(es). Non-wildcard aliases and `extends` are not handled.
+// prefix(es). When a config defines no paths of its own it follows a local
+// `extends` to a base config (the Turborepo/Nx shared-base pattern), resolving
+// the base's targets relative to the base's own directory. Non-wildcard aliases
+// and npm-package `extends` are not handled.
 func tsConfigPaths(file, dir string) map[string][]string {
+	return tsConfigPathsDepth(file, dir, 0)
+}
+
+func tsConfigPathsDepth(file, dir string, depth int) map[string][]string {
+	if depth > 3 {
+		return nil // guard against an extends cycle
+	}
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil
 	}
 	var cfg struct {
+		Extends         any `json:"extends"`
 		CompilerOptions struct {
 			BaseURL string              `json:"baseUrl"`
 			Paths   map[string][]string `json:"paths"`
@@ -398,6 +409,20 @@ func tsConfigPaths(file, dir string) map[string][]string {
 	}
 	if json.Unmarshal(stripJSONC(data), &cfg) != nil {
 		return nil
+	}
+	if len(cfg.CompilerOptions.Paths) == 0 {
+		// No own paths: inherit from a local base config (a string `extends`
+		// pointing at a relative file; npm-package/array extends are skipped).
+		ext, _ := cfg.Extends.(string)
+		if ext == "" || (!strings.HasPrefix(ext, ".") && !strings.Contains(ext, "/")) {
+			return nil
+		}
+		if !strings.HasSuffix(ext, ".json") {
+			ext += ".json"
+		}
+		baseFile := filepath.Join(filepath.Dir(file), filepath.FromSlash(ext))
+		baseDir := path.Clean(path.Join(dir, path.Dir(ext)))
+		return tsConfigPathsDepth(baseFile, baseDir, depth+1)
 	}
 	baseURL := cfg.CompilerOptions.BaseURL
 	if baseURL == "" {

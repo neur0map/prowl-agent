@@ -14,6 +14,13 @@ All notable changes are recorded here. The format follows
   lazygit, `references` for the `CopyToClipboard` method went from 40 noisy hits
   (22 of them non-calls that also crowded real calls out of the result cap) to
   the exact 23 call sites across 8 files -- matching a careful hand-grep.
+- `search <text>` ranks a project's implementation above tests, then docs and
+  i18n/locale string tables, then vendored/generated code. Lexical search
+  otherwise floats the files that carry human-readable feature wording (string
+  tables, translated docs, integration tests) above the code that implements it:
+  a concept query like "stage or unstage a line or hunk" on lazygit buried the
+  real patch-handling source at ranks 9-14 under i18n/docs/tests; it now leads.
+  Demotion only -- nothing is dropped.
 
 ## [0.8.0] - 2026-06-21
 

@@ -783,3 +783,45 @@ func TestFindReferencesCallableMatchesCallsOnly(t *testing.T) {
 		t.Errorf("call site = %+v, want line 3 inside run", u.CallSites[0])
 	}
 }
+
+func TestSearchChunksRanksSourceOverTestsAndDocs(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(rel, text string) {
+		fid, err := s.UpsertFile(store.File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil, []store.Chunk{{StartLine: 1, EndLine: 1, Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The vendored chunk matches the term most (highest FTS rank) and the doc
+	// matches twice, but the project's source must still lead, then the test,
+	// then the doc, then vendored.
+	mk("vendor/dep/lib.go", "widget widget widget widget")
+	mk("docs/guide.md", "the widget renders the widget")
+	mk("app/core_test.go", "func TestWidget() { widget }")
+	mk("app/core.go", "func render() { widget }")
+
+	hits, err := New(s).SimilarCode(context.Background(), "widget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]string, len(hits))
+	for i, h := range hits {
+		files[i] = h.File
+	}
+	want := []string{"app/core.go", "app/core_test.go", "docs/guide.md", "vendor/dep/lib.go"}
+	if len(files) != len(want) {
+		t.Fatalf("search(widget) files = %v, want %v", files, want)
+	}
+	for i := range want {
+		if files[i] != want[i] {
+			t.Fatalf("search(widget) order = %v, want source, then test, then doc, then vendored", files)
+		}
+	}
+}

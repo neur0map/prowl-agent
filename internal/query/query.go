@@ -490,11 +490,13 @@ func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHi
 	return q.hybrid(ctx, text, DefaultLimit)
 }
 
-// searchChunksRanked runs the FTS query over a generous pool, then stably
-// demotes vendored and generated chunks so a project's own code leads even when
-// a dense dependency file (a generated constants table, say) would otherwise
-// monopolize the top results by raw FTS rank. The FTS order is kept within each
-// tier and the pool is truncated to limit.
+// searchChunksRanked runs the FTS query over a generous pool, then stably ranks
+// the chunks so a project's own implementation leads: source code first, then
+// tests, then docs and i18n/locale string tables, then vendored/generated code.
+// Lexical search otherwise floats string tables, translated docs, and test files
+// (which carry the human-readable concept words) above the code that implements
+// the thing searched for. The FTS order is kept within each tier and the pool is
+// truncated to limit; nothing is dropped.
 func (q *Querier) searchChunksRanked(text string, limit int) ([]store.ChunkHit, error) {
 	pool := limit * 4
 	if pool < 200 {
@@ -505,12 +507,71 @@ func (q *Querier) searchChunksRanked(text string, limit int) ([]store.ChunkHit, 
 		return nil, err
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
-		return !isVendored(hits[i].File) && isVendored(hits[j].File)
+		return searchTier(hits[i].File) < searchTier(hits[j].File)
 	})
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
 	return hits, nil
+}
+
+// searchTier ranks a path for content search so a project's own implementation
+// leads: source (0), tests (1), docs and i18n/locale string tables (2), then
+// vendored or generated code (3). Demotion only -- a test or doc still appears,
+// just below the code that implements what was searched for.
+func searchTier(p string) int {
+	switch {
+	case isVendored(p):
+		return 3
+	case isDocOrLocalePath(p):
+		return 2
+	case isTestPath(p):
+		return 1
+	default:
+		return 0
+	}
+}
+
+// isTestPath reports whether a path is a test file or lives under a test dir.
+func isTestPath(p string) bool {
+	base := p
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		base = p[i+1:]
+	}
+	for _, m := range []string{"_test.", ".test.", "_spec.", ".spec."} {
+		if strings.Contains(base, m) {
+			return true
+		}
+	}
+	if strings.HasPrefix(base, "test_") {
+		return true
+	}
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case "test", "tests", "__tests__", "spec", "specs", "testdata", "integration_test":
+			return true
+		}
+	}
+	return false
+}
+
+// isDocOrLocalePath reports whether a path is documentation or an i18n/locale
+// string table -- text that describes or contains feature wording rather than
+// implementing it, which lexical search otherwise ranks high for concept queries.
+func isDocOrLocalePath(p string) bool {
+	lp := strings.ToLower(p)
+	for _, ext := range []string{".md", ".mdx", ".markdown", ".rst", ".adoc", ".txt"} {
+		if strings.HasSuffix(lp, ext) {
+			return true
+		}
+	}
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case "docs", "doc", "i18n", "l10n", "locale", "locales", "translations":
+			return true
+		}
+	}
+	return false
 }
 
 // hybrid embeds the query, runs vector KNN and FTS, and fuses by RRF, falling

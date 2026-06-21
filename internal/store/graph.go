@@ -123,6 +123,19 @@ func (s *Store) SearchSymbols(query string, limit int) ([]SymbolHit, error) {
 		WHERE fts_symbols MATCH ? ORDER BY rank, sy.name LIMIT ?`, ftsQuote(query), limit)
 }
 
+// SymbolsBySubstring returns symbols whose name contains query (case-
+// insensitive). It catches camelCase/snake_case components the FTS tokenizer
+// keeps whole, e.g. "cloud" finding "updateCloudClient". Shortest names rank
+// first, so the closest match leads. Used as a recall fallback after FTS.
+func (s *Store) SymbolsBySubstring(query string, limit int) ([]SymbolHit, error) {
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	like := "%" + esc.Replace(query) + "%"
+	return s.scanSymbolHits(`
+		SELECT sy.id, sy.name, sy.kind, IFNULL(sy.signature,''), f.rel_path, sy.start_line, sy.end_line
+		FROM symbols sy JOIN files f ON f.id=sy.file_id
+		WHERE sy.name LIKE ? ESCAPE '\' ORDER BY length(sy.name), f.rel_path, sy.start_line LIMIT ?`, like, limit)
+}
+
 // SymbolByID returns a single symbol.
 func (s *Store) SymbolByID(id int64) (SymbolHit, bool, error) {
 	hits, err := s.scanSymbolHits(`

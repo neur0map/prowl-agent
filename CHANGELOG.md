@@ -72,6 +72,9 @@ answers about a project's files, served over MCP.
   freshens the index first, so results are current. A cheap file fingerprint
   (paths plus mtimes, no content reads) lets repeated calls skip the read-and-hash
   re-index when nothing changed, keeping the shell path fast on large repos.
+- `find` matches an exact symbol name first, then full-text, then a substring
+  fallback, so a camelCase or snake_case fragment (`cloud`) still surfaces the
+  symbols that contain it (`updateCloudClient`) instead of returning nothing.
 - `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
   the indexed files each one could affect via blast radius, so an agent can see
   the impact of an edit before committing. `--all` includes unindexed paths.

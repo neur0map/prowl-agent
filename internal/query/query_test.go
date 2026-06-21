@@ -209,6 +209,52 @@ func TestSmartSearch(t *testing.T) {
 	}
 }
 
+func TestFindSymbolSubstringFallback(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	fid, err := s.UpsertFile(store.File{RelPath: "svc.go", Lang: "go", Hash: "h", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	syms := []store.Symbol{
+		{Name: "updateCloudClient", Kind: "function", StartLine: 1, EndLine: 1},
+		{Name: "deleteCloudBucket", Kind: "function", StartLine: 2, EndLine: 2},
+		{Name: "cloud", Kind: "function", StartLine: 3, EndLine: 3},
+		{Name: "localHelper", Kind: "function", StartLine: 4, EndLine: 4},
+	}
+	if err := s.ReplaceFileGraph(fid, syms, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	q := New(s)
+
+	// "cloud" is a camelCase component the FTS tokenizer keeps whole; the
+	// substring fallback must surface both, with the exact "cloud" match first.
+	hits, err := q.FindSymbol("Cloud")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, len(hits))
+	for i, h := range hits {
+		names[i] = h.Name
+	}
+	if len(hits) == 0 || hits[0].Name != "cloud" {
+		t.Fatalf("FindSymbol(Cloud) = %v, want exact 'cloud' first", names)
+	}
+	got := map[string]bool{}
+	for _, n := range names {
+		got[n] = true
+	}
+	if !got["updateCloudClient"] || !got["deleteCloudBucket"] {
+		t.Fatalf("FindSymbol(Cloud) = %v, want camelCase components included", names)
+	}
+	if got["localHelper"] {
+		t.Fatalf("FindSymbol(Cloud) = %v, must not include unrelated localHelper", names)
+	}
+}
+
 func TestSimilarCodeHybrid(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {

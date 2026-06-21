@@ -37,7 +37,9 @@ func (q *Querier) fileID(path string) (int64, bool, error) {
 	return f.ID, true, nil
 }
 
-// FindSymbol returns exact-name matches first, then FTS matches.
+// FindSymbol returns exact-name matches first, then FTS matches, then a
+// substring fallback that catches camelCase/snake_case components (e.g.
+// "cloud" finding "updateCloudClient") which the FTS tokenizer keeps whole.
 func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 	exact, err := q.s.SymbolsByName(name, DefaultLimit)
 	if err != nil {
@@ -45,15 +47,21 @@ func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 	}
 	seen := make(map[int64]bool, len(exact))
 	out := make([]store.SymbolHit, 0, len(exact))
-	for _, h := range exact {
-		seen[h.ID] = true
-		out = append(out, h)
-	}
-	if fts, err := q.s.SearchSymbols(name, DefaultLimit); err == nil {
-		for _, h := range fts {
+	add := func(hits []store.SymbolHit) {
+		for _, h := range hits {
 			if !seen[h.ID] {
+				seen[h.ID] = true
 				out = append(out, h)
 			}
+		}
+	}
+	add(exact)
+	if fts, err := q.s.SearchSymbols(name, DefaultLimit); err == nil {
+		add(fts)
+	}
+	if len(out) < DefaultLimit {
+		if sub, err := q.s.SymbolsBySubstring(name, DefaultLimit); err == nil {
+			add(sub)
 		}
 	}
 	return out, nil

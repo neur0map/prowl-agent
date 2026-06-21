@@ -207,12 +207,33 @@ type ChunkHit struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
-// SearchChunks runs an FTS5 query over text chunks, returning highlighted snippets.
+// SearchChunks runs an FTS5 query over text chunks, returning highlighted
+// snippets. It tries the query as an exact phrase first, then -- only when that
+// matches nothing -- falls back to all terms (AND) and finally any term (OR),
+// so a natural-language question still returns the most relevant chunks instead
+// of nothing when the exact phrase is absent.
 func (s *Store) SearchChunks(query string, limit int) ([]ChunkHit, error) {
+	matches := []string{ftsQuote(query)}
+	if terms := ftsTerms(query); len(terms) > 1 {
+		matches = append(matches, strings.Join(terms, " "), strings.Join(terms, " OR "))
+	}
+	for _, m := range matches {
+		hits, err := s.searchChunksMatch(m, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(hits) > 0 {
+			return hits, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) searchChunksMatch(match string, limit int) ([]ChunkHit, error) {
 	rows, err := s.db.Query(`
 		SELECT f.rel_path, c.start_line, c.end_line, snippet(fts_chunks,0,'[',']',' … ',12)
 		FROM fts_chunks ft JOIN chunks c ON c.id=ft.rowid JOIN files f ON f.id=c.file_id
-		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, ftsQuote(query), limit)
+		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, match, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -263,4 +284,26 @@ func (s *Store) SearchChunkText(query string, limit int) ([]ChunkBody, error) {
 // so arbitrary input cannot trigger FTS query-syntax errors.
 func ftsQuote(q string) string {
 	return `"` + strings.ReplaceAll(q, `"`, `""`) + `"`
+}
+
+// ftsStop are common words dropped from the term-level search fallback so they
+// neither over-constrain the AND pass nor dominate the OR pass.
+var ftsStop = map[string]bool{
+	"the": true, "a": true, "an": true, "of": true, "to": true, "in": true,
+	"is": true, "for": true, "and": true, "or": true, "on": true, "with": true,
+}
+
+// ftsTerms splits a query into individually quoted FTS terms, dropping very
+// short tokens and stopwords, for the AND/OR fallback used when the exact
+// phrase matches nothing. Each term is quoted so punctuation cannot trigger an
+// FTS syntax error.
+func ftsTerms(q string) []string {
+	var out []string
+	for _, f := range strings.Fields(q) {
+		if len(f) < 2 || ftsStop[strings.ToLower(f)] {
+			continue
+		}
+		out = append(out, `"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
+	}
+	return out
 }

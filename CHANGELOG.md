@@ -25,6 +25,11 @@ All notable changes are recorded here. The format follows
   returned 50 hits all from a vendored Windows-errors file and none of the
   project's status code; the query now pulls from a larger pool and floats
   project chunks first, keeping FTS order within each tier.
+- `search <text>` falls back from an exact-phrase match to all-terms (AND) and
+  then any-term (OR) only when the phrase matches nothing, so a non-AI,
+  natural-language query returns the most relevant chunks instead of an empty
+  result. `search "render the status panel"` (no verbatim phrase) now surfaces
+  the files that draw and render the panel; an exact phrase still matches first.
 
 ## [0.7.0] - 2026-06-21
 

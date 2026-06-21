@@ -118,10 +118,16 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 	return u, nil
 }
 
-// callerKinds / calleeKinds are the dependency edges used for caller/callee and impact queries.
+// depKinds are the dependency edges traversed for callers and blast radius,
+// including the synthetic "pkg" fan-out (an importer to every file of an
+// imported package). calleeKinds omits "pkg": for "what does this file import"
+// the direct includes/execs/binds are the answer, and the pkg fan-out would
+// repeat every file of every imported package.
 var depKinds = []string{"includes", "execs", "binds", "autostarts", "references", "pkg"}
+var calleeKinds = []string{"includes", "execs", "binds", "autostarts", "references"}
 
-// FindCallers returns configs/scripts that include, exec, or bind to a file.
+// FindCallers returns configs/scripts that include, exec, or bind to a file
+// (including cross-package importers via the synthetic pkg edge).
 func (q *Querier) FindCallers(path string) ([]store.EdgeRow, error) {
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
@@ -130,13 +136,13 @@ func (q *Querier) FindCallers(path string) ([]store.EdgeRow, error) {
 	return q.s.IncomingEdges("file", id, depKinds...)
 }
 
-// FindCallees returns what a file includes, execs, or binds to.
+// FindCallees returns what a file directly includes, execs, or binds to.
 func (q *Querier) FindCallees(path string) ([]store.EdgeRow, error) {
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
 	}
-	return q.s.EdgesFromFile(id, depKinds...)
+	return q.s.EdgesFromFile(id, calleeKinds...)
 }
 
 // Relations is the neighborhood of a file.

@@ -17,6 +17,19 @@ type File struct {
 	IndexedAt int64
 }
 
+// ModuleImportLang reports whether a language's import targets are module
+// specifiers resolved by a toolchain (Go packages, npm/TS packages, Rust
+// crates, Python modules) rather than project file paths. An unresolved import
+// in these languages is an external dependency, not a broken reference, so
+// health checks must not flag it as dangling.
+func ModuleImportLang(lang string) bool {
+	switch lang {
+	case "go", "rust", "typescript", "tsx", "javascript", "python":
+		return true
+	}
+	return false
+}
+
 // UpsertFile inserts or updates a file by rel_path and returns its id.
 func (s *Store) UpsertFile(f File) (int64, error) {
 	if f.IndexedAt == 0 {

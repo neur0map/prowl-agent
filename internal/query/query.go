@@ -309,7 +309,18 @@ func (q *Querier) ArchitectureViolations() ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
+	files, err := q.s.AllFiles()
+	if err != nil {
+		return nil, err
+	}
+	langByID := make(map[int64]string, len(files))
+	for _, f := range files {
+		langByID[f.ID] = f.Lang
+	}
 	for _, e := range dang {
+		if e.Kind == "includes" && store.ModuleImportLang(langByID[e.FileID]) {
+			continue // external module import, not a broken project reference
+		}
 		if e.Kind == "uses_resource" || looksPathy(e.Raw) {
 			v = append(v, Violation{Kind: "dangling_" + e.Kind, File: e.File, Line: e.Line, Detail: e.Raw})
 		}

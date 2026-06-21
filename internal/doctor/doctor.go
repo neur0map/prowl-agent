@@ -338,7 +338,14 @@ func checkOrphansAndDangling(s *store.Store, _ Options) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	langByID, err := fileLangByID(s)
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range dang {
+		if store.ModuleImportLang(langByID[e.FileID]) {
+			continue // external module import, not a broken project reference
+		}
 		if !repoRelative(e.Raw) {
 			continue // skip runtime (~), system (/), vars, URLs, and external modules
 		}
@@ -346,6 +353,19 @@ func checkOrphansAndDangling(s *store.Store, _ Options) ([]Finding, error) {
 			Detail: e.Kind + ": " + e.Raw})
 	}
 	return out, nil
+}
+
+// fileLangByID maps each indexed file id to its language.
+func fileLangByID(s *store.Store) (map[int64]string, error) {
+	files, err := s.AllFiles()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[int64]string, len(files))
+	for _, f := range files {
+		m[f.ID] = f.Lang
+	}
+	return m, nil
 }
 
 // repoRelative reports whether a raw include target should resolve inside the

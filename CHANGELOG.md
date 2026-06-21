@@ -105,8 +105,9 @@ answers about a project's files, served over MCP.
   falls back to full-text call sites of the name, excluding the definition. So
   `find <name>` then `references <id>` returns the call sites instead of nothing.
 - `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
-  the indexed files each one could affect via blast radius, so an agent can see
-  the impact of an edit before committing. `--all` includes unindexed paths.
+  the files each one could affect, summarized per file (dependent count, subsystem
+  breakdown, direct importers) like `impact`, so an agent can see the impact of an
+  edit before committing without a flood of rows. `--all` includes unindexed paths.
 - `impact` summarizes the blast radius by default: a total dependent count, a
   breakdown by subsystem (which surfaces the dependency hubs driving the radius),
   and the direct importers, instead of dumping every dependent. On a large Go

@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/prowl-agent/prowl-agent/internal/store"
+	"github.com/prowl-agent/prowl-agent/internal/query"
 )
 
 // ChangedResult maps a working set of git changes to the indexed files each one
@@ -20,11 +20,21 @@ type ChangedResult struct {
 	Files []ChangedFile `json:"files"`
 }
 
-// ChangedFile is one changed path with its downstream impact.
+// ChangedFile is one changed path with a token-lean summary of its downstream
+// impact (dependent count, subsystem breakdown, direct importers) rather than
+// the full dependent list, which floods on central files.
 type ChangedFile struct {
-	File     string      `json:"file"`
-	Indexed  bool        `json:"indexed"`
-	Impacted []store.Dep `json:"impacted,omitempty"`
+	File    string         `json:"file"`
+	Indexed bool           `json:"indexed"`
+	Impact  *ChangedImpact `json:"impact,omitempty"`
+}
+
+// ChangedImpact is the blast-radius summary for one changed file.
+type ChangedImpact struct {
+	Total       int                    `json:"total"`
+	Direct      int                    `json:"direct"`
+	BySubsystem []query.SubsystemCount `json:"by_subsystem,omitempty"`
+	DirectFiles []string               `json:"direct_files,omitempty"`
 }
 
 // changedFiles returns the project files that differ from base (default HEAD),
@@ -99,8 +109,13 @@ func newChangedCmd() *cobra.Command {
 				}
 				cf := ChangedFile{File: f, Indexed: indexed}
 				if indexed {
-					if dep, err := q.BlastRadius(f); err == nil {
-						cf.Impacted = dep
+					if sum, err := q.BlastSummarize(f); err == nil {
+						cf.Impact = &ChangedImpact{
+							Total:       sum.Total,
+							Direct:      sum.Direct,
+							BySubsystem: sum.BySubsystem,
+							DirectFiles: sum.DirectFiles,
+						}
 					}
 				}
 				res.Files = append(res.Files, cf)

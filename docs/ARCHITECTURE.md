@@ -55,11 +55,13 @@ internal/assist      local Ollama inferencer for the semantic layer
    resolves), Java and Kotlin resolve an `import` to the class file under any
    module's source root (Maven, Gradle, or Kotlin-Multiplatform layouts; Kotlin
    and Java resolve to each other, and a member or nested-type import folds to
-   its enclosing class file), and Dart resolves a `package:<name>/path` or
+   its enclosing class file), Dart resolves a `package:<name>/path` or
    relative import to a workspace package's `lib/` (the name read from each
-   pubspec.yaml), so the graph queries work across a Go module, a TS app or
-   monorepo, a Rust crate, a Python package, a PHP project, a JVM project, or a
-   Dart/Flutter app. External and standard-library imports stay informational.
+   pubspec.yaml), and Elixir resolves an `alias`/`import`/`use` to the file
+   declaring that module (the `defmodule` name, like C# namespaces), so the graph
+   queries work across a Go module, a TS app or monorepo, a Rust crate, a Python
+   package, a PHP project, a JVM project, a Dart/Flutter app, or an Elixir/Phoenix
+   project. External and standard-library imports stay informational.
 3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
    semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius loads the
    resolved edge set once and walks it with an in-memory BFS.

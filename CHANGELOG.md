@@ -6,6 +6,16 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Elixir is a first-class language. A Tree-sitter extractor records modules
+  (`defmodule`), functions (`def`/`defp`/`defmacro`), and `alias`/`import`/`use`
+  edges; each module name is recorded like a namespace, so an `alias MyApp.Foo`
+  resolves to the file declaring `defmodule MyApp.Foo` (the C# namespace model,
+  generalized). Validated on Phoenix: 297 module dependencies resolved across
+  287 files, so `impact`, `callers`, `clusters`, and `references` work on an
+  Elixir/Phoenix project. The `alias A.{B, C}` group form is expanded.
+
 ### Changed
 
 - `find <name>` ranks its results so a project's own code definitions come

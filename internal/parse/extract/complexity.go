@@ -64,6 +64,12 @@ var decisionNodes = map[string]map[string]bool{
 		"do_statement": true, "switch_statement_case": true, "catch_clause": true,
 		"conditional_expression": true,
 	},
+	"elixir": {
+		// Elixir's if/case/cond/with are macro calls, not distinct node types;
+		// stab_clause (the `->` arms of case/cond/fn/with) is the one branch node
+		// the type-based walk can count, giving a faithful branch-heaviness rank.
+		"stab_clause": true,
+	},
 	"javascript": jsDecision,
 	"typescript": jsDecision,
 	"tsx":        jsDecision,

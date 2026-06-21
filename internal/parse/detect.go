@@ -76,6 +76,8 @@ func Detect(relPath string, head []byte) string {
 		return "kotlin"
 	case ".dart":
 		return "dart"
+	case ".ex", ".exs":
+		return "elixir"
 	case ".conf":
 		return "generic"
 	}

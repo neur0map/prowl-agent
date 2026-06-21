@@ -156,8 +156,9 @@ Prowl resolves real edges, not text matches:
   `#include`, Java and Kotlin `import` class paths (which resolve to each other
   in a mixed JVM project, and fold a member or nested-type import to its
   enclosing class file), Ruby `require_relative`, C# `using` namespaces, PHP
-  `use Ns\Class` imports (resolved to the file declaring that class), and Dart
-  `package:` and relative imports (resolved to a workspace package's `lib/`).
+  `use Ns\Class` imports (resolved to the file declaring that class), Dart
+  `package:` and relative imports (resolved to a workspace package's `lib/`), and
+  Elixir `alias`/`import`/`use` (resolved to the file declaring that module).
 - **Monorepos and path aliases.** A bare import of a first-party workspace
   package (`@scope/pkg` or `pkg/subpath`) resolves to that package's source, and
   a tsconfig path alias (`@/components/Button` with `"paths": {"@/*": ["src/*"]}`)
@@ -242,7 +243,7 @@ thing even when they share no words (for example, "music spectrum" finds an
 
 ## Supported formats
 
-Go, Rust, Java, Kotlin, Ruby, C#, PHP, Dart, TypeScript/TSX, Lua, Python,
+Go, Rust, Java, Kotlin, Ruby, C#, PHP, Dart, Elixir, TypeScript/TSX, Lua, Python,
 JavaScript, Bash, Fish, C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
 (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi `rasi`,
 polybar, kitty, dunst, and similar).

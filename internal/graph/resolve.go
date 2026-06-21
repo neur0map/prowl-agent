@@ -114,7 +114,7 @@ func Resolve(s *store.Store) error {
 		return err
 	}
 	// Pass 6: C# `using` imports -> the files declaring the imported namespace.
-	if err := resolveCSharpNamespaces(s, byID); err != nil {
+	if err := resolveNamespaceImports(s, byID, "csharp"); err != nil {
 		return err
 	}
 	// Pass 7: Java/Kotlin imports -> the file for that class under any module's source root.
@@ -139,6 +139,10 @@ func Resolve(s *store.Store) error {
 	}
 	// Pass 12: TS/JS tsconfig path aliases (`@/x` -> src/x) -> the real source.
 	if err := resolveTSAliases(s, files, byID); err != nil {
+		return err
+	}
+	// Pass 13: Elixir alias/import/use -> the file declaring that module.
+	if err := resolveNamespaceImports(s, byID, "elixir"); err != nil {
 		return err
 	}
 	return nil
@@ -612,12 +616,15 @@ func javaPkgPath(rel string) string {
 	return after
 }
 
-// resolveCSharpNamespaces materializes C# namespace dependencies. A file with a
-// `using Foo.Bar;` gets a synthetic resolved "pkg" edge to every file declaring
-// `namespace Foo.Bar`, so impact, callers, clusters, and entrypoints work across
-// a C# project. Framework and third-party usings match no declared namespace and
-// are left as informational unresolved imports.
-func resolveCSharpNamespaces(s *store.Store, byID map[int64]store.File) error {
+// resolveNamespaceImports materializes namespace/module dependencies for a
+// language that records each declared namespace (C# `namespace`, Elixir
+// `defmodule`) as a namespace resource. An import of a name (`using Foo.Bar`,
+// `alias Foo.Bar`) gets a synthetic resolved "pkg" edge to every same-language
+// file declaring that namespace, so impact, callers, clusters, and entrypoints
+// work across the project. Imports matching no declared namespace (framework or
+// third-party) stay informational. Targets are filtered to the same language so
+// a C# namespace and an Elixir module that share a dotted name never cross-link.
+func resolveNamespaceImports(s *store.Store, byID map[int64]store.File, lang string) error {
 	nsFiles, err := s.NamespaceFiles()
 	if err != nil {
 		return err
@@ -631,11 +638,11 @@ func resolveCSharpNamespaces(s *store.Store, byID map[int64]store.File) error {
 	}
 	var pkgEdges []store.PkgEdge
 	for _, e := range inc {
-		if byID[e.FileID].Lang != "csharp" {
+		if byID[e.FileID].Lang != lang {
 			continue
 		}
 		for _, dst := range nsFiles[e.Raw] {
-			if dst == e.FileID {
+			if dst == e.FileID || byID[dst].Lang != lang {
 				continue
 			}
 			pkgEdges = append(pkgEdges, store.PkgEdge{FileID: e.FileID, DstFileID: dst, Line: e.Line, Raw: e.Raw})

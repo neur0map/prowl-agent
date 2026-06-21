@@ -22,6 +22,8 @@ github.com/alexaandru/go-sitter-forest/css v1.9.4 h1:MBdaNeWhmIBqrxetO0HBiyit9Sf
 github.com/alexaandru/go-sitter-forest/css v1.9.4/go.mod h1:5lnhmNpkGjiHgp6LfEyUtcS11G4MDwgvaV0naJeJEY8=
 github.com/alexaandru/go-sitter-forest/dart v1.9.4 h1:WvN+ShV7DuSDjYNSgI4N2mH4ucivqJCu+q8E1zycdts=
 github.com/alexaandru/go-sitter-forest/dart v1.9.4/go.mod h1:7HT0VRdDilKAPTmOPdjgM9Gx/U0z8mgw5p0/dh1rnE4=
+github.com/alexaandru/go-sitter-forest/elixir v1.9.5 h1:VMJ20lWgzn1vtILWOfyVXyiT9cxoovykcSrK/skX7aM=
+github.com/alexaandru/go-sitter-forest/elixir v1.9.5/go.mod h1:yJjH5M1RZ3UcsrZ2CPLluSdVcCT3xA7sD/RxVej1YvE=
 github.com/alexaandru/go-sitter-forest/fish v1.9.2 h1:TmlzrIQgtJh0mLDviGYFB/namZOofm/cPkftQoMOh9A=
 github.com/alexaandru/go-sitter-forest/fish v1.9.2/go.mod h1:GPTSS+k7af3yOKfo7WH6ubXkqc4/spBs8xl4/2ojqq0=
 github.com/alexaandru/go-sitter-forest/go v1.9.4 h1:Xpq8HijvTp2+AHL4UplLLiCOdIAA20u0JyM8NGBIBWs=

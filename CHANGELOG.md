@@ -4,7 +4,7 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] - 2026-06-21
 
 ### Added
 

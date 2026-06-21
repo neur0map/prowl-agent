@@ -45,6 +45,11 @@ var decisionNodes = map[string]map[string]bool{
 		"if_modifier": true, "unless_modifier": true, "while_modifier": true,
 		"until_modifier": true, "rescue_modifier": true,
 	},
+	"csharp": {
+		"if_statement": true, "for_statement": true, "foreach_statement": true,
+		"while_statement": true, "do_statement": true, "switch_section": true,
+		"catch_clause": true, "conditional_expression": true,
+	},
 	"javascript": jsDecision,
 	"typescript": jsDecision,
 	"tsx":        jsDecision,

@@ -274,7 +274,7 @@ query after a long idle, then around 20 ms on the repo we tried). Re-running
 
 ## Supported formats
 
-Go, Rust, Java, Ruby, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish,
+Go, Rust, Java, Ruby, C#, TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish,
 C/C++, QML, CSS/SCSS, Markdown, TOML, YAML, JSON/JSONC, INI, and Hyprland
 (`hyprlang`), plus a line-based reader for everything else (sway/i3, rofi
 `rasi`, polybar, kitty, dunst, and similar). The graph connects code too: Go
@@ -283,7 +283,8 @@ resolves `crate::` imports, Python resolves absolute and relative imports, C/C++
 resolve `#include` headers, Java resolves `import` class paths, and Ruby
 resolves `require_relative`, so `callers`, `impact`, `changed`, and `clusters`
 work across a Go module, a TS/React app, a Rust crate, a Python package, a C
-codebase, a Java/Maven project, or a Ruby/Rails app. External and
+codebase, a Java/Maven project, or a Ruby/Rails app. C# is indexed at the symbol
+level (`find`, `search`, complexity); its namespace graph follows. External and
 standard-library imports stay informational. More languages are on the way.
 
 ## More

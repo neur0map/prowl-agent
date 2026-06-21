@@ -68,6 +68,8 @@ func Detect(relPath string, head []byte) string {
 		return "java"
 	case ".rb":
 		return "ruby"
+	case ".cs":
+		return "csharp"
 	case ".conf":
 		return "generic"
 	}

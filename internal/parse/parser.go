@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/alexaandru/go-sitter-forest/bash"
+	"github.com/alexaandru/go-sitter-forest/c_sharp"
 	"github.com/alexaandru/go-sitter-forest/cpp"
 	"github.com/alexaandru/go-sitter-forest/css"
 	"github.com/alexaandru/go-sitter-forest/fish"
@@ -54,6 +55,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"rust":       rust.GetLanguage,
 	"java":       java.GetLanguage,
 	"ruby":       ruby.GetLanguage,
+	"csharp":     c_sharp.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

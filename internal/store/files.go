@@ -19,12 +19,12 @@ type File struct {
 
 // ModuleImportLang reports whether a language's import targets are module
 // specifiers resolved by a toolchain (Go packages, npm/TS packages, Rust
-// crates, Python modules) rather than project file paths. An unresolved import
-// in these languages is an external dependency, not a broken reference, so
-// health checks must not flag it as dangling.
+// crates, Python/Java/C# modules, Ruby gems) rather than project file paths. An
+// unresolved import in these languages is an external dependency, not a broken
+// reference, so health checks must not flag it as dangling.
 func ModuleImportLang(lang string) bool {
 	switch lang {
-	case "go", "rust", "typescript", "tsx", "javascript", "python":
+	case "go", "rust", "typescript", "tsx", "javascript", "python", "java", "ruby", "csharp":
 		return true
 	}
 	return false

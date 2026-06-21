@@ -119,6 +119,14 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 	if !ok || sym.Name == "" {
 		return u, nil
 	}
+	// A callable's blast radius is its call sites, so match the name invoked with
+	// `(`, not every bare mention (a config field or struct field that shares the
+	// name is not a caller). Non-callable symbols keep the whole-word match.
+	callable := sym.Kind == "function" || sym.Kind == "method"
+	matches := containsWord
+	if callable {
+		matches = containsCall
+	}
 	chunks, err := q.s.SearchChunkText(sym.Name, DefaultLimit)
 	if err != nil {
 		return u, err
@@ -141,8 +149,8 @@ collect:
 			if ch.File == sym.File && sym.Line <= abs && abs <= sym.EndLine {
 				continue // the definition's own body, not a usage
 			}
-			if !containsWord(ln, sym.Name) {
-				continue // name appears only as a substring of a longer identifier
+			if !matches(ln, sym.Name) {
+				continue // not a usage (or, for a callable, not a call)
 			}
 			if definesName(spans, abs, sym.Name) {
 				continue // a same-named definition elsewhere (e.g. an override), not a call
@@ -159,6 +167,9 @@ collect:
 	}
 	if len(u.CallSites) > 0 {
 		u.Note = "call_sites are name usages found in source (no language call graph); some may be comments or docs"
+		if callable {
+			u.Note = "call_sites are where the name is invoked with `(` (no language call graph; a comment or a same-named call elsewhere may slip in)"
+		}
 	}
 	return u, nil
 }
@@ -205,6 +216,34 @@ func containsWord(line, name string) bool {
 		afterOK := end >= len(line) || !isIdentByte(line[end])
 		if beforeOK && afterOK {
 			return true
+		}
+		from = i + 1
+	}
+	return false
+}
+
+// containsCall reports whether name appears in line as a whole identifier token
+// immediately followed (ignoring spaces) by `(`, i.e. an actual call. This
+// excludes field accesses and bare references that merely share the name, which
+// a signature-change blast radius must not count as callers.
+func containsCall(line, name string) bool {
+	for from := 0; from <= len(line)-len(name); {
+		i := strings.Index(line[from:], name)
+		if i < 0 {
+			return false
+		}
+		i += from
+		end := i + len(name)
+		beforeOK := i == 0 || !isIdentByte(line[i-1])
+		afterOK := end >= len(line) || !isIdentByte(line[end])
+		if beforeOK && afterOK {
+			j := end
+			for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
+				j++
+			}
+			if j < len(line) && line[j] == '(' {
+				return true
+			}
 		}
 		from = i + 1
 	}

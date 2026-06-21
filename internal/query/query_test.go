@@ -737,3 +737,49 @@ func TestFindReferencesExcludesSiblingDefs(t *testing.T) {
 		t.Fatalf("want the c.go usage tagged with enclosing run, got %+v", u.CallSites)
 	}
 }
+
+func TestFindReferencesCallableMatchesCallsOnly(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// A method named Save, plus a caller file that both calls it (`s.Save()`)
+	// and merely names it as a struct field (`Save: true`). Only the call is a
+	// blast-radius hit.
+	def, err := s.UpsertFile(store.File{RelPath: "svc.go", Lang: "go", Hash: "a", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(def,
+		[]store.Symbol{{Name: "Save", Kind: "method", StartLine: 10, EndLine: 12}},
+		nil, nil,
+		[]store.Chunk{{StartLine: 10, EndLine: 12, Text: "func (s *S) Save() error { return nil }"}}); err != nil {
+		t.Fatal(err)
+	}
+	user, err := s.UpsertFile(store.File{RelPath: "user.go", Lang: "go", Hash: "b", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(user,
+		[]store.Symbol{{Name: "run", Kind: "function", StartLine: 1, EndLine: 4}},
+		nil, nil,
+		[]store.Chunk{{StartLine: 1, EndLine: 4, Text: "func run(o Opts) {\n\tcfg := Opts{Save: true}\n\ts.Save()\n}"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := s.SymbolsByName("Save", 5)
+	if err != nil || len(hits) == 0 {
+		t.Fatalf("SymbolsByName(Save) = %v, %v", hits, err)
+	}
+	u, err := New(s).FindReferences(hits[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.CallSites) != 1 {
+		t.Fatalf("call sites = %+v, want exactly the one call (Save: true is a field, not a call)", u.CallSites)
+	}
+	if u.CallSites[0].Line != 3 || u.CallSites[0].In != "run" {
+		t.Errorf("call site = %+v, want line 3 inside run", u.CallSites[0])
+	}
+}

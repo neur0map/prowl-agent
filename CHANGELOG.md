@@ -4,6 +4,17 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `references <id>` for a function or method now matches call syntax (the name
+  invoked with `(`), not every bare mention, so a signature-change blast radius
+  excludes config/struct fields and identifiers that merely share the name. On
+  lazygit, `references` for the `CopyToClipboard` method went from 40 noisy hits
+  (22 of them non-calls that also crowded real calls out of the result cap) to
+  the exact 23 call sites across 8 files -- matching a careful hand-grep.
+
 ## [0.8.0] - 2026-06-21
 
 ### Added

@@ -24,7 +24,7 @@ type File struct {
 // reference, so health checks must not flag it as dangling.
 func ModuleImportLang(lang string) bool {
 	switch lang {
-	case "go", "rust", "typescript", "tsx", "javascript", "python", "java", "ruby", "csharp":
+	case "go", "rust", "typescript", "tsx", "javascript", "python", "java", "ruby", "csharp", "php", "kotlin", "dart":
 		return true
 	}
 	return false

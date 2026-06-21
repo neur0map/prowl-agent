@@ -425,14 +425,25 @@ func pathCandidates(fromRel, raw, lang string) []string {
 			path.Join(dir, "lua", mod+".lua"), path.Join(dir, "lua", mod, "init.lua"),
 		)
 	}
-	// TypeScript/JavaScript relative imports omit the extension and may point at a
-	// directory's index file; try the usual resolutions. Package imports (no ./ or
-	// ../) are external and stay informational.
+	// TypeScript/JavaScript relative imports. Modern ESM (NodeNext) writes the
+	// import with a .js/.mjs extension that actually points at a .ts/.tsx source
+	// (`./foo.js` -> foo.ts), so strip a trailing JS/TS extension to a base and try
+	// every source extension plus a directory index. The raw path is also tried
+	// as-is for real non-source assets (`./styles.css`, `./data.json`). Package
+	// imports (no ./ or ../) are external and stay informational.
 	if (lang == "typescript" || lang == "tsx" || lang == "javascript") &&
 		(strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../")) {
 		joined := path.Clean(path.Join(path.Dir(fromRel), raw))
+		c = append(c, joined)
+		base := joined
+		for _, e := range []string{".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"} {
+			if strings.HasSuffix(joined, e) {
+				base = strings.TrimSuffix(joined, e)
+				break
+			}
+		}
 		for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"} {
-			c = append(c, joined+ext, path.Join(joined, "index"+ext))
+			c = append(c, base+ext, path.Join(base, "index"+ext))
 		}
 	}
 	// Rust crate-relative imports (`use crate::a::b::c;`) map module path segments

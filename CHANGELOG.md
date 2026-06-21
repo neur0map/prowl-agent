@@ -36,7 +36,9 @@ answers about a project's files, served over MCP.
   health check excludes `pkg` so a widely-imported core package is not mistaken
   for a risk.
 - TypeScript and JavaScript relative imports resolve to files: `./x` and `../x`
-  try `.ts/.tsx/.js/.jsx/.mjs/.cjs` and an `index` file in a directory, so
+  try `.ts/.tsx/.js/.jsx/.mjs/.cjs` and an `index` file in a directory. A modern
+  ESM/NodeNext import that cites a `.js` extension (`./foo.js`) resolves to its
+  `.ts`/`.tsx` source, and non-source assets (`./styles.css`) match as-is, so
   `callers`, `impact`, `changed`, and `clusters` work across a TS/React app.
   Package imports (bare or scoped) stay external and informational.
 - Rust module graph: `mod foo;` declarations resolve to the included file

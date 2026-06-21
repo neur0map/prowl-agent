@@ -68,4 +68,10 @@ func TestQueryCLIE2E(t *testing.T) {
 	if len(toon) >= len(js) {
 		t.Fatalf("expected TOON overview (%d bytes) leaner than JSON (%d bytes)", len(toon), len(js))
 	}
+
+	// Shell queries count toward the savings report, like MCP calls do, so
+	// 'prowl-agent status' keeps growing on the CLI-first path.
+	if out := run("status", "--json"); !strings.Contains(out, `"savings"`) || strings.Contains(out, `"queries":0`) {
+		t.Fatalf("expected status savings to count CLI queries: %s", out)
+	}
 }

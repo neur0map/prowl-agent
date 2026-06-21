@@ -23,46 +23,57 @@ import (
 // battery` and gets a cited, token-lean answer. No MCP server, no `serve`, no
 // per-client process spawn, and none of MCP's upfront tool-schema token cost.
 func runQuery(ctx context.Context, needsAI bool, format outputFormat, w io.Writer, fn func(*query.Querier) (any, error)) error {
-	ws, err := workspace.Resolve(".")
+	q, _, s, closer, err := openQuerier(ctx, needsAI)
 	if err != nil {
 		return err
 	}
-	s, err := store.Open(ws.DB)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	cfg, _ := config.Load(ws.Path)
-
-	// Structural queries never need the model, so they skip the Ollama probe and
-	// stay fast. Only semantic search builds an inferencer, and only when AI is
-	// enabled; it falls back to full-text when the model is unreachable.
-	q := query.New(s)
-	if needsAI && cfg.AI.Enabled {
-		if oll := maybeInferencer(ctx, cfg); oll != nil {
-			q = query.NewWithAssist(s, oll)
-			if _, err := reindexer(s, ws.Root, cfg.Ignore, cfg.AI.EmbedModel, oll)(ctx); err != nil {
-				return err
-			}
-		} else {
-			if err := freshenStructural(ctx, s, ws.Root, cfg.Ignore); err != nil {
-				return err
-			}
-		}
-	} else if err := freshenStructural(ctx, s, ws.Root, cfg.Ignore); err != nil {
-		return err
-	}
-
+	defer closer()
 	out, err := fn(q)
 	if err != nil {
 		return err
 	}
+	// Count this answer toward the savings report, so 'prowl-agent status'
+	// reflects shell usage, not just MCP. Never fail a query over a stat write.
+	_ = s.RecordAnswer(out)
 	str, err := formatValue(out, format)
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(w, str)
 	return err
+}
+
+// openQuerier resolves the workspace, freshens the index incrementally, and
+// builds a querier. It is shared by every read-only command. The returned closer
+// must be called to release the store. needsAI adds the semantic layer when AI is
+// enabled and reachable (and re-embeds during the refresh); structural commands
+// pass false to skip the Ollama probe and stay fast.
+func openQuerier(ctx context.Context, needsAI bool) (*query.Querier, *workspace.Workspace, *store.Store, func() error, error) {
+	ws, err := workspace.Resolve(".")
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	s, err := store.Open(ws.DB)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	cfg, _ := config.Load(ws.Path)
+	q := query.New(s)
+	if needsAI && cfg.AI.Enabled {
+		if oll := maybeInferencer(ctx, cfg); oll != nil {
+			q = query.NewWithAssist(s, oll)
+			if _, err := reindexer(s, ws.Root, cfg.Ignore, cfg.AI.EmbedModel, oll)(ctx); err != nil {
+				s.Close()
+				return nil, nil, nil, nil, err
+			}
+			return q, ws, s, s.Close, nil
+		}
+	}
+	if err := freshenStructural(ctx, s, ws.Root, cfg.Ignore); err != nil {
+		s.Close()
+		return nil, nil, nil, nil, err
+	}
+	return q, ws, s, s.Close, nil
 }
 
 // freshenStructural runs an incremental, structural-only re-index (no embeddings),

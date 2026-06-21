@@ -4,7 +4,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
@@ -244,45 +243,11 @@ func tracked[In, Out any](h *handlers, fn func(context.Context, *sdk.CallToolReq
 	}
 }
 
-// recordStats measures one answer: its serialized size, and the combined size of
-// the indexed files it references (what an agent would otherwise have read).
+// recordStats measures one answer for the savings report (serialized size and the
+// size of the files it pointed at). The measurement is shared with the CLI path.
 func (h *handlers) recordStats(out any) {
 	if h.store == nil {
 		return
 	}
-	data, err := json.Marshal(out)
-	if err != nil {
-		return
-	}
-	refs := map[string]bool{}
-	var walk func(v any)
-	walk = func(v any) {
-		switch t := v.(type) {
-		case string:
-			refs[t] = true
-		case []any:
-			for _, e := range t {
-				walk(e)
-			}
-		case map[string]any:
-			for _, e := range t {
-				walk(e)
-			}
-		}
-	}
-	var generic any
-	if json.Unmarshal(data, &generic) == nil {
-		walk(generic)
-	}
-	sizes, err := h.store.FileSizes()
-	if err != nil {
-		return
-	}
-	var baseline int64
-	for p := range refs {
-		if sz, ok := sizes[p]; ok {
-			baseline += sz
-		}
-	}
-	_ = h.store.BumpStats(1, int64(len(data)), baseline)
+	_ = h.store.RecordAnswer(out)
 }

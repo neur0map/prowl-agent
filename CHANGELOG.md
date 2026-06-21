@@ -43,11 +43,17 @@ answers about a project's files, served over MCP.
 - Shell query interface (the recommended, lowest-overhead path): `find`, `search`
   (`--smart`/`--compact`), `overview`, `clusters`, `callers`, `callees`,
   `relations`, `impact`, `entrypoints`, `references`, `hotspots`, `violations`,
-  `tests`, and `doctor` are first-class subcommands. Any agent that can run a
-  command can use the index over a plain shell call: no MCP server, no `serve`,
-  and none of the upfront tool-schema tokens MCP injects into every request. Each
-  call resolves the workspace by walking up to `.prowl/` and re-indexes
-  incrementally first (tens of milliseconds), so results are always current.
+  `tests`, `changed`, and `doctor` are first-class subcommands. Any agent that
+  can run a command can use the index over a plain shell call: no MCP server, no
+  `serve`, and none of the upfront tool-schema tokens MCP injects into every
+  request. Each call resolves the workspace by walking up to `.prowl/` and
+  re-indexes incrementally first (tens of milliseconds), so results are current.
+- `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
+  the indexed files each one could affect via blast radius, so an agent can see
+  the impact of an edit before committing. `--all` includes unindexed paths.
+- Savings are tracked on every delivery path: each shell query, like each MCP
+  call, records what it returned versus the size of the files it pointed at, so
+  `prowl-agent status` keeps counting when agents use the CLI instead of MCP.
 - Token-lean output: query results default to TOON (Token-Oriented Object
   Notation), which encodes uniform result arrays as one header plus CSV-style
   rows. Models read it about 40% cheaper than JSON, and slightly more accurately.

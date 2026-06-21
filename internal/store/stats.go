@@ -1,6 +1,9 @@
 package store
 
-import "strconv"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // Stats are cumulative usage counters behind the savings report:
 //   - Queries:       tool calls served
@@ -70,4 +73,47 @@ func (s *Store) FileSizes() (map[string]int64, error) {
 		m[p] = sz
 	}
 	return m, rows.Err()
+}
+
+// RecordAnswer measures one served answer for the savings report: the bytes the
+// answer serialized to, and the combined size of the indexed files it referenced
+// (what an agent would otherwise have read to find the same thing). It is called
+// once per query the CLI or MCP server answers, so 'prowl-agent status' reflects
+// every delivery path, not just MCP.
+func (s *Store) RecordAnswer(out any) error {
+	data, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	refs := map[string]bool{}
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			refs[t] = true
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	var generic any
+	if json.Unmarshal(data, &generic) == nil {
+		walk(generic)
+	}
+	sizes, err := s.FileSizes()
+	if err != nil {
+		return err
+	}
+	var baseline int64
+	for p := range refs {
+		if sz, ok := sizes[p]; ok {
+			baseline += sz
+		}
+	}
+	return s.BumpStats(1, int64(len(data)), baseline)
 }

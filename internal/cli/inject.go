@@ -40,6 +40,7 @@ only after a query points you to the exact lines.
     prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
     prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands
     prowl-agent tests <path>        # configs/keybinds that launch or reload a file
+    prowl-agent changed             # your git changes mapped to the files they could affect
 
 Every command accepts --json for JSON instead of TOON. Run from anywhere inside
 the project; prowl-agent finds the index by walking up to .prowl/.
@@ -52,7 +53,7 @@ the project; prowl-agent finds the index by walking up to .prowl/.
 - Before editing or deleting a file: impact <path> for what breaks, callers <path> for what invokes it.
 - Adding a keybind: doctor first, to avoid duplicate-keybind clashes.
 - Tracing startup: entrypoints <path> for the entry point and autostart chain.
-- Before committing: doctor and resolve errors (cycles, dangling refs, broken commands).
+- After editing, or before committing: changed to see what your edits could affect, then doctor.
 
 The same index is also available over MCP (server: ` + "`prowl-agent serve`" + `) for
 agents that prefer typed tools, but the shell commands above are the

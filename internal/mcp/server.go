@@ -37,7 +37,7 @@ func NewServer(q *query.Querier, st *store.Store, version string, reindex Reinde
 	sdk.AddTool(s, &sdk.Tool{Name: "find_symbol",
 		Description: "Find symbols (functions, settings, keybinds, components, ids) by name."}, tracked(h, h.findSymbol))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_references",
-		Description: "Find edges pointing at a symbol id."}, tracked(h, h.findReferences))
+		Description: "Where a symbol (id from find_symbol) is used: config/resource reference edges, or full-text call sites for code symbols."}, tracked(h, h.findReferences))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_callers",
 		Description: "Configs/scripts that include, exec, or bind to a file."}, tracked(h, h.findCallers))
 	sdk.AddTool(s, &sdk.Tool{Name: "find_callees",
@@ -120,9 +120,9 @@ func (h *handlers) findSymbol(ctx context.Context, _ *sdk.CallToolRequest, in na
 	return nil, symbolsOut{Symbols: hits}, err
 }
 
-func (h *handlers) findReferences(ctx context.Context, _ *sdk.CallToolRequest, in symbolIn) (*sdk.CallToolResult, edgesOut, error) {
-	e, err := h.q.FindReferences(in.SymbolID)
-	return nil, edgesOut{Edges: e}, err
+func (h *handlers) findReferences(ctx context.Context, _ *sdk.CallToolRequest, in symbolIn) (*sdk.CallToolResult, query.Usages, error) {
+	u, err := h.q.FindReferences(in.SymbolID)
+	return nil, u, err
 }
 
 func (h *handlers) findCallers(ctx context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, edgesOut, error) {

@@ -490,3 +490,57 @@ func TestClusterLabel(t *testing.T) {
 		t.Errorf("clusterLabel root = %q, want misc", got)
 	}
 }
+
+func TestFindReferencesFallback(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	def, err := s.UpsertFile(store.File{RelPath: "svc.go", Lang: "go", Hash: "a", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(def,
+		[]store.Symbol{{Name: "DoThing", Kind: "function", StartLine: 10, EndLine: 12}},
+		nil, nil,
+		[]store.Chunk{{StartLine: 10, EndLine: 12, Text: "func DoThing() error { return nil }"}}); err != nil {
+		t.Fatal(err)
+	}
+	user, err := s.UpsertFile(store.File{RelPath: "user.go", Lang: "go", Hash: "b", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(user, nil, nil, nil,
+		[]store.Chunk{{StartLine: 1, EndLine: 3, Text: "func run() { _ = DoThing() }"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := s.SymbolsByName("DoThing", 1)
+	if err != nil || len(hits) == 0 {
+		t.Fatalf("SymbolsByName(DoThing) = %v, %v", hits, err)
+	}
+	u, err := New(s).FindReferences(hits[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Symbol != "DoThing" {
+		t.Errorf("Symbol = %q, want DoThing", u.Symbol)
+	}
+	// No symbol-reference edges -> falls back to call sites, excluding the def.
+	var inUser, inDef bool
+	for _, c := range u.CallSites {
+		if c.File == "user.go" {
+			inUser = true
+		}
+		if c.File == "svc.go" {
+			inDef = true
+		}
+	}
+	if !inUser {
+		t.Errorf("CallSites = %+v, want a usage in user.go", u.CallSites)
+	}
+	if inDef {
+		t.Errorf("CallSites = %+v, must exclude the definition chunk in svc.go", u.CallSites)
+	}
+}

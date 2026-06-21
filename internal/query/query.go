@@ -67,9 +67,55 @@ func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 	return out, nil
 }
 
-// FindReferences returns edges pointing at a symbol.
-func (q *Querier) FindReferences(symbolID int64) ([]store.EdgeRow, error) {
-	return q.s.IncomingEdges("symbol", symbolID)
+// Usages is where a symbol is referenced: graph edges for config/resource
+// references, or, for code symbols (which have no language-level call graph),
+// full-text call sites of the symbol's name.
+type Usages struct {
+	Symbol    string           `json:"symbol"`
+	Edges     []store.EdgeRow  `json:"edges,omitempty"`
+	CallSites []store.ChunkHit `json:"call_sites,omitempty"`
+	Note      string           `json:"note,omitempty"`
+}
+
+// FindReferences returns where a symbol is used. It prefers symbol-reference
+// graph edges (config variables, shared resources); when there are none -- the
+// usual case for code, since prowl has no call graph -- it falls back to
+// full-text usages of the symbol name, excluding the definition's own chunk, so
+// `find <name>` -> `references <id>` answers "what calls this" instead of empty.
+func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
+	var u Usages
+	sym, ok, err := q.s.SymbolByID(symbolID)
+	if err != nil {
+		return u, err
+	}
+	if ok {
+		u.Symbol = sym.Name
+	}
+	edges, err := q.s.IncomingEdges("symbol", symbolID)
+	if err != nil {
+		return u, err
+	}
+	if len(edges) > 0 {
+		u.Edges = edges
+		return u, nil
+	}
+	if !ok || sym.Name == "" {
+		return u, nil
+	}
+	hits, err := q.s.SearchChunks(sym.Name, DefaultLimit)
+	if err != nil {
+		return u, err
+	}
+	for _, h := range hits {
+		if h.File == sym.File && h.StartLine <= sym.Line && sym.Line <= h.EndLine {
+			continue // skip the definition's own chunk
+		}
+		u.CallSites = append(u.CallSites, h)
+	}
+	if len(u.CallSites) > 0 {
+		u.Note = "call_sites are full-text usages of the name (no language call graph); some may be comments or docs"
+	}
+	return u, nil
 }
 
 // callerKinds / calleeKinds are the dependency edges used for caller/callee and impact queries.

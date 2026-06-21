@@ -225,7 +225,7 @@ func newTestsCmd() *cobra.Command {
 }
 
 func newReferencesCmd() *cobra.Command {
-	return newQueryCmd("references <symbol_id>", "Edges pointing at a symbol id (from 'find')", false, cobra.ExactArgs(1),
+	return newQueryCmd("references <symbol_id>", "Where a symbol is used: reference edges, or full-text call sites for code (id from 'find')", false, cobra.ExactArgs(1),
 		func(_ context.Context, q *query.Querier, a []string) (any, error) {
 			id, err := strconv.ParseInt(a[0], 10, 64)
 			if err != nil {

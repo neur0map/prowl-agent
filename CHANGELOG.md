@@ -88,6 +88,10 @@ answers about a project's files, served over MCP.
 - `find` matches an exact symbol name first, then full-text, then a substring
   fallback, so a camelCase or snake_case fragment (`cloud`) still surfaces the
   symbols that contain it (`updateCloudClient`) instead of returning nothing.
+- `references <id>` answers "what uses this symbol": config/resource reference
+  edges when present, and for code symbols (which have no language call graph) it
+  falls back to full-text call sites of the name, excluding the definition. So
+  `find <name>` then `references <id>` returns the call sites instead of nothing.
 - `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
   the indexed files each one could affect via blast radius, so an agent can see
   the impact of an edit before committing. `--all` includes unindexed paths.

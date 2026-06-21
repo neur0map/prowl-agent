@@ -34,7 +34,7 @@ only after a query points you to the exact lines.
     prowl-agent impact <path>       # blast radius: dependent count, subsystems, direct importers (--all = full list)
     prowl-agent relations <path>    # a file's symbols and include neighbors
     prowl-agent entrypoints <path>  # root files from which this file is reachable
-    prowl-agent references <id>     # references to a symbol id (the id column from 'find')
+    prowl-agent references <id>     # where a symbol is used: ref edges, or call sites for code (id from 'find')
     prowl-agent clusters            # subsystems (connected files)
     prowl-agent hotspots            # structurally central / large files
     prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors

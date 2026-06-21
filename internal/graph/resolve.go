@@ -137,7 +137,111 @@ func Resolve(s *store.Store) error {
 	if err := resolveDartPackages(s, files, byID); err != nil {
 		return err
 	}
+	// Pass 12: TS/JS tsconfig path aliases (`@/x` -> src/x) -> the real source.
+	if err := resolveTSAliases(s, files, byID); err != nil {
+		return err
+	}
 	return nil
+}
+
+// resolveTSAliases links a TypeScript/JavaScript import that matches a tsconfig
+// path alias (e.g. `@/components/Button` with `"paths": {"@/*": ["src/*"]}`) to
+// the real source file. The alias prefix -> directory map is recorded at index
+// time from each tsconfig.json/jsconfig.json, scoped to that config's directory,
+// so a monorepo's per-package aliases resolve against the nearest config.
+func resolveTSAliases(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	raw, _ := s.GetMeta("ts_aliases")
+	if raw == "" {
+		return nil
+	}
+	type cfg struct {
+		Dir     string              `json:"dir"`
+		Aliases map[string][]string `json:"aliases"`
+	}
+	var configs []cfg
+	if err := json.Unmarshal([]byte(raw), &configs); err != nil || len(configs) == 0 {
+		return nil
+	}
+	fileMap := make(map[string]int64, len(files))
+	for _, f := range files {
+		fileMap[f.RelPath] = f.ID
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	for _, e := range inc {
+		switch byID[e.FileID].Lang {
+		case "typescript", "tsx", "javascript":
+		default:
+			continue
+		}
+		imp := strings.Trim(strings.TrimSpace(e.Raw), `"'`)
+		if imp == "" || strings.HasPrefix(imp, ".") || strings.HasPrefix(imp, "/") {
+			continue // relative or absolute, handled elsewhere
+		}
+		// Pick the nearest config: the one whose dir is the longest ancestor of
+		// the importing file.
+		fromDir := path.Dir(byID[e.FileID].RelPath)
+		var aliases map[string][]string
+		bestDir := -1
+		for _, cf := range configs {
+			if (cf.Dir == "." || fromDir == cf.Dir || strings.HasPrefix(fromDir+"/", cf.Dir+"/")) && len(cf.Dir) > bestDir {
+				aliases, bestDir = cf.Aliases, len(cf.Dir)
+			}
+		}
+		if aliases == nil {
+			continue
+		}
+		// Longest matching alias prefix.
+		var prefix string
+		for ap := range aliases {
+			if strings.HasPrefix(imp, ap) && len(ap) > len(prefix) {
+				prefix = ap
+			}
+		}
+		if prefix == "" {
+			continue
+		}
+		rest := imp[len(prefix):]
+		for _, target := range aliases[prefix] {
+			if id, ok := tsModuleFile(fileMap, path.Join(target, rest)); ok && id != e.FileID {
+				if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// tsModuleFile resolves a TS/JS module path (no leading ./) to an indexed source
+// file, trying source extensions and a directory index, mapping an ESM .js
+// extension to its .ts source, and finally the literal path for a real asset.
+func tsModuleFile(fileMap map[string]int64, base string) (int64, bool) {
+	exts := []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+	stem := base
+	for _, e := range []string{".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"} {
+		if strings.HasSuffix(base, e) {
+			stem = strings.TrimSuffix(base, e)
+			break
+		}
+	}
+	var c []string
+	for _, e := range exts {
+		c = append(c, stem+e)
+	}
+	for _, e := range exts {
+		c = append(c, path.Join(stem, "index"+e))
+	}
+	c = append(c, base) // a real asset import (./styles.css)
+	for _, cand := range c {
+		if id, ok := fileMap[cand]; ok {
+			return id, true
+		}
+	}
+	return 0, false
 }
 
 // resolveDartPackages links a Dart `package:<name>/<path>` import to the file

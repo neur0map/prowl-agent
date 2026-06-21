@@ -158,11 +158,14 @@ Prowl resolves real edges, not text matches:
   enclosing class file), Ruby `require_relative`, C# `using` namespaces, PHP
   `use Ns\Class` imports (resolved to the file declaring that class), and Dart
   `package:` and relative imports (resolved to a workspace package's `lib/`).
-- **Monorepos.** A bare import of a first-party workspace package (`@scope/pkg`
-  or `pkg/subpath`) resolves to that package's source, so `callers`, `impact`,
-  and `clusters` work across a pnpm or turbo monorepo, not just within one
-  package. The walk honors `.gitignore` negation, so a repo that ignores a tree
-  but keeps its source (`packages/*/*/` then `!packages/*/src/`) is still indexed.
+- **Monorepos and path aliases.** A bare import of a first-party workspace
+  package (`@scope/pkg` or `pkg/subpath`) resolves to that package's source, and
+  a tsconfig path alias (`@/components/Button` with `"paths": {"@/*": ["src/*"]}`)
+  resolves to the real file, scoped to the nearest `tsconfig.json` so a monorepo's
+  per-package aliases stay correct. So `callers`, `impact`, and `clusters` work
+  across a pnpm/turbo/Next.js project, not just within one package. The walk
+  honors `.gitignore` negation, so a repo that ignores a tree but keeps its
+  source (`packages/*/*/` then `!packages/*/src/`) is still indexed.
 - **Configs.** Include trees (`source=`, `@import`, `require()`), exec and keybind
   chains (`exec-once`, `bind = ... exec script`), and shared colors, fonts, paths,
   and variables across files.
@@ -177,6 +180,7 @@ This is tested against real, popular repositories. A few results:
 | [Laravel](https://github.com/laravel/framework) | PHP, 2955 files | 8237 `use` imports resolved across components; `impact Str.php` reaches 1527 dependents |
 | [OkHttp](https://github.com/square/okhttp) | Kotlin + Java | 1944 imports resolved across Kotlin-Multiplatform source sets, including cross-language and companion-member imports |
 | [LocalSend](https://github.com/localsend/localsend) | Dart/Flutter | 977 `package:` imports resolved across a multi-package workspace; `impact` on a shared DTO reaches 73 files |
+| [shadcn/ui](https://github.com/shadcn-ui/ui) | TS, 8869 files | 8382 `@/` tsconfig-alias imports resolved across many per-package configs |
 
 External and standard-library imports stay informational. More languages are on
 the way.

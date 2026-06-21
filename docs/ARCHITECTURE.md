@@ -42,10 +42,12 @@ internal/assist      local Ollama inferencer for the semantic layer
    basename. Each file gets a role (config, bar, theme, script, and so on).
    For code languages, Go resolves in-module package imports to every file of the
    imported package (read from `go.mod`), TypeScript/JavaScript resolve relative
-   imports and first-party monorepo packages (a `@scope/pkg` / `pkg/subpath`
-   import resolves to that package's source by the `src/` convention, mapping the
+   imports, first-party monorepo packages (a `@scope/pkg` / `pkg/subpath` import
+   resolves to that package's source by the `src/` convention, mapping the
    `package.json` name to its directory; built `dist/` paths from `exports` are
-   ignored so edges land on real source), Rust resolves `mod` declarations and
+   ignored so edges land on real source), and tsconfig path aliases (`@/x` ->
+   `src/x`, read from each tsconfig.json/jsconfig.json `paths` and scoped to that
+   config's directory), Rust resolves `mod` declarations and
    `crate::` imports to module files (single crate or Cargo workspace), Python
    resolves absolute imports, and PHP resolves a `use Ns\Class` import to the
    file that declares that class (matching the class's recorded namespace and

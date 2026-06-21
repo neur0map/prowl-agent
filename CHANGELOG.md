@@ -64,6 +64,15 @@ answers about a project's files, served over MCP.
   previously-dangling `@trpc/*` imports and gave the core `@trpc/server` entry a
   real cross-package blast radius (impact `0` -> `345`); on zod it resolves the
   subpath imports (`zod/v4/core` -> `packages/zod/src/v4/core/index.ts`).
+- TypeScript/JavaScript tsconfig path aliases: an import that matches a `paths`
+  wildcard (`@/components/Button` with `"paths": {"@/*": ["src/*"]}`) resolves to
+  the real source file. The alias-prefix -> directory map is read from each
+  tsconfig.json/jsconfig.json (baseUrl-resolved, JSONC comments and trailing
+  commas tolerated) and scoped to that config's directory, so a monorepo's
+  per-package `@/` aliases resolve against the nearest config without crossing
+  packages. On the shadcn/ui monorepo this resolved 8382 `@/` imports across many
+  per-package configs; aliases pointing at non-existent or virtual modules stay
+  informational.
 - Rust module graph: `mod foo;` declarations resolve to the included file
   (`foo.rs` / `foo/mod.rs`, handling both `mod.rs` and `foo.rs` parent layouts),
   `crate::` imports resolve to the module file under the importing file's crate

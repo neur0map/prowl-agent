@@ -3,6 +3,7 @@ package index
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
@@ -120,6 +121,7 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	_ = s.SetMeta("rust_crates", rustCrates(root, all))
 	_ = s.SetMeta("ts_packages", tsPackages(root, all))
 	_ = s.SetMeta("dart_packages", dartPackages(root, all))
+	_ = s.SetMeta("ts_aliases", tsAliases(root, all))
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
 	}
@@ -346,4 +348,136 @@ func pubspecName(path string) string {
 		}
 	}
 	return ""
+}
+
+// tsAliases reads tsconfig.json / jsconfig.json path aliases so the resolver can
+// link an import like `@/components/Button` to its real source. For each config
+// it records the alias prefix (from a `paths` wildcard) mapped to the
+// repo-relative directory prefix (resolved against baseUrl), scoped to the
+// config's directory so a monorepo's per-package aliases stay correct. Returns a
+// JSON array string, or "" when no aliases are found.
+func tsAliases(root string, files []store.File) string {
+	type cfg struct {
+		Dir     string              `json:"dir"`
+		Aliases map[string][]string `json:"aliases"`
+	}
+	var out []cfg
+	for _, f := range files {
+		if b := filepath.Base(f.RelPath); b != "tsconfig.json" && b != "jsconfig.json" {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(f.RelPath))
+		aliases := tsConfigPaths(filepath.Join(root, filepath.FromSlash(f.RelPath)), dir)
+		if len(aliases) > 0 {
+			out = append(out, cfg{Dir: dir, Aliases: aliases})
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// tsConfigPaths reads compilerOptions.baseUrl/paths from a (JSONC) tsconfig and
+// returns each wildcard alias prefix mapped to its repo-relative target dir
+// prefix(es). Non-wildcard aliases and `extends` are not handled.
+func tsConfigPaths(file, dir string) map[string][]string {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		CompilerOptions struct {
+			BaseURL string              `json:"baseUrl"`
+			Paths   map[string][]string `json:"paths"`
+		} `json:"compilerOptions"`
+	}
+	if json.Unmarshal(stripJSONC(data), &cfg) != nil {
+		return nil
+	}
+	baseURL := cfg.CompilerOptions.BaseURL
+	if baseURL == "" {
+		baseURL = "."
+	}
+	out := map[string][]string{}
+	for pat, targets := range cfg.CompilerOptions.Paths {
+		ap, ok := strings.CutSuffix(pat, "*")
+		if !ok {
+			continue // only wildcard aliases (the common case)
+		}
+		for _, t := range targets {
+			tp, ok := strings.CutSuffix(t, "*")
+			if !ok {
+				continue
+			}
+			out[ap] = append(out[ap], path.Clean(path.Join(dir, baseURL, tp)))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// stripJSONC removes // and /* */ comments and trailing commas from JSONC, which
+// tsconfig files routinely use, so encoding/json can parse them.
+func stripJSONC(data []byte) []byte {
+	b := make([]byte, 0, len(data))
+	inStr, esc := false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inStr {
+			b = append(b, c)
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			b = append(b, c)
+			continue
+		}
+		if c == '/' && i+1 < len(data) {
+			if data[i+1] == '/' {
+				for i < len(data) && data[i] != '\n' {
+					i++
+				}
+				b = append(b, '\n')
+				continue
+			}
+			if data[i+1] == '*' {
+				i += 2
+				for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+					i++
+				}
+				i++ // land on the closing '/'; the loop's i++ steps past it
+				continue
+			}
+		}
+		b = append(b, c)
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] == ',' {
+			j := i + 1
+			for j < len(b) && (b[j] == ' ' || b[j] == '\t' || b[j] == '\n' || b[j] == '\r') {
+				j++
+			}
+			if j < len(b) && (b[j] == '}' || b[j] == ']') {
+				continue // drop a trailing comma
+			}
+		}
+		out = append(out, b[i])
+	}
+	return out
 }

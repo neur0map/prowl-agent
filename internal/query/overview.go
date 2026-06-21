@@ -7,11 +7,12 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
-// Cluster is a connected group of files (a subsystem) with its dominant language,
-// so an agent can tell a UI subsystem from an engine at a glance.
+// Cluster is a subsystem: either a connected group of files (via includes,
+// exec/keybind chains, and shared resources) or, when a cohesive codebase forms
+// one giant component, a directory grouping of it. Lang is the dominant language.
 type Cluster struct {
 	Label string   `json:"label"`
-	Lang  string   `json:"lang,omitempty"`
+	Lang  string   `json:"lang"`
 	Files []string `json:"files"`
 }
 
@@ -52,13 +53,54 @@ func (q *Querier) Clusters() ([]Cluster, error) {
 		sort.Strings(members)
 		clusters = append(clusters, Cluster{Label: clusterLabel(members), Lang: dominantLang(members, langOf), Files: members})
 	}
+	clusters = splitBlobCluster(clusters, langOf)
+	sortClusters(clusters)
+	return clusters, nil
+}
+
+func sortClusters(clusters []Cluster) {
 	sort.Slice(clusters, func(i, j int) bool {
 		if len(clusters[i].Files) != len(clusters[j].Files) {
 			return len(clusters[i].Files) > len(clusters[j].Files)
 		}
 		return clusters[i].Label < clusters[j].Label
 	})
-	return clusters, nil
+}
+
+// splitBlobCluster detects a single dominant connected component (a cohesive
+// codebase where nearly everything is one component) and subdivides it by
+// directory subsystem, so clusters stay a useful onboarding map instead of one
+// opaque blob. Repos with several balanced components (e.g. config include
+// trees) are left unchanged.
+func splitBlobCluster(clusters []Cluster, langOf map[string]string) []Cluster {
+	if len(clusters) == 0 {
+		return clusters
+	}
+	sortClusters(clusters)
+	total := 0
+	for _, c := range clusters {
+		total += len(c.Files)
+	}
+	big := clusters[0]
+	if len(big.Files) < 25 || len(big.Files)*100 < total*70 {
+		return clusters
+	}
+	byDir := map[string][]string{}
+	for _, m := range big.Files {
+		byDir[subsystem(m)] = append(byDir[subsystem(m)], m)
+	}
+	if len(byDir) < 2 {
+		return clusters
+	}
+	out := append([]Cluster(nil), clusters[1:]...)
+	for dir, fs := range byDir {
+		if len(fs) < 2 {
+			continue
+		}
+		sort.Strings(fs)
+		out = append(out, Cluster{Label: dir, Lang: dominantLang(fs, langOf), Files: fs})
+	}
+	return out
 }
 
 // clusterLabel names a cluster by the most common top-level path segment.

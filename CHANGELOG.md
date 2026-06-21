@@ -61,6 +61,11 @@ answers about a project's files, served over MCP.
   `clusters` now reports each subsystem's dominant language. On a QML-heavy rice
   this took resolved edges from 228 to ~1950 and surfaced the 498-file QML shell
   as the top cluster (previously zero QML clusters).
+- `clusters`/`overview` stay a useful subsystem map on cohesive codebases: when
+  connected components collapse nearly everything into one giant blob (common for
+  a well-linked Go/TS project), the blob is subdivided by directory subsystem
+  (e.g. `pkg/gui`, `pkg/commands`) instead of shown as one opaque cluster. Config
+  repos with several balanced include-tree components are left as-is.
 - SQLite store with FTS5 full-text search and an in-memory BFS blast-radius
   traversal (loads the resolved edge set once and visits each file once), in WAL
   mode so the indexer can write while the server reads. On a 2023-file Go repo a

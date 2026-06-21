@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -382,5 +383,37 @@ func TestBlastSummarize(t *testing.T) {
 	}
 	if sum.BySubsystem[1].Subsystem != "pkg/b" || sum.BySubsystem[1].Count != 1 {
 		t.Errorf("BySubsystem[1] = %+v, want {pkg/b 1}", sum.BySubsystem[1])
+	}
+}
+
+func TestSplitBlobCluster(t *testing.T) {
+	// A single dominant component is subdivided by directory subsystem.
+	langOf := map[string]string{}
+	var blob []string
+	for i := 0; i < 30; i++ {
+		p := fmt.Sprintf("pkg/gui/f%d.go", i)
+		if i >= 20 {
+			p = fmt.Sprintf("pkg/commands/f%d.go", i)
+		}
+		blob = append(blob, p)
+		langOf[p] = "go"
+	}
+	out := splitBlobCluster([]Cluster{{Label: "pkg", Lang: "go", Files: blob}}, langOf)
+	got := map[string]int{}
+	for _, c := range out {
+		got[c.Label] = len(c.Files)
+	}
+	if got["pkg/gui"] != 20 || got["pkg/commands"] != 10 {
+		t.Fatalf("subdivision = %v, want pkg/gui:20 pkg/commands:10", got)
+	}
+
+	// Several balanced components are left unchanged (e.g. config include trees).
+	balanced := []Cluster{
+		{Label: "a", Files: []string{"a/1", "a/2", "a/3"}},
+		{Label: "b", Files: []string{"b/1", "b/2"}},
+	}
+	out2 := splitBlobCluster(balanced, map[string]string{})
+	if len(out2) != 2 || out2[0].Label != "a" || out2[1].Label != "b" {
+		t.Fatalf("balanced clusters should be unchanged, got %+v", out2)
 	}
 }

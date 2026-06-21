@@ -333,3 +333,54 @@ func TestOverviewAndClusters(t *testing.T) {
 		t.Fatalf("expected a hypr or waybar cluster, got %+v", cl)
 	}
 }
+
+func TestBlastSummarize(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(rel string) int64 {
+		id, err := s.UpsertFile(store.File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	target := mk("pkg/commands/target.go")
+	ax := mk("pkg/a/x.go")
+	ay := mk("pkg/a/y.go")
+	bz := mk("pkg/b/z.go")
+	// x and z depend directly on target (depth 1); y depends on x (depth 2).
+	if err := s.AddPackageEdges([]store.PkgEdge{
+		{FileID: ax, DstFileID: target, Line: 1, Raw: "target"},
+		{FileID: bz, DstFileID: target, Line: 1, Raw: "target"},
+		{FileID: ay, DstFileID: ax, Line: 1, Raw: "x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := New(s).BlastSummarize("pkg/commands/target.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Total != 3 {
+		t.Errorf("Total = %d, want 3", sum.Total)
+	}
+	if sum.Direct != 2 {
+		t.Errorf("Direct = %d, want 2", sum.Direct)
+	}
+	if len(sum.DirectFiles) != 2 || sum.DirectFiles[0] != "pkg/a/x.go" || sum.DirectFiles[1] != "pkg/b/z.go" {
+		t.Errorf("DirectFiles = %v, want [pkg/a/x.go pkg/b/z.go]", sum.DirectFiles)
+	}
+	// pkg/a holds x (depth 1) and y (depth 2) -> count 2, leads pkg/b (count 1).
+	if len(sum.BySubsystem) != 2 {
+		t.Fatalf("BySubsystem = %+v, want 2 groups", sum.BySubsystem)
+	}
+	if sum.BySubsystem[0].Subsystem != "pkg/a" || sum.BySubsystem[0].Count != 2 {
+		t.Errorf("BySubsystem[0] = %+v, want {pkg/a 2}", sum.BySubsystem[0])
+	}
+	if sum.BySubsystem[1].Subsystem != "pkg/b" || sum.BySubsystem[1].Count != 1 {
+		t.Errorf("BySubsystem[1] = %+v, want {pkg/b 1}", sum.BySubsystem[1])
+	}
+}

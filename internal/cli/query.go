@@ -175,9 +175,33 @@ func newRelationsCmd() *cobra.Command {
 		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.FileRelations(a[0]) })
 }
 
+// newImpactCmd summarizes the blast radius by default (count + by-subsystem +
+// direct importers) to stay token-lean on large graphs; --all dumps every
+// dependent file.
 func newImpactCmd() *cobra.Command {
-	return newQueryCmd("impact <path>", "Files that transitively depend on a file (change blast radius)", false, cobra.ExactArgs(1),
-		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.BlastRadius(a[0]) })
+	var asJSON, all bool
+	var limit int
+	c := &cobra.Command{
+		Use:   "impact <path>",
+		Short: "Blast radius of a file: dependent count, subsystems, and direct importers",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			format := formatTOON
+			if asJSON {
+				format = formatJSON
+			}
+			return runQuery(cmd.Context(), false, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+				if all {
+					return q.BlastRadius(a[0])
+				}
+				return q.BlastSummarize(a[0])
+			})
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	c.Flags().BoolVar(&all, "all", false, "list every dependent file instead of a summary")
+	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
+	return c
 }
 
 func newEntrypointsCmd() *cobra.Command {

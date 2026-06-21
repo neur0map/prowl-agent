@@ -45,7 +45,7 @@ func NewServer(q *query.Querier, st *store.Store, version string, reindex Reinde
 	sdk.AddTool(s, &sdk.Tool{Name: "file_relations",
 		Description: "A file's defined symbols and include neighbors."}, tracked(h, h.fileRelations))
 	sdk.AddTool(s, &sdk.Tool{Name: "blast_radius",
-		Description: "Files that transitively depend on a file (change impact)."}, tracked(h, h.blastRadius))
+		Description: "Change impact of a file: total dependent count, a breakdown by subsystem (the hubs driving it), and the direct importers."}, tracked(h, h.blastRadius))
 	sdk.AddTool(s, &sdk.Tool{Name: "entrypoints_for",
 		Description: "Root files from which a file is reachable (its entry points)."}, tracked(h, h.entrypointsFor))
 	sdk.AddTool(s, &sdk.Tool{Name: "tests_for",
@@ -140,13 +140,9 @@ func (h *handlers) fileRelations(ctx context.Context, _ *sdk.CallToolRequest, in
 	return nil, r, err
 }
 
-func (h *handlers) blastRadius(ctx context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, struct {
-	Impacted []store.Dep `json:"impacted"`
-}, error) {
-	d, err := h.q.BlastRadius(in.Path)
-	return nil, struct {
-		Impacted []store.Dep `json:"impacted"`
-	}{Impacted: d}, err
+func (h *handlers) blastRadius(ctx context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, query.BlastSummary, error) {
+	d, err := h.q.BlastSummarize(in.Path)
+	return nil, d, err
 }
 
 func (h *handlers) entrypointsFor(ctx context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, entrypointsOut, error) {

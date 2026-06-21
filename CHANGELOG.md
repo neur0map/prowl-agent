@@ -61,8 +61,10 @@ answers about a project's files, served over MCP.
   `clusters` now reports each subsystem's dominant language. On a QML-heavy rice
   this took resolved edges from 228 to ~1950 and surfaced the 498-file QML shell
   as the top cluster (previously zero QML clusters).
-- SQLite store with FTS5 full-text search and a recursive-CTE blast-radius query,
-  in WAL mode so the indexer can write while the server reads.
+- SQLite store with FTS5 full-text search and an in-memory BFS blast-radius
+  traversal (loads the resolved edge set once and visits each file once), in WAL
+  mode so the indexer can write while the server reads. On a 2023-file Go repo a
+  blast-radius query runs in ~80 ms.
 
 #### Interface
 
@@ -82,6 +84,11 @@ answers about a project's files, served over MCP.
 - `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
   the indexed files each one could affect via blast radius, so an agent can see
   the impact of an edit before committing. `--all` includes unindexed paths.
+- `impact` summarizes the blast radius by default: a total dependent count, a
+  breakdown by subsystem (which surfaces the dependency hubs driving the radius),
+  and the direct importers, instead of dumping every dependent. On a large Go
+  package this is a 12-line summary rather than a 600+ row list. `--all` lists
+  every dependent file.
 - Savings are tracked on every delivery path: each shell query, like each MCP
   call, records what it returned versus the size of the files it pointed at, so
   `prowl-agent status` keeps counting when agents use the CLI instead of MCP.

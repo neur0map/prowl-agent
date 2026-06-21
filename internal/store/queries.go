@@ -1,6 +1,9 @@
 package store
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // EdgeRow is a graph edge joined with its owning file path.
 type EdgeRow struct {
@@ -106,52 +109,102 @@ var blastKinds = []string{"includes", "references", "execs", "binds", "autostart
 // TransitiveDependents returns files that (transitively) depend on fileID, the
 // blast radius. A dependent is a file that includes/execs/references it.
 func (s *Store) TransitiveDependents(fileID int64) ([]Dep, error) {
-	clause, kargs := inClause("e.kind", blastKinds)
-	q := `WITH RECURSIVE dep(id,depth) AS (
-		SELECT ?,0
-		UNION
-		SELECT e.file_id, dep.depth+1 FROM edges e JOIN dep ON e.dst_type='file' AND e.dst_id=dep.id
-		WHERE e.resolved=1` + clause + `
-	)
-	SELECT f.rel_path, min(dep.depth) FROM dep JOIN files f ON f.id=dep.id
-	WHERE dep.id<>? GROUP BY dep.id ORDER BY 2,1`
-	args := append([]any{fileID}, kargs...)
-	args = append(args, fileID)
-	return s.scanDeps(q, args...)
+	return s.traverseDeps(fileID, true)
 }
 
 // AncestorsToward returns files reachable upward from fileID via dependency
 // edges (what this file includes/execs, transitively); used for entrypoints.
 func (s *Store) AncestorsToward(fileID int64) ([]Dep, error) {
-	clause, kargs := inClause("e.kind", blastKinds)
-	q := `WITH RECURSIVE up(id,depth) AS (
-		SELECT ?,0
-		UNION
-		SELECT e.dst_id, up.depth+1 FROM edges e JOIN up ON e.file_id=up.id AND e.dst_type='file'
-		WHERE e.resolved=1` + clause + `
-	)
-	SELECT f.rel_path, min(up.depth) FROM up JOIN files f ON f.id=up.id
-	WHERE up.id<>? GROUP BY up.id ORDER BY 2,1`
-	args := append([]any{fileID}, kargs...)
-	args = append(args, fileID)
-	return s.scanDeps(q, args...)
+	return s.traverseDeps(fileID, false)
 }
 
-func (s *Store) scanDeps(q string, args ...any) ([]Dep, error) {
-	rows, err := s.db.Query(q, args...)
+// traverseDeps walks the dependency graph from fileID with an in-memory BFS.
+// reverse=true follows incoming edges (who depends on fileID -> blast radius);
+// reverse=false follows outgoing edges (what fileID depends on -> ancestors).
+// Loading the edge set once and doing a visited-set BFS is far faster than a
+// recursive SQL CTE, which re-expands nodes across the dense pkg-edge graph.
+func (s *Store) traverseDeps(fileID int64, reverse bool) ([]Dep, error) {
+	adj, err := s.depAdjacency(reverse)
+	if err != nil {
+		return nil, err
+	}
+	depth := map[int64]int{fileID: 0}
+	queue := []int64{fileID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, nb := range adj[cur] {
+			if _, seen := depth[nb]; !seen {
+				depth[nb] = depth[cur] + 1
+				queue = append(queue, nb)
+			}
+		}
+	}
+	delete(depth, fileID)
+	if len(depth) == 0 {
+		return nil, nil
+	}
+	paths, err := s.filePathsByID()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Dep, 0, len(depth))
+	for id, d := range depth {
+		if p, ok := paths[id]; ok {
+			out = append(out, Dep{File: p, Depth: d})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Depth != out[j].Depth {
+			return out[i].Depth < out[j].Depth
+		}
+		return out[i].File < out[j].File
+	})
+	return out, nil
+}
+
+// depAdjacency loads resolved file->file dependency edges into an adjacency map.
+// reverse=true keys by target (dst -> dependents); reverse=false keys by source
+// (file -> what it depends on).
+func (s *Store) depAdjacency(reverse bool) (map[int64][]int64, error) {
+	clause, kargs := inClause("kind", blastKinds)
+	rows, err := s.db.Query(`SELECT file_id, dst_id FROM edges WHERE resolved=1 AND dst_type='file'`+clause, kargs...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Dep
+	adj := map[int64][]int64{}
 	for rows.Next() {
-		var d Dep
-		if err := rows.Scan(&d.File, &d.Depth); err != nil {
+		var from, to int64
+		if err := rows.Scan(&from, &to); err != nil {
 			return nil, err
 		}
-		out = append(out, d)
+		if reverse {
+			adj[to] = append(adj[to], from)
+		} else {
+			adj[from] = append(adj[from], to)
+		}
 	}
-	return out, rows.Err()
+	return adj, rows.Err()
+}
+
+// filePathsByID maps every file id to its repo-relative path.
+func (s *Store) filePathsByID() (map[int64]string, error) {
+	rows, err := s.db.Query(`SELECT id, rel_path FROM files`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var p string
+		if err := rows.Scan(&id, &p); err != nil {
+			return nil, err
+		}
+		m[id] = p
+	}
+	return m, rows.Err()
 }
 
 // SymbolsInFile lists symbols defined in a file.

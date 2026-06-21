@@ -116,13 +116,81 @@ func (q *Querier) FileRelations(path string) (Relations, error) {
 	return r, nil
 }
 
-// BlastRadius returns files that transitively depend on a file.
+// BlastRadius returns the full list of files that transitively depend on a file.
 func (q *Querier) BlastRadius(path string) ([]store.Dep, error) {
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
 	}
 	return q.s.TransitiveDependents(id)
+}
+
+// SubsystemCount pairs a subsystem (top directory) with its dependent count.
+type SubsystemCount struct {
+	Subsystem string `json:"subsystem"`
+	Count     int    `json:"count"`
+}
+
+// BlastSummary is a token-lean blast-radius overview: the total dependent count,
+// a breakdown by subsystem (which reveals the dependency hubs that drive the
+// radius), and the direct importers (the actionable depth-1 set). The full file
+// list is available with --all. The graph is package-granular for code, so this
+// counts files that compile-depend on the target, not symbol-level callers.
+type BlastSummary struct {
+	File        string           `json:"file"`
+	Total       int              `json:"total"`
+	Direct      int              `json:"direct"`
+	BySubsystem []SubsystemCount `json:"by_subsystem"`
+	DirectFiles []string         `json:"direct_files"`
+}
+
+// BlastSummarize returns a grouped blast-radius summary instead of the full list.
+func (q *Querier) BlastSummarize(path string) (BlastSummary, error) {
+	id, ok, err := q.fileID(path)
+	if err != nil || !ok {
+		return BlastSummary{File: path}, err
+	}
+	deps, err := q.s.TransitiveDependents(id)
+	if err != nil {
+		return BlastSummary{File: path}, err
+	}
+	sum := BlastSummary{File: path, Total: len(deps)}
+	byDir := map[string]int{}
+	for _, d := range deps {
+		byDir[subsystem(d.File)]++
+		if d.Depth == 1 {
+			sum.Direct++
+			sum.DirectFiles = append(sum.DirectFiles, d.File)
+		}
+	}
+	for dir, n := range byDir {
+		sum.BySubsystem = append(sum.BySubsystem, SubsystemCount{Subsystem: dir, Count: n})
+	}
+	sort.Slice(sum.BySubsystem, func(i, j int) bool {
+		if sum.BySubsystem[i].Count != sum.BySubsystem[j].Count {
+			return sum.BySubsystem[i].Count > sum.BySubsystem[j].Count
+		}
+		return sum.BySubsystem[i].Subsystem < sum.BySubsystem[j].Subsystem
+	})
+	if len(sum.BySubsystem) > 15 {
+		sum.BySubsystem = sum.BySubsystem[:15]
+	}
+	sort.Strings(sum.DirectFiles)
+	return sum, nil
+}
+
+// subsystem maps a file to a coarse subsystem label: its first two path segments
+// (e.g. pkg/gui), or the first segment / "." for shallow paths.
+func subsystem(file string) string {
+	parts := strings.Split(file, "/")
+	switch len(parts) {
+	case 1:
+		return "."
+	case 2:
+		return parts[0]
+	default:
+		return parts[0] + "/" + parts[1]
+	}
 }
 
 // EntrypointsFor returns the root configs (no incoming dependency edges) from

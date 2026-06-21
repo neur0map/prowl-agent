@@ -27,7 +27,7 @@ only after a query points you to the exact lines.
 ### Commands
 
     prowl-agent overview            # project map: docs to read, roles, entrypoints, clusters (start here)
-    prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
+    prowl-agent find <name>         # locate a symbol; returns its signature, file, and line range
     prowl-agent search <text>       # search content; add --smart (rerank) or --compact (files only)
     prowl-agent callers <path>      # what includes / execs / binds to a file
     prowl-agent callees <path>      # what a file includes / execs / binds to
@@ -49,9 +49,9 @@ the index by walking up to .prowl/.
 ### When to use which
 
 - New or unfamiliar project: overview for the map, then clusters <name> to pull a subsystem's files.
-- After a find: results carry line and end_line, so read just that range, not the whole file.
+- After a find: the row carries the signature, line, and end_line, so read the signature for a symbol's interface and open only that line range when you need the body.
 - Fuzzy / natural-language question: search "<text>" (add --smart); --compact lists files first.
-- Before changing a color/font/variable: find it, then references <id> for every usage; check violations.
+- Before changing any symbol (a function, a color, a variable): find it, then references <id> for its usages (cited call sites for code, reference edges for config); check violations.
 - Before editing or deleting a file: impact <path> for what breaks, callers <path> for what invokes it.
 - Adding a keybind: doctor first, to avoid duplicate-keybind clashes.
 - Tracing startup: entrypoints <path> for the entry point and autostart chain.

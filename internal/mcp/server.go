@@ -98,7 +98,7 @@ type symbolsOut struct {
 	Symbols []store.SymbolHit `json:"symbols"`
 }
 type edgesOut struct {
-	Edges []store.EdgeRow `json:"edges"`
+	Edges []query.EdgeView `json:"edges"`
 }
 type entrypointsOut struct {
 	Entrypoints []string `json:"entrypoints"`

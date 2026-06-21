@@ -107,7 +107,11 @@ answers about a project's files, served over MCP.
 - `callees` lists what a file directly imports/execs/binds, not the package
   fan-out: a Go file importing N packages shows N imports, not one row per file
   in each imported package. On a 47-import file this is ~50 rows, not ~400.
-  `callers` keeps the fan-out (so cross-package importers still show up).
+  `callers` keeps the fan-out (so cross-package importers still show up). Both,
+  plus `relations` and `references` edges, emit a uniform `{file, kind, line,
+  raw, resolved}` row and drop internal node ids/types, so the result stays a
+  TOON table even when a file mixes resolved and external edges (instead of
+  degrading to the verbose per-item form).
 - `changed` maps your git changes (working tree vs `HEAD`, or `--base <ref>`) to
   the files each one could affect, summarized per file (dependent count, subsystem
   breakdown, direct importers) like `impact`, so an agent can see the impact of an

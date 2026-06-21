@@ -72,7 +72,7 @@ func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 // full-text call sites of the symbol's name.
 type Usages struct {
 	Symbol    string           `json:"symbol"`
-	Edges     []store.EdgeRow  `json:"edges,omitempty"`
+	Edges     []EdgeView       `json:"edges,omitempty"`
 	CallSites []store.ChunkHit `json:"call_sites,omitempty"`
 	Note      string           `json:"note,omitempty"`
 }
@@ -96,7 +96,7 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 		return u, err
 	}
 	if len(edges) > 0 {
-		u.Edges = edges
+		u.Edges = edgeViews(edges)
 		return u, nil
 	}
 	if !ok || sym.Name == "" {
@@ -126,23 +126,45 @@ func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
 var depKinds = []string{"includes", "execs", "binds", "autostarts", "references", "pkg"}
 var calleeKinds = []string{"includes", "execs", "binds", "autostarts", "references"}
 
+// EdgeView is the agent-facing shape of a dependency edge: the related file, the
+// kind, the line, the literal target, and whether it resolved. It drops the
+// internal node ids/types so the result stays a uniform TOON table even when a
+// file mixes resolved (in-project) and unresolved (external) edges.
+type EdgeView struct {
+	File     string `json:"file"`
+	Kind     string `json:"kind"`
+	Line     int    `json:"line"`
+	Raw      string `json:"raw"`
+	Resolved bool   `json:"resolved"`
+}
+
+func edgeViews(rows []store.EdgeRow) []EdgeView {
+	out := make([]EdgeView, len(rows))
+	for i, e := range rows {
+		out[i] = EdgeView{File: e.File, Kind: e.Kind, Line: e.Line, Raw: e.Raw, Resolved: e.Resolved}
+	}
+	return out
+}
+
 // FindCallers returns configs/scripts that include, exec, or bind to a file
 // (including cross-package importers via the synthetic pkg edge).
-func (q *Querier) FindCallers(path string) ([]store.EdgeRow, error) {
+func (q *Querier) FindCallers(path string) ([]EdgeView, error) {
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
 	}
-	return q.s.IncomingEdges("file", id, depKinds...)
+	rows, err := q.s.IncomingEdges("file", id, depKinds...)
+	return edgeViews(rows), err
 }
 
 // FindCallees returns what a file directly includes, execs, or binds to.
-func (q *Querier) FindCallees(path string) ([]store.EdgeRow, error) {
+func (q *Querier) FindCallees(path string) ([]EdgeView, error) {
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
 	}
-	return q.s.EdgesFromFile(id, calleeKinds...)
+	rows, err := q.s.EdgesFromFile(id, calleeKinds...)
+	return edgeViews(rows), err
 }
 
 // Relations is the neighborhood of a file.
@@ -150,8 +172,8 @@ type Relations struct {
 	File       string            `json:"file"`
 	Exists     bool              `json:"exists"`
 	Symbols    []store.SymbolHit `json:"symbols"`
-	Includes   []store.EdgeRow   `json:"includes"`
-	IncludedBy []store.EdgeRow   `json:"included_by"`
+	Includes   []EdgeView        `json:"includes"`
+	IncludedBy []EdgeView        `json:"included_by"`
 }
 
 // FileRelations returns a file's symbols and include neighbors.
@@ -163,8 +185,10 @@ func (q *Querier) FileRelations(path string) (Relations, error) {
 	}
 	r.Exists = true
 	r.Symbols, _ = q.s.SymbolsInFile(id)
-	r.Includes, _ = q.s.EdgesFromFile(id, "includes")
-	r.IncludedBy, _ = q.s.IncomingEdges("file", id, "includes")
+	inc, _ := q.s.EdgesFromFile(id, "includes")
+	r.Includes = edgeViews(inc)
+	by, _ := q.s.IncomingEdges("file", id, "includes")
+	r.IncludedBy = edgeViews(by)
 	return r, nil
 }
 

@@ -119,6 +119,7 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 	_ = s.SetMeta("go_module", goModulePath(root))
 	_ = s.SetMeta("rust_crates", rustCrates(root, all))
 	_ = s.SetMeta("ts_packages", tsPackages(root, all))
+	_ = s.SetMeta("dart_packages", dartPackages(root, all))
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
 	}
@@ -305,4 +306,44 @@ func packageJSONName(path string) string {
 		return ""
 	}
 	return pj.Name
+}
+
+// dartPackages maps each Dart/Flutter package's name (its pubspec.yaml `name:`)
+// to its repo-relative directory, so the resolver can link a `package:<name>/x`
+// import to that package's lib/ source. Returns a JSON object string, or "" when
+// no pubspec is present. Covers single-package apps and melos-style monorepos.
+func dartPackages(root string, files []store.File) string {
+	pkgs := map[string]string{}
+	for _, f := range files {
+		if filepath.Base(f.RelPath) != "pubspec.yaml" {
+			continue
+		}
+		name := pubspecName(filepath.Join(root, filepath.FromSlash(f.RelPath)))
+		if name == "" {
+			continue
+		}
+		pkgs[name] = filepath.ToSlash(filepath.Dir(f.RelPath))
+	}
+	if len(pkgs) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(pkgs)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// pubspecName returns the top-level `name:` field of a pubspec.yaml, or "".
+func pubspecName(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "name:"); ok {
+			return strings.Trim(strings.TrimSpace(rest), `"'`)
+		}
+	}
+	return ""
 }

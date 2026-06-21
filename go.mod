@@ -11,6 +11,7 @@ require (
 	github.com/alexaandru/go-sitter-forest/c_sharp v1.9.6
 	github.com/alexaandru/go-sitter-forest/cpp v1.9.5
 	github.com/alexaandru/go-sitter-forest/css v1.9.4
+	github.com/alexaandru/go-sitter-forest/dart v1.9.4
 	github.com/alexaandru/go-sitter-forest/fish v1.9.2
 	github.com/alexaandru/go-sitter-forest/go v1.9.4
 	github.com/alexaandru/go-sitter-forest/hyprlang v1.9.4

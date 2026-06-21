@@ -27,8 +27,8 @@ answers about a project's files, served over MCP.
   skipping unchanged files and serving stale data. Release builds key this off the
   commit; dev and dirty builds key off the binary's mtime so each local rebuild
   also reparses.
-- Tree-sitter extraction for Go, Rust, Java, Kotlin, Ruby, C#, PHP, TypeScript/TSX,
-  Lua, Python, JavaScript, Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
+- Tree-sitter extraction for Go, Rust, Java, Kotlin, Ruby, C#, PHP, Dart,
+  TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
   plus a line-based reader for other config formats (sway/i3, rofi `rasi`,
   polybar, and similar). Markdown headings and JavaScript declarations become
   symbols, so docs and dashboard scripts are searchable by name as well as by
@@ -88,6 +88,13 @@ answers about a project's files, served over MCP.
   nested-type import (`HttpUrl.Companion.toHttpUrl`, `Outer.Inner`) folds to its
   enclosing class file. On OkHttp this resolved 1944 imports across source sets;
   top-level package functions map to no class file and stay informational.
+- Dart graph: classes, mixins, enums, extensions, and functions are indexed with
+  cyclomatic complexity, and a `package:<name>/path` import resolves to that
+  workspace package's `lib/` source (the name read from each pubspec.yaml, so an
+  app's own `package:myapp/...` and a melos monorepo's sibling packages both
+  link); relative and part imports resolve as paths. On LocalSend (a multi-package
+  Flutter workspace) this resolved 977 `package:` imports across packages; the
+  Flutter SDK and third-party packages match no pubspec and stay informational.
 - PHP class graph: a `use Ns\Class` import (including grouped `use Ns\{A, B}`)
   resolves to the file that declares that class, matched by the class's recorded
   `namespace` and basename rather than a fixed PSR-4 directory map, so a class

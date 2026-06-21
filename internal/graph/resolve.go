@@ -133,6 +133,59 @@ func Resolve(s *store.Store) error {
 	if err := resolvePHPNamespaces(s, byID); err != nil {
 		return err
 	}
+	// Pass 11: Dart `package:<name>/x` imports -> that workspace package's lib/ source.
+	if err := resolveDartPackages(s, files, byID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// resolveDartPackages links a Dart `package:<name>/<path>` import to the file
+// under that workspace package's lib/ directory. The package name -> directory
+// map is recorded at index time from each pubspec.yaml, so an import of a
+// first-party package (an app's own `package:myapp/...`, or another member of a
+// melos monorepo) resolves to lib/<path>. Relative and part imports resolve as
+// paths in the include pass; SDK (`dart:...`) and third-party packages match no
+// workspace pubspec and stay informational.
+func resolveDartPackages(s *store.Store, files []store.File, byID map[int64]store.File) error {
+	raw, _ := s.GetMeta("dart_packages")
+	if raw == "" {
+		return nil
+	}
+	var pkgs map[string]string
+	if err := json.Unmarshal([]byte(raw), &pkgs); err != nil || len(pkgs) == 0 {
+		return nil
+	}
+	fileMap := make(map[string]int64, len(files))
+	for _, f := range files {
+		fileMap[f.RelPath] = f.ID
+	}
+	inc, err := s.UnresolvedEdges("includes")
+	if err != nil {
+		return err
+	}
+	for _, e := range inc {
+		if byID[e.FileID].Lang != "dart" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(e.Raw, "package:")
+		if !ok {
+			continue // relative/part import (resolved as a path) or dart: SDK
+		}
+		i := strings.Index(rest, "/")
+		if i < 0 {
+			continue
+		}
+		dir, ok := pkgs[rest[:i]]
+		if !ok {
+			continue // third-party package, not a workspace member
+		}
+		if id, ok := fileMap[path.Join(dir, "lib", rest[i+1:])]; ok && id != e.FileID {
+			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

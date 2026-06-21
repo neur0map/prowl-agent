@@ -9,6 +9,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/c_sharp"
 	"github.com/alexaandru/go-sitter-forest/cpp"
 	"github.com/alexaandru/go-sitter-forest/css"
+	"github.com/alexaandru/go-sitter-forest/dart"
 	"github.com/alexaandru/go-sitter-forest/fish"
 	golang "github.com/alexaandru/go-sitter-forest/go"
 	"github.com/alexaandru/go-sitter-forest/hyprlang"
@@ -59,6 +60,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"ruby":       ruby.GetLanguage,
 	"php":        php.GetLanguage,
 	"kotlin":     kotlin.GetLanguage,
+	"dart":       dart.GetLanguage,
 	"csharp":     c_sharp.GetLanguage,
 }
 

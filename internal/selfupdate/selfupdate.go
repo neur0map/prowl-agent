@@ -21,7 +21,7 @@ import (
 
 const (
 	// DevVersion is the default version string of a locally built binary.
-	DevVersion  = "v0.6.0"
+	DevVersion  = "v0.7.0"
 	releaseBase = "https://github.com/neur0map/prowl-agent/releases/download/nightly"
 	asset       = "prowl-agent-linux-amd64"
 	commitsAPI  = "https://api.github.com/repos/neur0map/prowl-agent/commits/main"

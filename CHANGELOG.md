@@ -4,6 +4,58 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [semantic versioning](https://semver.org/).
 
+## [0.7.0] - 2026-06-21
+
+Language breadth, symbol signatures, and token-economy hardening on large
+real-world repositories, all on top of the 0.6.0 index.
+
+### Added
+
+- PHP, Kotlin, and Dart are first-class languages now. Each has a Tree-sitter
+  extractor (classes/interfaces/traits/enums/objects/mixins/extensions,
+  functions and methods with cyclomatic complexity) and import-graph resolution:
+  PHP `use Ns\Class` resolves to the file declaring that class (matched on the
+  recorded namespace plus basename); Kotlin shares a JVM resolver with Java so
+  the two resolve to each other across Maven/Gradle/Kotlin-Multiplatform source
+  roots, folding a member or nested-type import to its enclosing class file;
+  Dart resolves `package:<name>/...` to a workspace package's `lib/` (from each
+  pubspec.yaml) and relative/part imports as paths. Validated on Laravel (8237
+  `use` imports), OkHttp (1944, cross-language), and LocalSend (977 `package:`).
+- Symbol signatures: every code language records a function/method/type's
+  declaration header (name, parameters, return type, a class's extends/
+  implements), so `find` and `search` hand the agent a symbol's interface inline
+  instead of only a location. Signatures are full-text indexed too.
+- TypeScript/JavaScript tsconfig path aliases: an import matching a `paths`
+  wildcard (`@/components/Button` with `"paths": {"@/*": ["src/*"]}`) resolves to
+  the real source, scoped to the nearest tsconfig and following a local
+  `extends` to a shared base config. Validated on shadcn/ui (8382 `@/` imports).
+
+### Changed
+
+- `references <id>` returns precise `{file, line, text}` call sites for code
+  symbols (the exact usage line, matched on an identifier boundary) instead of
+  40-line full-text chunks.
+- `overview`, `impact`, and `entrypoints <file>` cap large lists by default: an
+  exact count plus a shallow-first sample, so a hub file or large codebase keeps
+  the first-call answer token-lean (Laravel overview ~59 KB to ~2.5 KB, impact
+  on a 1527-dependent file ~12 KB to ~1.2 KB). `impact --all` still lists every
+  dependent.
+- The generated `AGENTS.md` guidance steers agents to read a symbol's signature
+  from `find` and cited call sites from `references` before opening files.
+
+### Fixed
+
+- Nested `.gitignore` files are honored, each scoped to its own directory
+  (deeper rules win), so a monorepo's per-package `dist/`/`build/` ignores keep
+  generated output out of the index.
+- PHP/Kotlin/Dart external imports (`package:flutter/...`, `Symfony\...`) are no
+  longer flagged as `dangling_includes` violations (Laravel `violations` ~106 KB
+  to ~4.6 KB).
+- A Dart `part of` directive no longer emits a reverse edge that faked a cycle
+  with a generated companion file (`.g.dart`, `.freezed.dart`).
+- The `AGENTS.md` block is refreshed in place by re-init without touching the
+  user's own content, even when the closing marker is missing.
+
 ## [0.6.0] - 2026-06-21
 
 The first working version: a local index that gives AI coding agents fast, cited
@@ -21,29 +73,20 @@ answers about a project's files, served over MCP.
   This is what lets a JS/TS monorepo that ignores a tree but keeps its source
   (`packages/*/*/` then `!packages/*/src/`) be indexed at all -- previously the
   whole `packages/*/src` source tree, and same-depth manifests like
-  `packages/<pkg>/package.json`, were skipped (on tRPC: 809 -> 1470 files). Nested
-  `.gitignore` files are honored too, each scoped to its own directory (deeper
-  rules win), so a monorepo's per-package `dist/`/`build/` ignores keep generated
-  output out of the index without a root rule.
+  `packages/<pkg>/package.json`, were skipped (on tRPC: 809 -> 1470 files).
 - A binary upgrade forces a full re-parse: the index records the binary's version,
   so extractor and resolver fixes apply on update instead of incremental hashing
   skipping unchanged files and serving stale data. Release builds key this off the
   commit; dev and dirty builds key off the binary's mtime so each local rebuild
   also reparses.
-- Tree-sitter extraction for Go, Rust, Java, Kotlin, Ruby, C#, PHP, Dart,
-  TypeScript/TSX, Lua, Python, JavaScript, Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
+- Tree-sitter extraction for Go, Rust, Java, Ruby, C#, TypeScript/TSX, Lua,
+  Python, JavaScript, Bash, Fish, C/C++, QML, CSS, SCSS, Markdown, JSON, YAML, TOML, INI, and Hyprland,
   plus a line-based reader for other config formats (sway/i3, rofi `rasi`,
   polybar, and similar). Markdown headings and JavaScript declarations become
   symbols, so docs and dashboard scripts are searchable by name as well as by
   content. Go, Rust, and TypeScript are indexed at the symbol level (functions,
   methods, types, structs/enums/traits/interfaces, and import edges), so `find`
   and `search` cover those projects; prowl can now index its own Go source.
-- Symbol signatures: every code language records a function/method/type's
-  declaration header (name, parameters, return type, and a class's extends/
-  implements), collapsed to one line and length-capped, so `find` and `search`
-  hand the agent a symbol's interface inline. An agent can pick the right one of
-  53 `make` overloads, or read a function's parameters, without opening the file.
-  Signatures are full-text indexed too, so a search can match a parameter type.
 - Go package graph: an in-module import resolves to every file of the imported
   package (synthetic `pkg` edges, rebuilt each resolve so they never accumulate),
   so `callers`, `callees`, `impact`, `changed`, `clusters`, and `entrypoints`
@@ -67,17 +110,6 @@ answers about a project's files, served over MCP.
   previously-dangling `@trpc/*` imports and gave the core `@trpc/server` entry a
   real cross-package blast radius (impact `0` -> `345`); on zod it resolves the
   subpath imports (`zod/v4/core` -> `packages/zod/src/v4/core/index.ts`).
-- TypeScript/JavaScript tsconfig path aliases: an import that matches a `paths`
-  wildcard (`@/components/Button` with `"paths": {"@/*": ["src/*"]}`) resolves to
-  the real source file. The alias-prefix -> directory map is read from each
-  tsconfig.json/jsconfig.json (baseUrl-resolved, JSONC comments and trailing
-  commas tolerated) and scoped to that config's directory, so a monorepo's
-  per-package `@/` aliases resolve against the nearest config without crossing
-  packages. On the shadcn/ui monorepo this resolved 8382 `@/` imports across many
-  per-package configs; aliases pointing at non-existent or virtual modules stay
-  informational. A config with no `paths` of its own follows a local `extends`
-  to a shared base config (the Turborepo/Nx pattern), resolving the base's
-  targets relative to the base's own directory.
 - Rust module graph: `mod foo;` declarations resolve to the included file
   (`foo.rs` / `foo/mod.rs`, handling both `mod.rs` and `foo.rs` parent layouts),
   `crate::` imports resolve to the module file under the importing file's crate
@@ -100,30 +132,6 @@ answers about a project's files, served over MCP.
   `import com.foo.*` fans out to every file in the package. JDK and third-party
   imports stay informational. On the retrofit repo this took resolved edges from
   105 to 704 and produced real per-module clusters and cross-module blast radius.
-- Kotlin graph: classes, interfaces, objects, enums, and functions are indexed
-  with cyclomatic complexity, and an `import com.foo.Bar` resolves through the
-  shared JVM resolver, so Kotlin and Java link to each other in a mixed project.
-  The source-root detection covers the Maven, Gradle, and Kotlin-Multiplatform
-  (`src/jvmMain/kotlin`, `src/commonMain/kotlin`, ...) layouts, and a member or
-  nested-type import (`HttpUrl.Companion.toHttpUrl`, `Outer.Inner`) folds to its
-  enclosing class file. On OkHttp this resolved 1944 imports across source sets;
-  top-level package functions map to no class file and stay informational.
-- Dart graph: classes, mixins, enums, extensions, and functions are indexed with
-  cyclomatic complexity, and a `package:<name>/path` import resolves to that
-  workspace package's `lib/` source (the name read from each pubspec.yaml, so an
-  app's own `package:myapp/...` and a melos monorepo's sibling packages both
-  link); relative and part imports resolve as paths. On LocalSend (a multi-package
-  Flutter workspace) this resolved 977 `package:` imports across packages; the
-  Flutter SDK and third-party packages match no pubspec and stay informational.
-- PHP class graph: a `use Ns\Class` import (including grouped `use Ns\{A, B}`)
-  resolves to the file that declares that class, matched by the class's recorded
-  `namespace` and basename rather than a fixed PSR-4 directory map, so a class
-  whose namespace lives in an off-convention directory still resolves. Classes,
-  interfaces, traits, enums, functions, and methods are indexed with cyclomatic
-  complexity, and `require`/`include` paths resolve as files. On the Laravel
-  framework this resolved 8237 cross-component `use` imports and gave
-  `impact src/Illuminate/Support/Str.php` a 1527-file blast radius; vendor
-  imports (PHPUnit, Symfony) match no indexed namespace and stay informational.
 - A graph of how files connect: include trees, exec and keybind to script chains,
   and shared color/font/path/variable references, with path and name resolution.
   Bare commands resolve against the project's command files by basename.
@@ -163,12 +171,8 @@ answers about a project's files, served over MCP.
   symbols that contain it (`updateCloudClient`) instead of returning nothing.
 - `references <id>` answers "what uses this symbol": config/resource reference
   edges when present, and for code symbols (which have no language call graph) it
-  falls back to name usages found in source, excluding the definition. Each call
-  site is a precise `{file, line, text}` row (the exact usage line and its code),
-  matched on a whole-identifier boundary so a substring of a longer name does not
-  match, instead of a 40-line full-text chunk. So `find <name>` then
-  `references <id>` returns the cited call lines instead of nothing or a wall of
-  context.
+  falls back to full-text call sites of the name, excluding the definition. So
+  `find <name>` then `references <id>` returns the call sites instead of nothing.
 - `callees` lists what a file directly imports/execs/binds, not the package
   fan-out: a Go file importing N packages shows N imports, not one row per file
   in each imported package. On a 47-import file this is ~50 rows, not ~400.
@@ -183,23 +187,15 @@ answers about a project's files, served over MCP.
   edit before committing without a flood of rows. `--all` includes unindexed paths.
 - `impact` summarizes the blast radius by default: a total dependent count, a
   breakdown by subsystem (which surfaces the dependency hubs driving the radius),
-  and a capped sample of the direct importers (the count is exact; the inline
-  list stays small even for a hub imported hundreds of times). On the Laravel
-  framework `impact src/Illuminate/Support/Str.php` is ~1.2 KB (total 1527,
-  direct 237) instead of ~12 KB. `--all` lists every dependent file.
-- `entrypoints <file>` reports the root count plus a shallow-first sample rather
-  than every reachable root, so a widely-used file does not dump thousands of
-  paths: on Laravel a hub's entrypoints answer is ~0.8 KB (count 927), not
-  ~47 KB.
+  and the direct importers, instead of dumping every dependent. On a large Go
+  package this is a 12-line summary rather than a 600+ row list. `--all` lists
+  every dependent file.
 - `overview` is a compact project map for an agent's first call: per-cluster it
   reports the label, language, and file count rather than every file path (the
   full lists stay in `clusters`), and it surfaces the project's architecture docs
   (root README, ARCHITECTURE, CONTRIBUTING, `docs/**` guides) so the agent reads
-  the human-written guide before code. The entrypoint list is a count plus a
-  shallow-first sample (the real roots, like `main.go` and `config/`, surface
-  first), so a large codebase with thousands of root files does not balloon the
-  answer: on the Laravel framework overview is ~2.5 KB with `entrypoint_count`
-  1142, not ~59 KB. On a 2023-file Go repo this is a ~1 KB map instead of ~49 KB.
+  the human-written guide before code. On a 2023-file Go repo this is a ~1.3 KB
+  map instead of ~49 KB of mostly file paths.
 - `clusters` lists subsystem summaries (label, language, file count) by default,
   and `clusters <name>` returns the files of matching subsystems, so pulling one
   subsystem stays cheap instead of dumping every cluster's files. On a 2023-file

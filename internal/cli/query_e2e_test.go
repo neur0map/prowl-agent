@@ -50,6 +50,15 @@ func TestQueryCLIE2E(t *testing.T) {
 	if out := run("overview"); !strings.Contains(out, "clusters") || !strings.Contains(out, "entrypoints") {
 		t.Fatalf("overview: %s", out)
 	}
+	if out := run("overview", "--format", "human"); !strings.Contains(out, "Project overview") || strings.Contains(out, "clusters[0]") || strings.Contains(out, "null") {
+		t.Fatalf("overview --format human: %s", out)
+	}
+	if out := run("overview", "--format", "markdown"); !strings.Contains(out, "# Project overview") || !strings.Contains(out, "## Entrypoints") {
+		t.Fatalf("overview --format markdown: %s", out)
+	}
+	if out := run("find", "M.apply", "--format", "toon"); !strings.Contains(out, "nvim/lua/opts.lua") {
+		t.Fatalf("find --format toon: %s", out)
+	}
 	if out := run("impact", "hypr/colors.conf"); !strings.Contains(out, "hypr/hyprland.conf") {
 		t.Fatalf("impact: %s", out)
 	}

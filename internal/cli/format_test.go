@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -69,5 +70,68 @@ func TestFormatValueTOONIsLeanerThanJSON(t *testing.T) {
 	tn, _ := formatValue(hits, formatTOON)
 	if len(tn) >= len(js) {
 		t.Errorf("TOON (%d bytes) should be leaner than JSON (%d bytes) for uniform arrays", len(tn), len(js))
+	}
+}
+
+func TestParseOutputFormat(t *testing.T) {
+	tests := []struct {
+		name string
+		want outputFormat
+	}{
+		{"human", formatHuman},
+		{"toon", formatTOON},
+		{"json", formatJSON},
+		{"markdown", formatMarkdown},
+		{"md", formatMarkdown},
+	}
+	for _, tt := range tests {
+		got, err := parseOutputFormat(tt.name)
+		if err != nil {
+			t.Fatalf("parseOutputFormat(%q): %v", tt.name, err)
+		}
+		if got != tt.want {
+			t.Errorf("parseOutputFormat(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+	if _, err := parseOutputFormat("xml"); err == nil {
+		t.Fatal("parseOutputFormat(xml) should fail")
+	}
+}
+
+func TestDefaultOutputFormat(t *testing.T) {
+	if got := defaultOutputFormat(true); got != formatHuman {
+		t.Fatalf("TTY default = %v, want human", got)
+	}
+	if got := defaultOutputFormat(false); got != formatTOON {
+		t.Fatalf("non-TTY default = %v, want toon", got)
+	}
+}
+
+func TestFormatOverviewHumanSuppressesEmptySerialization(t *testing.T) {
+	overview := query.Overview{Counts: store.Counts{Files: 2, Symbols: 3}, Docs: []string{"README.md"}}
+	got, err := formatValue(overview, formatHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Project overview", "2 files", "3 symbols", "README.md"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("human overview missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"null", "clusters[0]", "[]", "{}"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("human overview contains serialization noise %q:\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestFormatOverviewMarkdown(t *testing.T) {
+	overview := query.Overview{Counts: store.Counts{Files: 1}, Entrypoints: []string{"cmd/app/main.go"}}
+	got, err := formatValue(overview, formatMarkdown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "# Project overview") || !strings.Contains(got, "`cmd/app/main.go`") {
+		t.Fatalf("unexpected markdown overview:\n%s", got)
 	}
 }

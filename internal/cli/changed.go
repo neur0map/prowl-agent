@@ -74,7 +74,7 @@ func changedFiles(root, base string) ([]string, error) {
 }
 
 func newChangedCmd() *cobra.Command {
-	var asJSON bool
+	var output outputOptions
 	var base string
 	var all bool
 	c := &cobra.Command{
@@ -82,9 +82,9 @@ func newChangedCmd() *cobra.Command {
 		Short: "Map your git changes to the files they could affect (blast radius)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			format := formatTOON
-			if asJSON {
-				format = formatJSON
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
 			q, ws, s, closer, err := openQuerier(cmd.Context(), false)
 			if err != nil {
@@ -129,7 +129,7 @@ func newChangedCmd() *cobra.Command {
 			return err
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	output.addFlags(c)
 	c.Flags().StringVar(&base, "base", "HEAD", "git ref to compare against (e.g. main)")
 	c.Flags().BoolVar(&all, "all", false, "include changed files prowl does not index")
 	return c

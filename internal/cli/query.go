@@ -123,25 +123,25 @@ func freshenIndex(ctx context.Context, s *store.Store, root string, ignore []str
 }
 
 // newQueryCmd builds a thin subcommand that runs one querier method and prints
-// the result. Output defaults to TOON (token-lean); --json switches to JSON.
+// the result. Humans get a readable TTY view; pipes keep token-lean TOON.
 func newQueryCmd(use, short string, needsAI bool, args cobra.PositionalArgs, run func(context.Context, *query.Querier, []string) (any, error)) *cobra.Command {
-	var asJSON bool
+	var output outputOptions
 	var limit int
 	c := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  args,
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format := formatTOON
-			if asJSON {
-				format = formatJSON
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
 			return runQuery(cmd.Context(), needsAI, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
 				return run(cmd.Context(), q, a)
 			})
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	output.addFlags(c)
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
 }
@@ -160,15 +160,15 @@ func newOverviewCmd() *cobra.Command {
 // count); given a name it returns the full file list of matching subsystems, so
 // "pull a whole subsystem" stays cheap instead of dumping every cluster's files.
 func newClustersCmd() *cobra.Command {
-	var asJSON bool
+	var output outputOptions
 	c := &cobra.Command{
 		Use:   "clusters [subsystem]",
 		Short: "Project subsystems (summaries); with a name, the files in matching subsystems",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format := formatTOON
-			if asJSON {
-				format = formatJSON
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
 			return runQuery(cmd.Context(), false, format, 0, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
 				clusters, err := q.Clusters()
@@ -193,7 +193,7 @@ func newClustersCmd() *cobra.Command {
 			})
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	output.addFlags(c)
 	return c
 }
 
@@ -216,16 +216,17 @@ func newRelationsCmd() *cobra.Command {
 // direct importers) to stay token-lean on large graphs; --all dumps every
 // dependent file.
 func newImpactCmd() *cobra.Command {
-	var asJSON, all bool
+	var output outputOptions
+	var all bool
 	var limit int
 	c := &cobra.Command{
 		Use:   "impact <path>",
 		Short: "Blast radius of a file: dependent count, subsystems, and direct importers",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format := formatTOON
-			if asJSON {
-				format = formatJSON
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
 			return runQuery(cmd.Context(), false, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
 				if all {
@@ -235,7 +236,7 @@ func newImpactCmd() *cobra.Command {
 			})
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	output.addFlags(c)
 	c.Flags().BoolVar(&all, "all", false, "list every dependent file instead of a summary")
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
@@ -275,16 +276,17 @@ func newReferencesCmd() *cobra.Command {
 // newSearchCmd is the content/semantic search. It carries extra flags (--smart,
 // --compact), so it is not built from the generic helper.
 func newSearchCmd() *cobra.Command {
-	var asJSON, smart, compact bool
+	var output outputOptions
+	var smart, compact bool
 	var limit int
 	c := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search file content (hybrid semantic+full-text when AI is on, else full-text)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format := formatTOON
-			if asJSON {
-				format = formatJSON
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
 			text := joinArgs(a)
 			return runQuery(cmd.Context(), true, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
@@ -309,7 +311,7 @@ func newSearchCmd() *cobra.Command {
 			})
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "output JSON instead of TOON")
+	output.addFlags(c)
 	c.Flags().BoolVar(&smart, "smart", false, "rewrite and rerank the query (assist-augmented)")
 	c.Flags().BoolVar(&compact, "compact", false, "list files without snippets (most token-lean)")
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")

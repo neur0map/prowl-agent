@@ -124,6 +124,23 @@ to stay small: on a 2023-file Go repo, `overview` is about 1 KB and a typical
 `impact` answer is a dozen lines, not the few hundred dependent rows the raw
 graph would print.
 
+## Keep durable project knowledge
+
+Accepted concepts, decisions, claims, and playbooks live as portable OKF Markdown—not inside the disposable SQLite index:
+
+```bash
+prowl-agent knowledge init
+prowl-agent knowledge propose --file candidate.md --target decisions/storage.md
+prowl-agent knowledge accept <proposal-id>
+prowl-agent knowledge list
+prowl-agent knowledge lint
+prowl-agent knowledge export ./knowledge-export
+```
+
+Every proposal exposes a deterministic diff before acceptance. Source anchors report stale evidence when the selected code region changes. Unknown OKF v0.1 fields and future concept types round-trip without loss.
+
+See [Durable knowledge and OKF](docs/KNOWLEDGE.md) for the storage contract, review lifecycle, lint codes, and migration safeguards.
+
 ## One index, three ways to use it
 
 The same `.prowl/index.db` is served three ways, so you pick the integration that

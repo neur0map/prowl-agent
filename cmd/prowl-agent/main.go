@@ -14,7 +14,7 @@ var version = "v0.8.1"
 func main() {
 	root := &cobra.Command{
 		Use:           "prowl-agent",
-		Short:         "Local code and config intelligence for AI coding agents",
+		Short:         "Local knowledge compiler and context workbench for humans and AI agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,

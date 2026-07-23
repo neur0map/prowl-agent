@@ -130,7 +130,19 @@ func RestoreBackup(dbPath, backupPath string) error {
 	}
 	_ = os.Remove(dbPath + "-wal")
 	_ = os.Remove(dbPath + "-shm")
-	return os.Rename(tmp, dbPath)
+	previous := dbPath + ".restore-previous"
+	_ = os.Remove(previous)
+	if _, err := os.Stat(dbPath); err == nil {
+		if err := os.Rename(dbPath, previous); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
+	if err := os.Rename(tmp, dbPath); err != nil {
+		_ = os.Rename(previous, dbPath)
+		return err
+	}
+	return nil
 }
 
 // Close closes the underlying database.

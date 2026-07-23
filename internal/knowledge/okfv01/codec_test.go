@@ -2,6 +2,8 @@ package okfv01
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -96,5 +98,27 @@ func TestMarshalNewDocumentIncludesProwlMetadata(t *testing.T) {
 	}
 	if !bytes.Contains(encoded, []byte("id: decision-1")) || !bytes.Contains(encoded, []byte("status: accepted")) {
 		t.Fatalf("metadata missing:\n%s", encoded)
+	}
+}
+
+func TestCodecReadsGoogleAppendixAFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "google-appendix-a-orders.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := (Codec{}).Parse("tables/orders.md", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Type != "BigQuery Table" || doc.Title != "Orders" || doc.Timestamp != "2026-05-28T00:00:00Z" || !reflect.DeepEqual(doc.Tags, []string{"sales", "orders"}) {
+		t.Fatalf("official fixture decoded incorrectly: %+v", doc)
+	}
+	encoded, err := (Codec{}).Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := (Codec{}).Parse(doc.Path, encoded)
+	if err != nil || roundTrip.Resource != doc.Resource || !bytes.Equal(roundTrip.Body, doc.Body) {
+		t.Fatalf("official fixture round trip failed: %+v, %v", roundTrip, err)
 	}
 }

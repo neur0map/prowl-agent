@@ -127,6 +127,46 @@ func TestOpenRefusesFutureSchemaWithoutModification(t *testing.T) {
 	}
 }
 
+func TestRestoreBackupKeepsPreviousDatabaseAndReopens(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMeta("state", "before"); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := backupDatabase(s.db, path, SchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMeta("state", "after"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreBackup(path, backup); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := restored.GetMeta("state"); state != "before" {
+		t.Fatalf("restored state = %q", state)
+	}
+	restored.Close()
+	previous, err := Open(path + ".restore-previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer previous.Close()
+	if state, _ := previous.GetMeta("state"); state != "after" {
+		t.Fatalf("preserved previous state = %q", state)
+	}
+}
+
 func TestSearchChunksPhraseToTermsFallback(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {

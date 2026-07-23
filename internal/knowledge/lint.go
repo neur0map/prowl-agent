@@ -91,7 +91,16 @@ func (r *Repository) Lint(sourceRoot string) ([]Finding, error) {
 			}
 		}
 		for _, link := range item.links {
-			target := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(doc.Path), filepath.FromSlash(link))))
+			var target string
+			if strings.HasPrefix(link, "/") {
+				target = strings.TrimPrefix(filepath.ToSlash(filepath.Clean(filepath.FromSlash(link))), "/")
+			} else {
+				target = filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(doc.Path), filepath.FromSlash(link))))
+			}
+			if target == ".." || strings.HasPrefix(target, "../") {
+				findings = append(findings, Finding{Code: "knowledge.broken_link", Severity: "warning", Path: doc.Path, Message: fmt.Sprintf("linked document escapes the bundle: %s", link)})
+				continue
+			}
 			if _, err := os.Stat(filepath.Join(r.Root, filepath.FromSlash(target))); err != nil {
 				findings = append(findings, Finding{Code: "knowledge.broken_link", Severity: "warning", Path: doc.Path, Message: fmt.Sprintf("linked document does not exist: %s", link)})
 			} else {

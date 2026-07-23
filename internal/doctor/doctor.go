@@ -25,6 +25,11 @@ const (
 	SevInfo  Severity = "info"
 )
 
+const (
+	ProfileGeneral = "general"
+	ProfileRice    = "rice"
+)
+
 // Finding is one diagnostic result.
 type Finding struct {
 	Check    string   `json:"check"`
@@ -44,6 +49,7 @@ type Report struct {
 // Options tunes thresholds.
 type Options struct {
 	Root            string
+	Profile         string
 	OversizedLines  int
 	FanInThreshold  int
 	FanOutThreshold int
@@ -52,6 +58,9 @@ type Options struct {
 }
 
 func (o Options) withDefaults() Options {
+	if o.Profile == "" {
+		o.Profile = ProfileGeneral
+	}
 	if o.OversizedLines == 0 {
 		o.OversizedLines = 800
 	}
@@ -70,19 +79,31 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Run executes every check and returns a deterministic, sorted report.
+// Run executes general repository checks by default. Desktop/rice checks are
+// enabled only with ProfileRice so ordinary codebases do not receive irrelevant
+// keybind, command, color, or launcher diagnostics.
 func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	opt = opt.withDefaults()
 	var f []Finding
 	for _, fn := range []func(*store.Store, Options) ([]Finding, error){
-		checkCycles, checkFan, checkOversized, checkDuplicateKeybinds,
-		checkBrokenCommands, checkOrphansAndDangling, checkHardcodedColors,
+		checkCycles, checkFan, checkOversized, checkDangling,
 	} {
 		got, err := fn(s, opt)
 		if err != nil {
 			return Report{}, err
 		}
 		f = append(f, got...)
+	}
+	if opt.Profile == ProfileRice {
+		for _, fn := range []func(*store.Store, Options) ([]Finding, error){
+			checkDuplicateKeybinds, checkBrokenCommands, checkOrphanScripts, checkHardcodedColors,
+		} {
+			got, err := fn(s, opt)
+			if err != nil {
+				return Report{}, err
+			}
+			f = append(f, got...)
+		}
 	}
 	fb, err := checkForbidden(s, rules)
 	if err != nil {
@@ -321,7 +342,7 @@ func firstToken(s string) string {
 	return strings.Trim(f[0], `"'`)
 }
 
-func checkOrphansAndDangling(s *store.Store, _ Options) ([]Finding, error) {
+func checkOrphanScripts(s *store.Store, _ Options) ([]Finding, error) {
 	var out []Finding
 	orphans, err := s.OrphanFiles("script")
 	if err != nil {
@@ -334,6 +355,11 @@ func checkOrphansAndDangling(s *store.Store, _ Options) ([]Finding, error) {
 		out = append(out, Finding{Check: "orphan_script", Severity: SevWarn, File: o.RelPath,
 			Detail: "script not referenced by any config or keybind"})
 	}
+	return out, nil
+}
+
+func checkDangling(s *store.Store, _ Options) ([]Finding, error) {
+	var out []Finding
 	dang, err := s.UnresolvedEdges("includes")
 	if err != nil {
 		return nil, err

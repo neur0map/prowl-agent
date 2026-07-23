@@ -177,3 +177,17 @@ func TestInitNoInputWritesOnlySelectedIntegration(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveIntegrationsDeletesProwlOnlyAgentsFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "AGENTS.md")
+	if err := ensureAgentsBlock(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveIntegrations(root, []string{IntegrationAgents}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Prowl-only AGENTS.md remains after removal: %v", err)
+	}
+}

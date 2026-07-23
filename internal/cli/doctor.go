@@ -23,10 +23,14 @@ const cRedHex = "#f38ba8"
 
 func newDoctorCmd() *cobra.Command {
 	var asJSON bool
+	var profile string
 	c := &cobra.Command{
 		Use:   "doctor",
-		Short: "Diagnose project health: cycles, keybind conflicts, dead scripts, broken commands",
+		Short: "Diagnose repository health (use --profile rice for desktop/dotfile checks)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if profile != doctor.ProfileGeneral && profile != doctor.ProfileRice {
+				return fmt.Errorf("unknown doctor profile %q (choose general or rice)", profile)
+			}
 			ws, err := workspace.Resolve(".")
 			if err != nil {
 				return err
@@ -37,7 +41,7 @@ func newDoctorCmd() *cobra.Command {
 			}
 			defer s.Close()
 			rules, _ := config.LoadRules(ws.Path)
-			rep, err := doctor.Run(s, rules, doctor.Options{Root: ws.Root})
+			rep, err := doctor.Run(s, rules, doctor.Options{Root: ws.Root, Profile: profile})
 			if err != nil {
 				return err
 			}
@@ -54,6 +58,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	c.Flags().StringVar(&profile, "profile", doctor.ProfileGeneral, "diagnostic profile: general or rice")
 	return c
 }
 

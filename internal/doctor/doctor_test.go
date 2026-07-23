@@ -51,7 +51,7 @@ func TestDoctor(t *testing.T) {
 	}
 
 	rules := config.Rules{Forbid: []config.Forbid{{Name: "no-theme-scripts", From: "themes", To: "scripts"}}}
-	rep, err := Run(s, rules, Options{})
+	rep, err := Run(s, rules, Options{Profile: ProfileRice})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +77,27 @@ func TestDoctor(t *testing.T) {
 	}
 	if rep.Summary["cyclic_include"] == 0 {
 		t.Errorf("summary missing cyclic_include: %+v", rep.Summary)
+	}
+
+	general, err := Run(s, rules, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, riceOnly := range []string{"duplicate_keybind", "broken_command", "orphan_script", "hardcoded_color"} {
+		for _, finding := range general.Findings {
+			if finding.Check == riceOnly {
+				t.Errorf("general doctor included rice-only check %q: %+v", riceOnly, general.Findings)
+			}
+		}
+	}
+	for _, required := range []string{"cyclic_include", "dangling_reference", "forbidden_crossing"} {
+		found := false
+		for _, finding := range general.Findings {
+			found = found || finding.Check == required
+		}
+		if !found {
+			t.Errorf("general doctor missing %q: %+v", required, general.Findings)
+		}
 	}
 }
 

@@ -345,9 +345,10 @@ func removeAgentsBlock(path string) error {
 	}
 	end := start + endRel + len(agentsEndMarker)
 	updated := strings.TrimSpace(content[:start] + content[end:])
-	if updated != "" {
-		updated += "\n"
+	if updated == "" {
+		return os.Remove(path)
 	}
+	updated += "\n"
 	return os.WriteFile(path, []byte(updated), 0o644)
 }
 

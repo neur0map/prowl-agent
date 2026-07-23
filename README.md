@@ -4,7 +4,7 @@
 
 [![build](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml/badge.svg)](https://github.com/neur0map/prowl-agent/actions/workflows/release.yml)
 [![version](https://img.shields.io/github/v/release/neur0map/prowl-agent?label=version&color=89b4fa)](https://github.com/neur0map/prowl-agent/releases/latest)
-[![platform](https://img.shields.io/badge/platform-Linux%20x86__64-555)](#install)
+[![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-555)](#install)
 
 Every time you ask a coding agent to change something, it greps the repo and
 re-reads the same files to rebuild context it already lost. You pay for those
@@ -42,23 +42,23 @@ opening a file.
 
 ## Install
 
-One line. It downloads the binary, verifies its checksum, and drops it in
-`~/.local/bin`:
+Linux and macOS (amd64 or arm64):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.sh | sh
 ```
 
-It is a Linux x86_64, cgo-linked binary, so it needs a recent glibc. Prefer to
-verify by hand or build from source? Both work:
+Windows amd64 from PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.ps1 | iex
+```
+
+Both installers select the native artifact and verify its SHA-256 checksum.
+Linux builds need a recent glibc. To build from source, install Go 1.26+, a C
+compiler, and SQLite development headers (`libsqlite3-dev` on Debian/Ubuntu):
 
 ```sh
-# manual download + checksum verify
-curl -fsSL -O https://github.com/neur0map/prowl-agent/releases/download/nightly/prowl-agent-linux-amd64
-curl -fsSL -O https://github.com/neur0map/prowl-agent/releases/download/nightly/prowl-agent-linux-amd64.sha256
-sha256sum -c prowl-agent-linux-amd64.sha256 && install -m755 prowl-agent-linux-amd64 ~/.local/bin/prowl-agent
-
-# from source (Go 1.26+, C toolchain)
 CGO_ENABLED=1 go build -tags sqlite_fts5 -o prowl-agent ./cmd/prowl-agent
 ```
 
@@ -71,20 +71,21 @@ for a day.
 Run this once inside any project (a code repo, a dotfiles folder, `~/.config`):
 
 ```sh
-prowl-agent init                 # interactive
-prowl-agent init --no-ai --yes   # or non-interactive
+prowl-agent init                                      # interactive client selection
+prowl-agent init --dry-run --integrations auto        # exact preview, no writes
+prowl-agent init --no-ai --no-input --integrations cursor,vscode
 ```
 
-That one command builds the index, writes a short `AGENTS.md` telling your agent
-how to query it, registers the MCP server for Cursor, VS Code, and other
-MCP-compatible agents, and wires your editor's language server. Everything lives
-in a local `.prowl/` folder that gets added to `.gitignore`. Nothing leaves your
-machine.
+`init` builds the index, previews the selected integrations, and writes only the
+clients you choose. `--integrations auto` selects clients already present in the
+project; use `none`, `all`, or a comma-separated list. `--remove-integrations`
+removes only Prowl-owned entries and preserves neighboring user configuration.
+Core state lives in `.prowl/`, which is added to `.gitignore`. Nothing leaves
+your machine.
 
-`init` is the only setup command, and it is safe to re-run (after a reboot, say).
-It remembers whether you enabled AI instead of asking again, and the `AGENTS.md`
-block it writes is delimited by markers, so a re-run refreshes prowl's guidance
-and never touches the rest of your `AGENTS.md`.
+Setup is transactional: malformed client configuration aborts the operation and
+restores files already touched. The optional `AGENTS.md` guidance is delimited by
+markers, so re-running setup refreshes only Prowl's block.
 
 There is no server to keep running. Each query re-indexes incrementally first
 (only what changed, in tens of milliseconds), so the agent never reads stale data
@@ -109,14 +110,16 @@ prowl-agent references <id>     # references to a symbol id (the id column from 
 prowl-agent clusters [name]     # subsystems (summaries); with a name, that subsystem's files
 prowl-agent hotspots            # structurally central / large / complex files
 prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
-prowl-agent doctor              # health: cycles, duplicate keybinds, broken commands, a 0-100 score
+prowl-agent doctor              # general health: cycles, fan risk, dangling refs, score
+prowl-agent doctor --profile rice # add keybind, desktop command, color, orphan checks
 prowl-agent tests <path>        # configs/keybinds that launch or reload a file
 prowl-agent changed             # your git changes mapped to the files they could affect
 ```
 
-Output defaults to TOON (compact, cited, `file:line`); add `--json` for JSON, or
-`--limit N` to cap results for fewer tokens. Run from anywhere inside the
-project; prowl finds the index by walking up to `.prowl/`. Each answer is built
+TTY output defaults to a human view; pipes and agent calls default to compact
+TOON. Choose `--format human|toon|json|markdown` explicitly (`--json` remains a
+compatibility alias), or `--limit N` to cap results. Run from anywhere inside
+the project; Prowl finds the index by walking up to `.prowl/`. Each answer is built
 to stay small: on a 2023-file Go repo, `overview` is about 1 KB and a typical
 `impact` answer is a dozen lines, not the few hundred dependent rows the raw
 graph would print.
@@ -128,9 +131,9 @@ fits and the answers stay identical and cited:
 
 - **Shell commands (recommended).** Any agent that can run a command can use
   prowl. Nothing to start, and none of MCP's upfront per-call tool-schema cost.
-- **MCP server.** For agents that prefer typed tools, `init` writes config for
-  the standard `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, and
-  OpenCode. It exposes 17 tools (`find_symbol`, `blast_radius`, `similar_code`,
+- **MCP server.** For agents that prefer typed tools, select the standard
+  `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, or OpenCode integration
+  during setup. It exposes 17 tools (`find_symbol`, `blast_radius`, `similar_code`,
   `doctor`, and the rest). Point any other agent at one command, `prowl-agent serve`.
 - **Editor language server.** `prowl-agent lsp` gives a human go-to-definition,
   find-references, hover (with use counts), document and workspace symbols, code
@@ -254,4 +257,4 @@ polybar, kitty, dunst, and similar).
 - [Measuring token usage](docs/TOKENS.md): how the savings number is computed, and how to check it
 - [Changelog](CHANGELOG.md)
 
-Linux only for now. Built with Go, Tree-sitter, and SQLite.
+Built with Go, Tree-sitter, and SQLite for Linux, macOS, and Windows.

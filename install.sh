@@ -1,56 +1,45 @@
 #!/bin/sh
-# Install the latest prowl-agent build. Usage:
+# Install the latest Prowl build on Linux or macOS.
 #   curl -fsSL https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.sh | sh
-set -e
+set -eu
 
 REPO="neur0map/prowl-agent"
-BASE="https://github.com/$REPO/releases/download/nightly"
-BIN="prowl-agent-linux-amd64"
+BASE="${PROWL_RELEASE_BASE:-https://github.com/$REPO/releases/download/nightly}"
 DEST="${PROWL_INSTALL_DIR:-$HOME/.local/bin}"
 
-os="$(uname -s)"
-arch="$(uname -m)"
-if [ "$os" != "Linux" ]; then
-  echo "prowl-agent supports Linux only (found: $os)." >&2
-  exit 1
-fi
-if [ "$arch" != "x86_64" ] && [ "$arch" != "amd64" ]; then
-  echo "prowl-agent ships an x86_64 build only (found: $arch). Build from source instead." >&2
-  exit 1
-fi
+case "$(uname -s)" in
+  Linux) os=linux ;;
+  Darwin) os=darwin ;;
+  *) echo "Unsupported operating system: $(uname -s). Use install.ps1 on Windows." >&2; exit 1 ;;
+esac
 
+case "$(uname -m)" in
+  x86_64|amd64) arch=amd64 ;;
+  arm64|aarch64) arch=arm64 ;;
+  *) echo "Unsupported architecture: $(uname -m). Build from source instead." >&2; exit 1 ;;
+esac
+
+BIN="prowl-agent-${os}-${arch}"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
-echo "Downloading prowl-agent ..."
+echo "Downloading $BIN ..."
 curl -fsSL -o "$tmp/$BIN" "$BASE/$BIN"
 curl -fsSL -o "$tmp/$BIN.sha256" "$BASE/$BIN.sha256"
 
-echo "Verifying checksum ..."
 want="$(awk '{print $1}' "$tmp/$BIN.sha256")"
 if command -v sha256sum >/dev/null 2>&1; then
   got="$(sha256sum "$tmp/$BIN" | awk '{print $1}')"
 else
   got="$(shasum -a 256 "$tmp/$BIN" | awk '{print $1}')"
 fi
-if [ "$want" != "$got" ]; then
-  echo "Checksum mismatch; aborting." >&2
-  exit 1
-fi
+[ "$want" = "$got" ] || { echo "Checksum mismatch; aborting." >&2; exit 1; }
 
 mkdir -p "$DEST"
 install -m 0755 "$tmp/$BIN" "$DEST/prowl-agent"
-
-echo ""
-echo "  prowl-agent installed to $DEST/prowl-agent"
-echo "  next:  cd <your project> && prowl-agent init"
-echo ""
+printf '\n  Prowl installed to %s/prowl-agent\n  Next: cd <project> && prowl-agent init\n\n' "$DEST"
 
 case ":$PATH:" in
   *":$DEST:"*) ;;
-  *)
-    echo "  note: $DEST is not on your PATH yet. Add it, e.g.:"
-    echo "        export PATH=\"$DEST:\$PATH\""
-    echo ""
-    ;;
+  *) printf '  Note: add %s to PATH, for example:\n        export PATH="%s:$PATH"\n\n' "$DEST" "$DEST" ;;
 esac

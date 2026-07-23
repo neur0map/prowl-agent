@@ -116,13 +116,23 @@ func PresetByName(name string) ModelPreset {
 	return Presets[0]
 }
 
-// DefaultRules returns the starter rule set for a project.
+// DefaultRules returns general repository rules. Desktop-specific rules are
+// available through RiceRules and the doctor rice profile.
 func DefaultRules() Rules {
 	return Rules{Rule: []Rule{
 		{Name: "no-dangling-includes", Kind: "dangling_includes", Description: "every source/include/import/require must resolve to a file in the project"},
-		{Name: "no-orphan-scripts", Kind: "orphan_script", Description: "scripts should be referenced by some config or keybind"},
-		{Name: "use-theme-variables", Kind: "hardcoded_color", Description: "prefer theme variables over hardcoded color literals"},
 	}}
+}
+
+// RiceRules returns optional desktop/dotfile rules layered on top of the general
+// rules by clients that explicitly opt into the rice profile.
+func RiceRules() Rules {
+	rules := DefaultRules()
+	rules.Rule = append(rules.Rule,
+		Rule{Name: "no-orphan-scripts", Kind: "orphan_script", Description: "scripts should be referenced by some config or keybind"},
+		Rule{Name: "use-theme-variables", Kind: "hardcoded_color", Description: "prefer theme variables over hardcoded color literals"},
+	)
+	return rules
 }
 
 // Load reads config.toml from dir, returning Default() if absent.

@@ -34,7 +34,10 @@ func TestConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Rule) != 3 {
-		t.Fatalf("rules = %d, want 3", len(r.Rule))
+	if len(r.Rule) != 1 {
+		t.Fatalf("general rules = %d, want 1", len(r.Rule))
+	}
+	if rice := RiceRules(); len(rice.Rule) != 3 {
+		t.Fatalf("rice rules = %d, want 3", len(rice.Rule))
 	}
 }

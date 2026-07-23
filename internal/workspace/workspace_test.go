@@ -16,6 +16,9 @@ func TestCreateResolve(t *testing.T) {
 	if _, err := os.Stat(w.Path); err != nil {
 		t.Fatalf(".prowl not created: %v", err)
 	}
+	if w.Knowledge != filepath.Join(w.Path, "knowledge") || w.Proposals != filepath.Join(w.Path, "proposals") {
+		t.Fatalf("canonical paths not exposed: %+v", w)
+	}
 	sub := filepath.Join(root, "a", "b")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)

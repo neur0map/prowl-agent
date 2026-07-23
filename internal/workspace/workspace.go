@@ -16,14 +16,25 @@ var ErrNotFound = errors.New("no .prowl workspace found (run 'prowl-agent init')
 
 // Workspace locates a project's index and config.
 type Workspace struct {
-	Root string // project root containing .prowl/
-	Path string // path to .prowl/
-	DB   string // path to index.db
+	Root      string // project root containing .prowl/
+	Path      string // path to .prowl/
+	DB        string // derived SQLite index
+	Knowledge string // canonical, trackable OKF bundle
+	Proposals string // reviewable, optionally trackable proposal inbox
+	Cache     string // derived cache data
+	Logs      string // derived logs
 }
 
 func at(root string) *Workspace {
 	d := filepath.Join(root, Dir)
-	return &Workspace{Root: root, Path: d, DB: filepath.Join(d, "index.db")}
+	return &Workspace{
+		Root: root, Path: d,
+		DB:        filepath.Join(d, "index.db"),
+		Knowledge: filepath.Join(d, "knowledge"),
+		Proposals: filepath.Join(d, "proposals"),
+		Cache:     filepath.Join(d, "cache"),
+		Logs:      filepath.Join(d, "logs"),
+	}
 }
 
 // Create makes the .prowl/ workspace (and logs dir) under root.

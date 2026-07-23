@@ -137,7 +137,7 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err := ApplySetupPlan(plan); err != nil {
 		return sum, err
 	}
-	if err := workspace.EnsureIgnored(root, workspace.Dir+"/"); err != nil {
+	if err := workspace.EnsureDerivedIgnored(root); err != nil {
 		return sum, err
 	}
 	if err := workspace.Register(root, aiOn); err != nil {

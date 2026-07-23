@@ -2,18 +2,19 @@
 
 **Date:** 2026-07-23
 **Repository:** `https://github.com/neur0map/prowl-agent`
-**Inspected revision:** `5e103fc` (`main`)
-**Status:** Research and planning; no product code changed
+**Original audit revision:** `5e103fc` (`main`)
+**Current implementation checkpoint:** `95ba94fd865b911c4b1a9b592f0b880b7ef2167d` (`product-evolution`)
+**Status:** Active implementation contract; Phases 1–2 complete, Phase 3A tracer bullet committed, Hermes-inspired agent-operations expansion accepted for implementation
 
 ## Executive decision
 
-Prowl should not become another coding agent, another chat wrapper, or a decorative graph viewer.
+Prowl should not become another generic coding agent, chat wrapper, or decorative graph viewer. It should operate agents, but every autonomous surface must remain grounded in Prowl's evidence, knowledge, context, approval, and verification contracts.
 
-It should become **Prowl — a local knowledge compiler and context workbench for humans and AI agents**.
+It should become **Prowl — a knowledge-native local agent operating system: a knowledge compiler, context workbench, and durable workflow control plane for humans and AI agents**.
 
 Prowl's durable product promise should be:
 
-> Point Prowl at a project or knowledge workspace. It deterministically maps what exists, helps an agent compile sources into reviewable knowledge, and gives both humans and agents the right level of context—with provenance, freshness, and explicit control.
+> Point Prowl at a project or knowledge workspace. It deterministically maps what exists, helps named agents compile sources into reviewable knowledge, gives humans and agents the right context, and coordinates durable work with live evidence, provenance, freshness, approvals, and explicit control.
 
 The differentiator is not “we have a code graph.” Many products now do. The defensible combination is:
 
@@ -22,6 +23,7 @@ The differentiator is not “we have a code graph.” Many products now do. The 
 3. **Progressive context:** overview → neighborhood/timeline → cited detail, with an explicit token/attention budget.
 4. **Two first-class views:** a visual, explanatory human workbench and a compact, structured agent interface over the same substrate.
 5. **Local-first interoperability:** Obsidian, MCP, CLI, LSP, Git, and agent hooks without binding users to a model vendor.
+6. **Durable operations:** provider-neutral sessions, profiles, tools, skills, task boards, workers, approvals, automations, and live audit data over the same application services.
 
 A useful internal metaphor is **compiler, not database**:
 
@@ -38,9 +40,16 @@ raw sources + code + specs + session evidence
           ▼                   ▼
  human workbench       agent context packets
  Obsidian / Web UI      MCP / CLI / skills
+          │                   │
+          └─────────┬─────────┘
+                    ▼
+       sessions · profiles · approvals
+                    │
+                    ▼
+      durable boards · workers · live events
 ```
 
-SQLite remains the acceleration and derived-index layer. It must not be the only durable memory.
+The project index in SQLite remains derived and rebuildable. Separate operational SQLite stores may hold durable sessions, tasks, run attempts, approvals, and append-only events, with export, backup, repair, migration, retention, and redaction contracts. Durable project knowledge still must not exist exclusively in a database.
 
 ---
 
@@ -111,9 +120,9 @@ These are not rice-only capabilities. The implementation has already outgrown it
 - Savings estimates compare answer bytes with full cited file sizes. The repository documents this honestly, but this should not remain the primary success story.
 - The current product has no memorable workflow that a user can show another person beyond terminal output.
 
-### Execution limitation during this audit
+### Execution limitation during the original audit
 
-The host did not have Go installed, so source-level Go tests could not be executed from the clone. I exercised the shipped nightly binary in an isolated temporary workspace instead. Before implementation begins, CI and a local Go toolchain should run `go test ./...`, race tests where practical, and release-target smoke tests.
+The host did not have Go installed during the original `5e103fc` audit, so that audit used source inspection plus isolated released-binary smoke tests. This limitation no longer applies: the active implementation environment has the repository-required Go 1.26.4 toolchain, Node/npm, Playwright Chromium, and SQLite FTS5 support through the `sqlite_fts5` build tag. Every implementation phase must run the real tagged Go suites, race tests where practical, frontend checks, compiled-binary browser tests, and release-target smoke tests rather than relying on the historical binary evidence.
 
 ---
 
@@ -392,16 +401,57 @@ Discovery, extraction, and synthesis must remain separate stages. Preserve raw U
 
 Long research must be resumable and asynchronous: job ID, progress events, cancellation, explicit budgets, partial evidence, and retry ceilings. Provider-native adapters belong behind the facade; MCP remains the user-extensible integration boundary.
 
+### 2.10 Hermes Agent operations and Kanban
+
+The NousResearch Hermes Agent source and documentation were inspected at pinned upstream revision `c4f5a45d5d9903998fb318ac6f3c5e6623e60445` on 2026-07-23. The detailed provenance, parity matrix, target packages, invariants, phased implementation, and verification strategy are part of this contract in:
+
+```text
+docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md
+```
+
+Source-verified patterns to adopt:
+
+- a narrow, cache-stable agent core with executable tools grouped into context-gated toolsets;
+- named profiles over a provider-neutral agent loop;
+- durable, searchable sessions separated from procedural skills, user memory, project knowledge, and ephemeral working context;
+- bounded fork/join delegation for short reasoning tasks;
+- a durable Kanban kernel for work that crosses runs, agents, restarts, or human review;
+- one task state machine shared by CLI, model tools, dashboard, automations, and workers;
+- per-board isolation, parent-child dependencies, comments, append-only events, run attempts, attachments, idempotency, leases, heartbeats, reclaim, retries, and diagnostics;
+- task-scoped model tools plus concise worker protocol injected only into dispatched workers;
+- authoritative snapshots plus cursor-based live invalidation and refetch in the dashboard;
+- profiles, sessions, skills, models, tools, plugins, cron, webhooks, logs, health, and system actions exposed through shared management services.
+
+Prowl-specific improvements are required rather than blind parity:
+
+- use clean-room Go behavior contracts; no upstream source transplant while Prowl has no license decision;
+- keep durable operational state separate from `.prowl/index.db`;
+- use authenticated fetch-streamed SSE for one-way events so bearer credentials never enter URLs;
+- append state and event in one transaction, then publish from an in-process broker with cursor replay after restart;
+- fail closed when authentication dependencies are unavailable, including tests;
+- make review a first-class status and approval policy rather than a magic block-reason prefix;
+- keep deterministic evidence and portable Markdown knowledge authoritative for project facts;
+- expose stable runner/provider/channel/plugin interfaces before adding broad integration counts;
+- require bounded queues, event-gap recovery, retention, redaction, backup, repair, migration, and real-process/browser tests.
+
+**Determination for Prowl:** implement the Hermes-inspired agent kernel and durable operations control plane as Phases 3B and 3C after the original workbench becomes a real-data shared-service surface. Continue the original Obsidian, memory/research, and ecosystem phases over those contracts, then complete a broader parity phase. “Full parity” is a requirement-led audit result, not a route-count or visual-similarity claim.
+
 ---
 
 ## 3. Product architecture
 
-### 3.1 Four-layer model
+### 3.1 Knowledge-native agent operating stack
 
 ```text
 ┌───────────────────────────────────────────────────────────────┐
 │ Surfaces                                                      │
-│ Web workbench · Obsidian · CLI · MCP · LSP · exported HTML    │
+│ Web · Obsidian · CLI · MCP · LSP · plugins · automation       │
+├───────────────────────────────────────────────────────────────┤
+│ Agent operations                                              │
+│ profiles · sessions · tools · skills · approvals · task boards│
+├───────────────────────────────────────────────────────────────┤
+│ Live application services                                     │
+│ versioned commands/queries · jobs · events · runners · policy │
 ├───────────────────────────────────────────────────────────────┤
 │ Context service                                               │
 │ budget packing · ranking · provenance · freshness · summaries │
@@ -426,6 +476,16 @@ Long research must be resumable and asynchronous: job ID, progress events, cance
 - Accepted decisions and rationale.
 - Source references and stable IDs.
 - Optional tracked workspace manifest.
+
+**Durable operational state:**
+
+- Profiles and atomic global configuration, excluding secret values.
+- Sessions, messages, tool calls, steering events, usage, and compaction checkpoints.
+- Boards, tasks, links, comments, approvals, run attempts, append-only events, and declared artifacts.
+- Automation schedules, webhook idempotency records, and notification subscriptions.
+- Migration backups, integrity/repair evidence, retention metadata, and exports.
+
+Operational state is not a rebuildable cache, but neither is it portable project truth. Store it outside `index.db` with explicit lifecycle, backup, repair, export, privacy, and deletion contracts.
 
 **Derived/rebuildable:**
 
@@ -533,9 +593,24 @@ Do not assume vector search is always best. Build a retrieval benchmark with lex
 - Deterministic indexing must require no model.
 - Local Ollama remains optional.
 - MCP sampling should be the preferred host-provided synthesis route when available.
-- A provider adapter may support OpenAI-compatible, Anthropic, Gemini, or local endpoints later, but credentials stay outside indexed state.
+- The agent kernel uses a provider-neutral completion/tool-call interface; ship Ollama and OpenAI-compatible adapters first, then add providers without provider branches in task/session services.
+- Tool handlers extend the existing capability catalog through executable registrations, toolsets, availability gates, permissions, and result bounds; do not create a parallel capability universe.
+- A session pins its profile, prompt version, toolset/schema generation, project-context hashes, and approval policy so ordinary turns keep a stable cached prefix.
+- Credentials stay outside indexed, session, event, profile, task, and project state; APIs return presence/status, never secret values.
 - Web research should be a packaged workflow/tool adapter with source capture, not a hardcoded search vendor inside the graph core.
 - Every AI-authored knowledge change enters a proposal/review flow and preserves citations.
+
+### 3.7 Shared services, durable events, and task truth
+
+CLI commands, MCP tools/resources/prompts, model tools, workbench handlers, plugins, automations, and worker lanes must all call the same application services. Transport layers do not own lifecycle SQL or duplicate transition rules.
+
+The project index remains derived. Durable agent/task state uses separate operational stores under the user data root. Each task board receives an isolated database, artifacts/logs root, and workspace root. State changes and append-only events commit in the same transaction.
+
+Live clients load authoritative snapshots and subscribe from a monotonic cursor. Events invalidate named resources; clients refetch canonical data. The in-process broker reduces latency, while database replay repairs missed publishes and survives restart. Bounded subscriber queues emit a gap/reset signal rather than accumulating unbounded memory.
+
+Use bearer-authenticated fetch-streamed SSE for one-way project/job/session/task events. Reserve WebSockets for genuinely bidirectional terminal/media flows and require short-lived single-use upgrade tickets. Never put the process bearer, provider credentials, prompts, private file contents, or unbounded logs in event URLs or payloads.
+
+Task lifecycle, worker knowledge, runner interfaces, security invariants, storage classification, and phase-specific exit criteria are normative in `docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md`.
 
 ---
 
@@ -810,6 +885,8 @@ Avoid “index everything on the computer.” Workspaces and source permissions 
 
 ### Phase 0 — Product correction and UX foundations
 
+**Implementation status:** substantially implemented. The five-target workflow is committed on `origin/product-evolution`; completion is pending a real PR/branch Actions run and recorded matrix/artifact/smoke evidence.
+
 **Goal:** make the existing product trustworthy and understandable before adding architecture.
 
 Tasks:
@@ -836,6 +913,8 @@ Tasks:
 
 ### Phase 1 — Durable knowledge and OKF
 
+**Implementation status:** complete at the active checkpoint.
+
 **Goal:** add reviewable, portable meaning without destabilizing code intelligence.
 
 Tasks:
@@ -859,6 +938,8 @@ Tasks:
 
 ### Phase 2 — Unified context service and MCP v2
 
+**Implementation status:** complete at the active checkpoint.
+
 **Goal:** make Prowl materially improve agent behavior, not just expose a graph.
 
 Tasks:
@@ -881,7 +962,11 @@ Tasks:
 - Core MCP schema overhead is lower than the current all-tools surface.
 - No model/provider is required for deterministic operation.
 
-### Phase 3 — Local web workbench
+### Phase 3A — Local knowledge workbench
+
+**Execution contract:** `docs/plans/2026-07-23-phase-3a-workbench-completion.md`
+
+**Implementation status:** secured embedded-shell tracer bullet complete; real shared services, data views, events/jobs, export, and acceptance remain.
 
 **Goal:** provide the showable, memorable human product.
 
@@ -896,6 +981,9 @@ Tasks:
 - Add keyboard, screen-reader, contrast, reduced-motion, and pseudolocale tests.
 - Add read-only single-file HTML export for sharing snapshots.
 - Add visual regression and interaction tests.
+- Extract reusable project/service assembly so CLI, MCP, workers, and HTTP handlers cannot drift.
+- Add stable versioned API envelopes, bounded pagination, request cancellation, and typed error codes.
+- Exercise the real compiled Go binary and committed bundle in browser fixtures; no mock-only acceptance.
 
 **Exit criteria:**
 
@@ -903,6 +991,56 @@ Tasks:
 - The Context Lens exactly matches MCP/CLI packet content.
 - UI binds loopback only and passes local API security tests.
 - A guided tour is useful on at least three very different fixture projects.
+- Every screen renders real shared-service data; no placeholder metric or client-owned domain rule remains.
+- Snapshot/event reconnect, cancellation, hostile Host/Origin, storage/token leakage, accessibility, and pseudolocale journeys pass.
+
+### Phase 3B — Provider-neutral agent kernel
+
+**Goal:** let Prowl run named, resumable, permissioned agent sessions over its own knowledge/context services without binding the product to one provider.
+
+Tasks:
+
+- Add atomic global/profile/project configuration resolution and secret references.
+- Add durable session, message, tool-call, usage, steering, and compaction-checkpoint storage with backup, migration, repair, FTS search, export, retention, and deletion.
+- Extend capability manifests into executable tool registrations and composable, context-gated toolsets.
+- Implement provider-neutral completion/tool-call interfaces; ship Ollama and OpenAI-compatible adapters first.
+- Build byte-stable prompt assembly with pinned profile/toolset/context hashes.
+- Add progressive skill discovery/full loading, provenance, and procedural-memory separation.
+- Add explicit writable scopes, network/filesystem/process permissions, and human approvals.
+- Add cancellation, mid-turn steering, bounded background processes, and fork/join delegation.
+- Expose the same run/session services through CLI, MCP, and authenticated workbench routes.
+
+**Exit criteria:**
+
+- A session can start, stream, steer, cancel, resume, search, export, and survive process restart.
+- Active tool schemas and prompt prefix remain stable across ordinary turns.
+- Tools enforce scope and approval policy before side effects.
+- No provider secret enters project, session, event, profile, task, log, or browser storage.
+
+### Phase 3C — Durable Kanban and live operations
+
+**Goal:** coordinate work that spans agents, restarts, schedules, and human review through one durable task kernel and real-time operations surface.
+
+Tasks:
+
+- Add isolated per-board operational databases and rooted artifact/log/workspace storage.
+- Implement tasks, acyclic dependencies, schedules, comments, append-only events, run attempts, attachments, approvals, artifacts, subscriptions, and idempotency.
+- Implement explicit lifecycle transitions, typed blockers, first-class review gates, and structured terminal outcomes.
+- Append state and event transactionally; publish through a bounded broker and replay by cursor.
+- Implement bearer-authenticated fetch-streamed SSE with reconnect, gap/reset, cancellation, and redaction.
+- Add task-scoped model tools and worker guidance; keep normal-session schema footprint at zero.
+- Add compare-and-swap claims, promotion, leases, heartbeats, spawn/reap, stale/crash reclaim, runtime caps, retries, and circuit breakers.
+- Add scratch, trusted-directory, and Git-worktree workspace policy with artifact preservation and cleanup.
+- Ship native Prowl workers plus opt-in typed runner lanes for external agents.
+- Add shared-kernel CLI, MCP, workbench board/task/run/review/worker/diagnostic surfaces, and idempotent automation entry points.
+- Add race, crash, restart, migration, repair, redaction, path-security, and live-browser tests.
+
+**Exit criteria:**
+
+- One review-gated task can be created, claimed, observed live, heartbeated, steered, blocked, resumed, approved, completed, and audited.
+- Exactly one concurrent claimant wins and stale/superseded workers cannot terminate the current run.
+- Restart loses no committed event or terminal outcome; clients reconcile from a durable cursor.
+- CLI, MCP, model tools, dashboard, automations, and workers produce identical lifecycle behavior through shared services.
 
 ### Phase 4 — Official Obsidian integration
 
@@ -970,6 +1108,30 @@ Tasks:
 - Multilingual benchmark covers search, UI, and generated knowledge behavior.
 - Third-party adapters pass compatibility, permission, and provenance tests.
 
+### Phase 7 — Broader Hermes-parity management and delivery surfaces
+
+**Goal:** complete the selected management/runtime breadth only after the shared agent, event, task, and plugin contracts are stable.
+
+Tasks:
+
+- Add profile, session, model/provider, toolset, skill, plugin, configuration, log, health, repair, usage, and update management views.
+- Add a semantic chat/run view over session events; defer embedded PTY until a bidirectional terminal contract is independently secured.
+- Add cron/webhook automation management with idempotency, delivery, and missed-run policy.
+- Add backend plugin lifecycle and a constrained frontend plugin SDK with authenticated fetch/stream helpers and versioned page/slot manifests.
+- Add remote dashboard mode only with explicit opt-in, TLS/reverse-proxy trust rules, multi-user authorization, CSRF protection, and short-lived stream tickets.
+- Add TUI, ACP/stdio, and desktop boundaries over the same versioned application protocol.
+- Add one representative messaging/gateway adapter and pairing contract before broad channel expansion.
+- Add local usage/cost analytics without outbound telemetry.
+- Add import/export/migration for profiles, sessions, skills, tasks, and portable knowledge.
+- Record implemented, adapted, deferred, and rejected Hermes behaviors in a revision-pinned parity audit.
+
+**Exit criteria:**
+
+- Each selected capability has CLI/API/UI parity, migration/rollback, documentation, and real-path security tests.
+- A third-party plugin adds a tool/service/page without modifying core files or bypassing auth/application services.
+- Remote mode is disabled by default and passes authorization, CSRF, proxy, ticket-replay, and credential-leak tests.
+- “Full parity” is claimed only for audited behavior contracts, never from page, route, provider, or adapter counts.
+
 ---
 
 ## 8. Evaluation plan
@@ -998,6 +1160,12 @@ Tasks:
 - Duplicate experiment/rejected-hypothesis recurrence.
 - Secret-retention and pre-external-call redaction failures.
 - Human review time and correction rate.
+- Session resume correctness across restart and compaction.
+- Tool-schema/prompt-prefix stability and cache-hit eligibility across turns.
+- Task claim uniqueness, stranded-ready age, retry/circuit-breaker rate, and stale-run rejection.
+- Event commit-to-visible latency, reconnect replay correctness, and snapshot reconciliation rate.
+- Worker completion evidence quality, review rejection/rework rate, and unverifiable completion attempts.
+- Approval bypass, scope escape, idempotency duplication, and task/profile/board data leakage.
 
 ContextBench's warning should shape evaluation: sophisticated scaffolding may yield only marginal retrieval gains; high recall can introduce harmful noise; agents may inspect relevant context but fail to use it. Measure precision, recall, utilization, task success, latency, and token cost together. “Search returned something” is not success.
 
@@ -1008,6 +1176,10 @@ ContextBench's warning should shape evaluation: sophisticated scaffolding may yi
 - Human workbench first meaningful paint under 1.5 s after API readiness.
 - Context packet respects requested budget within ±10%.
 - No unbounded graph traversal or UI rendering path.
+- Live operational event commit-to-visible p95 under 500 ms on loopback.
+- Board snapshot p95 under 200 ms at 10,000 tasks with pagination/virtualization.
+- Idle event/dispatcher services avoid fixed sub-second database polling.
+- No subscriber, run log, tool result, or event payload grows without a configured bound.
 
 ### Fixture portfolio
 
@@ -1020,13 +1192,17 @@ ContextBench's warning should shape evaluation: sophisticated scaffolding may yi
 - Pure Obsidian vault with backlinks and multilingual notes.
 - Mixed repo + external knowledge vault.
 - Spec Kit project with requirements and implementation drift.
+- Multi-profile agent fixture with resumable sessions, scoped toolsets, approval policy, and compaction.
+- Multi-board task fixture with dependency fan-out/fan-in, review, crash/reclaim, schedules, and artifacts.
+- Slow/disconnecting browser fixture for cursor replay, queue overflow/reset, and snapshot reconciliation.
+- Hostile workspace fixture with symlinks, traversal names, oversized artifacts, malformed events, and secret-like content.
 
 ---
 
 ## 9. What not to build
 
-- **Not another coding agent.** Integrate with OMP, Claude, Codex, Cursor, and others.
-- **Not a chat box as the product.** Chat may consume Prowl, but the asset is structured, inspectable knowledge.
+- **Not a generic coding-agent clone.** Prowl now has an agent kernel, but its reason to exist is the evidence-to-knowledge loop, durable coordination, and interoperable context. External agents remain supported runner/consumer peers.
+- **Not a chat box as the product.** Chat and sessions may operate Prowl, but the assets are structured knowledge, evidence, workflow state, and audit history.
 - **Not a graph hairball.** Use guided hierarchy, stories, filters, and evidence.
 - **Not mandatory cloud RAG.** Deterministic local operation remains the floor.
 - **Not a mandatory daemon.** Long-lived bridge/UI modes are opt-in and lifecycle-managed.
@@ -1035,12 +1211,15 @@ ContextBench's warning should shape evaluation: sophisticated scaffolding may yi
 - **Not a proprietary OKF dialect.** Extend under a namespace and preserve round-trip compatibility.
 - **Not every source type at once.** Earn trust on code, Markdown, specs, web, and PDFs before multimodal sprawl.
 - **Not rice deletion.** Preserve config/rice intelligence as a high-quality optional domain pack instead of letting it define the whole product.
+- **Not a mechanical Hermes fork.** Port revision-pinned behavior contracts through clean-room Go services; do not copy branding, generated bundles, Python modules, test-only fail-open auth, credential-in-URL patterns, or integration breadth without a stable interface.
+- **Not one operational database pretending to be project truth.** Keep derived index, portable knowledge, global sessions, per-board task state, artifacts, config, and credentials in explicit lifecycle planes.
+- **Not route-count parity.** A capability is complete only when its shared service, CLI/API/agent/UI behavior, migration, security, tests, and documentation agree.
 
 ---
 
-## 10. First implementation slice
+## 10. First implementation slice and next connected slice
 
-The first shippable slice should be narrow enough to validate the direction:
+The original first shippable slice was:
 
 1. Human output mode and useful `overview`.
 2. Selective/dry-run setup with generated-file exclusion.
@@ -1050,20 +1229,23 @@ The first shippable slice should be narrow enough to validate the direction:
 6. MCP workspace/knowledge Resources plus `search_context` and `get_context`.
 7. Read-only local workbench showing Brief, Context Lens, and Knowledge.
 
-This slice proves the core promise—same evidence, better human view, better agent view—before investing in full memory capture or a large Obsidian plugin.
+Phases 1 and 2 and the secured Phase 3A tracer bullet now prove most of this substrate. The remaining Phase 3A real-data views and acceptance tests must finish before operational expansion.
 
-Suggested implementation order inside the slice:
+The next connected slice is defined in the companion Hermes-port plan:
 
 ```text
-output contract
-  → setup transaction model
-  → OKF domain model
-  → context packet service
-  → MCP resources/tools
-  → loopback API
-  → read-only workbench
-  → end-to-end benchmark and UX test
+finish real-data workbench
+  → durable operational/event store
+  → one profile + resumable session
+  → executable read-only context toolset
+  → one board + task/run/review state machine
+  → native Prowl worker lane
+  → authenticated SSE replay
+  → live board/run UI
+  → crash/restart/cursor recovery acceptance
 ```
+
+It must demonstrate one fact traveling through the whole product: deterministic project evidence → agent session → durable task → live human review → structured cited result → accepted portable knowledge.
 
 ---
 
@@ -1127,6 +1309,10 @@ output contract
   https://github.com/AyoubAchour/codemap
   https://github.com/Egonex-AI/Understand-Anything
   https://github.com/selika/graphify
+- NousResearch Hermes Agent, pinned source revision and official Kanban contracts:
+  https://github.com/NousResearch/hermes-agent/tree/c4f5a45d5d9903998fb318ac6f3c5e6623e60445
+  https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban
+  https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban-worker-lanes
 
 ## 12. Repository evidence inspected
 

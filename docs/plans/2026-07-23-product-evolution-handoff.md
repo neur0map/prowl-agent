@@ -1,12 +1,27 @@
 # Product Evolution Handoff — 2026-07-23
 
-## Resume point
+## Continuation addendum
+
+Work resumed after this checkpoint at the user's explicit request. The canonical plan is now being expanded from the Phase 3A knowledge workbench into a knowledge-native local agent operating system, based on revision-pinned behavioral research from NousResearch Hermes Agent.
+
+Current contracts:
+
+- Canonical roadmap: `docs/plans/2026-07-23-prowl-agent-product-evolution.md`
+- Phase 3A execution plan: `docs/plans/2026-07-23-phase-3a-workbench-completion.md`
+- Detailed clean-room port plan and parity ledger: `docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md`
+- Upstream evidence pin: `NousResearch/hermes-agent@c4f5a45d5d9903998fb318ac6f3c5e6623e60445`
+
+Execution order: Phase 3A real-data workbench completion → Phase 3B provider-neutral agent kernel → Phase 3C durable Kanban/live operations → original Phases 4–6 → selected broader parity in Phase 7.
+
+This file still records the exact `95ba94f` tracer-bullet checkpoint, verification, and review caveat. It is historical evidence, not the current end-of-work handoff.
+
+## Resume point at the historical checkpoint
 
 - Repository: `/home/neur0map/workspace/prowl-agent`
 - Branch: `product-evolution`
 - Phase 2 parent commit: `098f249206115de3e4b91749d4b991e7183b681b`
 - Phase 2 status: complete, independently reviewed, committed, and pushed
-- Phase 3 status: **in progress; first secured workbench tracer bullet checkpoint committed with this handoff**
+- Phase 3 status at checkpoint: **in progress; first secured workbench tracer bullet committed with this handoff**
 - Canonical contract: `docs/plans/2026-07-23-prowl-agent-product-evolution.md`
 - Go environment:
 
@@ -17,19 +32,15 @@
 
 - SQLite tests on this host require `-tags sqlite_fts5`.
 
-The user explicitly requested that work stop after committing the current checkpoint. Do not resume Phase 3 automatically without a new request.
+The former stop directive was satisfied by commit `95ba94f`; this continuation is authorized by the user's follow-up request.
 
 ## Completed before this checkpoint
 
 ### Phase 0
 
-Most Phase 0 implementation is complete. The release workflow remains blocked because the active GitHub authorization cannot modify `.github/workflows/*`. The prepared workflow is preserved at:
+Most Phase 0 implementation is complete. Follow-up inspection confirmed that the five-target `.github/workflows/release.yml` is already committed and identical on `origin/product-evolution`; the repository account has `ADMIN` permission. The old authorization blocker is obsolete.
 
-```text
-/tmp/prowl-release-workflow.yml
-```
-
-Do not claim Phase 0 complete until that workflow is restored, verified, committed, and pushed with suitable GitHub workflow authorization.
+Phase 0 remains open for a narrower reason: no pull request has exercised the branch workflow, and the green Actions history on `main` covers the older `build-binary` definition rather than the Linux amd64/arm64, macOS amd64/arm64, and Windows amd64 matrix. Do not claim Phase 0 complete until a PR or equivalent authorized run executes the tracked branch workflow and the job/artifact/smoke evidence is recorded. `/tmp/prowl-release-workflow.yml` is only a stale preparation artifact and is no longer authoritative.
 
 ### Phase 1
 
@@ -299,5 +310,5 @@ After Phase 3 is independently complete:
 - Knowledge writes remain proposal-only and human reviewed.
 - Root confinement, bounded reads, symlink resistance, conflict checks, and observable rollback failures are non-negotiable.
 - `legacy` remains the default MCP surface and its 17 descriptors remain compatible.
-- Do not modify `.github/workflows/*` without suitable GitHub workflow authorization.
+- The tracked five-target release workflow is already on `origin/product-evolution`; do not rewrite it without a source-backed need. Phase 0 requires real branch/PR Actions evidence before completion.
 - Commits use concise human-written messages with no AI/co-author attribution.

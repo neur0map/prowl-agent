@@ -19,8 +19,8 @@ func TestOpenMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != "2" {
-		t.Fatalf("schema_version=%q want 2", v)
+	if v != "3" {
+		t.Fatalf("schema_version=%q want 3", v)
 	}
 	if err := s.SetMeta("x", "y"); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestOpenBacksUpAndMigratesVersionOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if version, _ := s.GetMeta("schema_version"); version != "2" {
+	if version, _ := s.GetMeta("schema_version"); version != "3" {
 		t.Fatalf("version after migration = %q", version)
 	}
 	if fixture, _ := s.GetMeta("fixture"); fixture != "preserved" {
@@ -83,7 +83,7 @@ func TestOpenBacksUpAndMigratesVersionOne(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT rel_path FROM files WHERE id=7`).Scan(&keptPath); err != nil || keptPath != "kept.go" {
 		t.Fatalf("v1 file row not preserved: path=%q err=%v", keptPath, err)
 	}
-	for _, table := range []string{"artifacts", "nodes", "relations", "knowledge_documents", "source_anchors", "knowledge_proposals"} {
+	for _, table := range []string{"artifacts", "nodes", "relations", "knowledge_documents", "source_anchors", "knowledge_proposals", "context_runs"} {
 		var name string
 		if err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing migrated table %s: %v", table, err)

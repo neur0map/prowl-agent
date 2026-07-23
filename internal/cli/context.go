@@ -1,0 +1,137 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
+	"github.com/prowl-agent/prowl-agent/internal/store"
+	"github.com/prowl-agent/prowl-agent/internal/workspace"
+)
+
+func newContextCmd() *cobra.Command {
+	command := &cobra.Command{Use: "context", Short: "Build bounded, cited context packets"}
+	command.AddCommand(newContextSearchCmd(), newContextGetCmd())
+	return command
+}
+
+func newContextSearchCmd() *cobra.Command {
+	var mode string
+	var budgetTokens, budgetBytes int
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "search <question>",
+		Short: "Retrieve bounded context for a question",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			service, closeStore, err := openContextService()
+			if err != nil {
+				return err
+			}
+			defer closeStore()
+			packet, err := service.Search(contextpacket.Request{Question: args[0], Mode: contextpacket.Mode(mode), BudgetTokens: budgetTokens, BudgetBytes: budgetBytes})
+			if err != nil {
+				return err
+			}
+			return writeContextPacket(command, packet, asJSON)
+		},
+	}
+	addContextFlags(command, &mode, &budgetTokens, &budgetBytes, &asJSON)
+	return command
+}
+
+func newContextGetCmd() *cobra.Command {
+	var mode string
+	var budgetTokens, budgetBytes int
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "get <id>...",
+		Short: "Fetch selected context IDs within a budget",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			service, closeStore, err := openContextService()
+			if err != nil {
+				return err
+			}
+			defer closeStore()
+			packet, err := service.Get(contextpacket.Request{IDs: args, Mode: contextpacket.Mode(mode), BudgetTokens: budgetTokens, BudgetBytes: budgetBytes})
+			if err != nil {
+				return err
+			}
+			return writeContextPacket(command, packet, asJSON)
+		},
+	}
+	addContextFlags(command, &mode, &budgetTokens, &budgetBytes, &asJSON)
+	return command
+}
+
+func addContextFlags(command *cobra.Command, mode *string, budgetTokens, budgetBytes *int, asJSON *bool) {
+	command.Flags().StringVar(mode, "mode", string(contextpacket.ModeCompact), "detail mode: compact, standard, or full")
+	command.Flags().IntVar(budgetTokens, "budget-tokens", 1800, "estimated token budget")
+	command.Flags().IntVar(budgetBytes, "budget-bytes", 0, "byte budget (enforced with token budget when both are set)")
+	command.Flags().BoolVar(asJSON, "json", false, "emit the stable context packet as JSON")
+}
+
+func openContextService() (*contextpacket.Service, func(), error) {
+	workspaceState, err := workspace.Resolve("")
+	if err != nil {
+		return nil, nil, err
+	}
+	database, err := store.Open(workspaceState.DB)
+	if err != nil {
+		return nil, nil, err
+	}
+	repository := knowledge.NewRepository(workspaceState.Knowledge, okfv01.Codec{})
+	service := &contextpacket.Service{Store: database, Knowledge: repository, Root: workspaceState.Root, Tracer: contextpacket.StoreTracer{Store: database}}
+	return service, func() { _ = database.Close() }, nil
+}
+
+func writeContextPacket(command *cobra.Command, packet contextpacket.Packet, asJSON bool) error {
+	if asJSON {
+		encoded, err := json.MarshalIndent(packet, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(command.OutOrStdout(), string(encoded))
+		return err
+	}
+	writer := command.OutOrStdout()
+	fmt.Fprintf(writer, "Context packet %s\n%s\n", packet.TraceID, packet.Summary)
+	for _, item := range packet.Items {
+		fmt.Fprintf(writer, "\n- %s [%s; %s; confidence %.2f]\n", item.Title, item.Kind, item.Freshness, item.Confidence)
+		if item.Summary != "" {
+			fmt.Fprintf(writer, "  %s\n", item.Summary)
+		}
+		if len(item.WhySelected) > 0 {
+			fmt.Fprintf(writer, "  Why: %s\n", strings.Join(item.WhySelected, "; "))
+		}
+		for _, citation := range item.Citations {
+			fmt.Fprintf(writer, "  Source: %s", citation.URI)
+			if citation.LineStart > 0 {
+				fmt.Fprintf(writer, "#L%d-L%d", citation.LineStart, citation.LineEnd)
+			}
+			fmt.Fprintln(writer)
+		}
+		fmt.Fprintf(writer, "  Detail: %s\n", item.DetailResource)
+	}
+	if len(packet.Omitted) > 0 {
+		keys := make([]string, 0, len(packet.Omitted))
+		for key := range packet.Omitted {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		fmt.Fprint(writer, "\nOmitted:")
+		for _, key := range keys {
+			fmt.Fprintf(writer, " %s=%d", key, packet.Omitted[key])
+		}
+		fmt.Fprintln(writer)
+	}
+	fmt.Fprintf(writer, "\nEstimated cost: %d tokens / %d bytes\n", packet.Budget.EstimatedTokens, packet.Budget.EstimatedBytes)
+	return nil
+}

@@ -19,7 +19,7 @@ import (
 var schemaSQL string
 
 // SchemaVersion is bumped whenever Open must migrate an existing cache.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Store wraps a SQLite connection to a single project's index.db.
 type Store struct{ db *sql.DB }

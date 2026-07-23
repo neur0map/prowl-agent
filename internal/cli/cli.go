@@ -7,7 +7,7 @@ import "github.com/spf13/cobra"
 
 // Register adds all subcommands to the root command.
 func Register(root *cobra.Command, version string) {
-	root.AddCommand(newInitCmd(), newStatusCmd(version), newDoctorCmd(), newKnowledgeCmd(), newServeCmd(version), newLSPCmd(version), newUpdateCmd(version), newRestartCmd(version), newVersionCmd(version))
+	root.AddCommand(newInitCmd(), newStatusCmd(version), newDoctorCmd(), newKnowledgeCmd(), newContextCmd(), newServeCmd(version), newLSPCmd(version), newUpdateCmd(version), newRestartCmd(version), newVersionCmd(version))
 	// Read-only query commands: the CLI-first path. Any agent can shell out to
 	// these (token-lean TOON output) with no MCP server and no `serve`.
 	root.AddCommand(

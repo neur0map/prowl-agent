@@ -158,6 +158,24 @@ CREATE TABLE IF NOT EXISTS knowledge_proposals (
   metadata_json  TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS context_runs (
+  id                TEXT PRIMARY KEY,
+  query_hash        TEXT NOT NULL,
+  hash_version      TEXT NOT NULL,
+  mode              TEXT NOT NULL,
+  budget_tokens     INTEGER NOT NULL DEFAULT 0,
+  budget_bytes      INTEGER NOT NULL DEFAULT 0,
+  estimated_tokens  INTEGER NOT NULL DEFAULT 0,
+  estimated_bytes   INTEGER NOT NULL DEFAULT 0,
+  selected_ids_json TEXT NOT NULL DEFAULT '[]',
+  omissions_json    TEXT NOT NULL DEFAULT '{}',
+  timings_json      TEXT NOT NULL DEFAULT '{}',
+  strategy_version  TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  error_code        TEXT,
+  created_at        TEXT NOT NULL
+);
+
 CREATE VIEW IF NOT EXISTS compat_artifacts AS
 SELECT 'file:' || rel_path AS id,
        'file://' || rel_path AS uri,
@@ -199,3 +217,4 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_state ON knowledge_documents(review_sta
 CREATE INDEX IF NOT EXISTS idx_anchor_knowledge ON source_anchors(knowledge_id);
 CREATE INDEX IF NOT EXISTS idx_anchor_status ON source_anchors(status);
 CREATE INDEX IF NOT EXISTS idx_proposal_status ON knowledge_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_context_runs_created ON context_runs(created_at);

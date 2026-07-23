@@ -58,9 +58,14 @@ func (r *Repository) Init() error {
 }
 
 // List parses all concept Markdown files, excluding reserved index and log files.
-func (r *Repository) List() ([]*Document, error) {
+func (repository *Repository) List() ([]*Document, error) {
+	if _, err := os.Stat(repository.Root); os.IsNotExist(err) {
+		return []*Document{}, nil
+	} else if err != nil {
+		return nil, err
+	}
 	var docs []*Document
-	err := filepath.WalkDir(r.Root, func(path string, entry fs.DirEntry, err error) error {
+	err := filepath.WalkDir(repository.Root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -71,11 +76,11 @@ func (r *Repository) List() ([]*Document, error) {
 		if base == "index.md" || base == "log.md" {
 			return nil
 		}
-		rel, err := filepath.Rel(r.Root, path)
+		rel, err := filepath.Rel(repository.Root, path)
 		if err != nil {
 			return err
 		}
-		doc, err := r.Read(filepath.ToSlash(rel))
+		doc, err := repository.Read(filepath.ToSlash(rel))
 		if err != nil {
 			return err
 		}

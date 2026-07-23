@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +31,11 @@ type InitOptions struct {
 	// init command fills them from models already installed on Ollama.
 	EmbedModel  string
 	AssistModel string
+	// Integrations is the explicit set of client/editor integrations to merge.
+	// IntegrationsSet distinguishes an intentional empty selection from the
+	// legacy programmatic default, which keeps all integrations for API callers.
+	Integrations    []string
+	IntegrationsSet bool
 }
 
 // RunInit creates the workspace, writes config/rules, runs the first index,
@@ -119,10 +126,15 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err != nil {
 		return sum, err
 	}
-	if err := Inject(root); err != nil {
+	integrations := append([]string(nil), allIntegrations...)
+	if opt.IntegrationsSet {
+		integrations = opt.Integrations
+	}
+	plan, err := BuildSetupPlan(root, integrations)
+	if err != nil {
 		return sum, err
 	}
-	if err := InjectEditor(root); err != nil {
+	if err := ApplySetupPlan(plan); err != nil {
 		return sum, err
 	}
 	if err := workspace.EnsureIgnored(root, workspace.Dir+"/"); err != nil {
@@ -145,14 +157,64 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func newInitCmd() *cobra.Command {
-	var withAI, noAI, yes, reconfigure bool
-	var tier string
+	var withAI, noAI, yes, noInput, reconfigure, dryRun, asJSON, remove bool
+	var tier, integrationValue string
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Set up Prowl Agent in the current folder (interactive wizard)",
+		Short: "Plan, preview, and set up Prowl in the current folder",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, _ := os.Getwd()
 			out := cmd.OutOrStdout()
+			nonInteractive := yes || noInput || dryRun || asJSON
+
+			detected := DetectIntegrations(root)
+			var integrations []string
+			var err error
+			if cmd.Flags().Changed("integrations") || nonInteractive {
+				integrations, err = ParseIntegrationSelection(integrationValue, detected)
+				if err != nil {
+					return err
+				}
+			} else {
+				integrations = append([]string(nil), detected...)
+				options := make([]huh.Option[string], 0, len(allIntegrations))
+				for _, name := range allIntegrations {
+					options = append(options, huh.NewOption(name, name).Selected(containsString(detected, name)))
+				}
+				form := huh.NewForm(huh.NewGroup(
+					huh.NewMultiSelect[string]().
+						Title("Choose integrations to configure").
+						Description("Only selected clients are changed. Existing settings are merged, never replaced.").
+						Options(options...).
+						Value(&integrations),
+				))
+				if err := form.Run(); err != nil {
+					return err
+				}
+			}
+
+			plan, err := BuildSetupPlan(root, integrations)
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				return printSetupPlan(out, plan, asJSON, true)
+			}
+			if remove {
+				if err := RemoveIntegrations(root, integrations); err != nil {
+					return err
+				}
+				if asJSON {
+					return json.NewEncoder(out).Encode(map[string]any{"root": root, "removed": integrations})
+				}
+				fmt.Fprintf(out, "Removed Prowl-owned entries from %d integration(s).\n", len(integrations))
+				return nil
+			}
+			if !asJSON {
+				if err := printSetupPlan(out, plan, false, false); err != nil {
+					return err
+				}
+			}
 
 			// What do we already know? A project config and/or a remembered global
 			// default mean we should not re-prompt unless --reconfigure is passed.
@@ -221,34 +283,75 @@ func newInitCmd() *cobra.Command {
 				embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
 			}
 
-			fmt.Fprintf(out, "Indexing %s ...\n", root)
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel})
+			if !asJSON {
+				fmt.Fprintf(out, "Indexing %s ...\n", root)
+			}
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Integrations: integrations, IntegrationsSet: true})
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
-			fmt.Fprintln(out, "Query it from your shell, no server to run:")
-			fmt.Fprintln(out, "  prowl-agent overview        a map of this project")
-			fmt.Fprintln(out, "  prowl-agent find <name>     locate any symbol")
-			fmt.Fprintln(out, "  prowl-agent search <text>   search by meaning or text")
-			fmt.Fprintln(out, "Agent instructions written to AGENTS.md; MCP and editor LSP also configured; .prowl/ is gitignored.")
-
 			// Run AI setup against the final saved models (resolved or preserved).
 			if ai {
 				final, _ := config.Load(projDir)
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)
 				}
-				setupAI(cmd.Context(), out, config.ModelPreset{Name: tier, EmbedModel: final.AI.EmbedModel, AssistModel: final.AI.AssistModel}, !yes)
+				aiOut := io.Writer(out)
+				if asJSON {
+					aiOut = io.Discard
+				}
+				setupAI(cmd.Context(), aiOut, config.ModelPreset{Name: tier, EmbedModel: final.AI.EmbedModel, AssistModel: final.AI.AssistModel}, !nonInteractive)
 			}
+			if asJSON {
+				return json.NewEncoder(out).Encode(map[string]any{"root": root, "indexed": sum, "integrations": integrations, "verified": true})
+			}
+			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
+			fmt.Fprintln(out, "Query it from your shell, no server to run:")
+			fmt.Fprintln(out, "  prowl-agent overview        a map of this project")
+			fmt.Fprintln(out, "  prowl-agent find <name>     locate any symbol")
+			fmt.Fprintln(out, "  prowl-agent search <text>   search by meaning or text")
+			fmt.Fprintf(out, "%d selected integration(s) configured; .prowl/ is gitignored.\n", len(integrations))
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&withAI, "with-ai", false, "enable AI-assist non-interactively")
 	c.Flags().BoolVar(&noAI, "no-ai", false, "skip AI-assist non-interactively")
 	c.Flags().BoolVar(&yes, "yes", false, "accept defaults without prompting")
+	c.Flags().BoolVar(&noInput, "no-input", false, "never prompt (uses detected integrations and remembered settings)")
 	c.Flags().BoolVar(&reconfigure, "reconfigure", false, "re-open the AI/tier prompts even if already configured")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview exact integration changes without writing anything")
+	c.Flags().BoolVar(&asJSON, "json", false, "emit a machine-readable setup plan/report")
+	c.Flags().BoolVar(&remove, "remove-integrations", false, "remove only Prowl-owned entries from selected integrations")
+	c.Flags().StringVar(&integrationValue, "integrations", "auto", "comma-separated integrations, or auto, none, all")
 	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
 	c.MarkFlagsMutuallyExclusive("with-ai", "no-ai")
 	return c
+}
+
+func printSetupPlan(out io.Writer, plan SetupPlan, asJSON, dryRun bool) error {
+	if asJSON {
+		return json.NewEncoder(out).Encode(map[string]any{"dry_run": dryRun, "plan": plan})
+	}
+	fmt.Fprintf(out, "Setup plan for %s\n", plan.Root)
+	fmt.Fprintln(out, "  • create or refresh the local .prowl workspace and index")
+	fmt.Fprintln(out, "  • preserve existing project configuration and rules")
+	for _, action := range plan.Actions {
+		fmt.Fprintf(out, "  • %-12s %s\n", action.Integration, action.Path)
+	}
+	if len(plan.Actions) == 0 {
+		fmt.Fprintln(out, "  • no client or editor integrations selected")
+	}
+	if dryRun {
+		fmt.Fprintln(out, "Dry run: no files were changed.")
+	}
+	return nil
+}
+
+func containsString(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }

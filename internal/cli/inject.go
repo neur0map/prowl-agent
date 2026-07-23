@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,7 +94,8 @@ type mcpServer struct {
 
 // mergeMCPConfig adds the prowl-agent server under the given top-level key
 // (mcpServers shape for the generic and Cursor configs, servers for VS Code),
-// preserving existing entries. A bad existing file is replaced; parent dirs created.
+// preserving existing entries. Invalid existing JSON is refused rather than
+// replaced; parent directories are created when needed.
 func mergeMCPConfig(path, key string) error {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -102,7 +104,9 @@ func mergeMCPConfig(path, key string) error {
 	}
 	doc := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &doc)
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("refusing to replace invalid JSON in %s: %w", path, err)
+		}
 	}
 	servers, _ := doc[key].(map[string]any)
 	if servers == nil {
@@ -123,7 +127,9 @@ func mergeMCPConfig(path, key string) error {
 func mergeOpenCode(path string) error {
 	doc := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &doc)
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("refusing to replace invalid JSON in %s: %w", path, err)
+		}
 	}
 	if _, ok := doc["$schema"]; !ok {
 		doc["$schema"] = "https://opencode.ai/config.json"

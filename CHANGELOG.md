@@ -6,6 +6,21 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `context search`, `context get`, and `context traces` expose versioned,
+  budget-aware packets that combine canonical project knowledge with cited source
+  and one-hop dependency evidence. Retrieval stays deterministic without a model,
+  while optional semantic reranking can refine results without changing fallback
+  behavior.
+- MCP now offers additive Resources and Prompts on every compatibility surface,
+  plus a six-tool `core` surface for context, change analysis, review-only
+  knowledge proposals, validation, and capability discovery. Sampling and human
+  elicitation remain optional; proposal writes fail closed when host confirmation
+  is unavailable.
+- `capabilities search` and `capabilities get` provide token-lean discovery of
+  built-in Prowl workflows before clients load detailed tools or resources.
+
 ### Changed
 
 - `tests <path>` now finds the test files covering a source file -- the test

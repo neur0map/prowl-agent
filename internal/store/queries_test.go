@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestEdgeQueriesAndBlastRadius(t *testing.T) {
 	s := openTmp(t)
@@ -62,5 +65,49 @@ func TestEdgeQueriesAndBlastRadius(t *testing.T) {
 	cn, _ := s.Counts()
 	if cn.Files != 3 || cn.Edges != 2 || cn.Resolved != 2 || cn.Dangling != 0 {
 		t.Fatalf("counts = %+v", cn)
+	}
+}
+
+func TestImmediateGraphNeighborsEnforcesSQLLimit(t *testing.T) {
+	s := openTmp(t)
+	source, err := s.UpsertFile(File{RelPath: "source.go", Lang: "go", Hash: "source", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw []RawEdge
+	var targets []int64
+	for i := 0; i < 20; i++ {
+		path := fmt.Sprintf("target-%02d.go", i)
+		id, err := s.UpsertFile(File{RelPath: path, Lang: "go", Hash: path, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, id)
+		raw = append(raw, RawEdge{Kind: "includes", Raw: path, Line: i + 1})
+	}
+	if err := s.ReplaceFileGraph(source, nil, nil, raw, nil); err != nil {
+		t.Fatal(err)
+	}
+	edges, err := s.EdgesFromFile(source, "includes")
+	if err != nil || len(edges) != len(targets) {
+		t.Fatalf("edges=%d err=%v", len(edges), err)
+	}
+	for i, edge := range edges {
+		if err := s.SetEdgeResolved(edge.ID, "file", targets[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	neighbors, err := s.ImmediateGraphNeighbors(source, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(neighbors) != 3 {
+		t.Fatalf("neighbors=%d want SQL-bounded 3: %+v", len(neighbors), neighbors)
+	}
+	if neighbors[0].File != "target-00.go" || neighbors[2].File != "target-02.go" {
+		t.Fatalf("neighbors not deterministically ordered: %+v", neighbors)
+	}
+	if neighbors, err := s.ImmediateGraphNeighbors(source, 0); err != nil || len(neighbors) != 0 {
+		t.Fatalf("zero-limit neighbors=%+v err=%v", neighbors, err)
 	}
 }

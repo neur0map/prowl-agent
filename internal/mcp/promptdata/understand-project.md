@@ -1,0 +1,1 @@
+Start with `prowl://workspace/current/overview` and `prowl://workspace/current/knowledge/index`. Use `search_context` in compact mode for the focus "{{focus}}". Follow each selected item's `detail_resource` only when needed. Cite returned evidence; do not load the whole repository.

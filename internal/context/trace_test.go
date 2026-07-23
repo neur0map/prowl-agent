@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -50,6 +51,28 @@ func TestStoreTracerDoesNotPersistQuestionOrContent(t *testing.T) {
 	}
 	if bytes.Contains(raw, []byte(secret)) {
 		t.Fatal("raw sqlite database contains question text")
+	}
+}
+
+func TestStoreTracerPrunesRowsOlderThanRetentionWindow(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	old := time.Now().Add(-traceRetention - time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := db.SaveContextRun(store.ContextRun{ID: "old", QueryHash: "old", HashVersion: traceHashVersion, Mode: "compact", SelectedIDsJSON: "[]", OmissionsJSON: "{}", TimingsJSON: "{}", StrategyVersion: "old", Status: "success", CreatedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (StoreTracer{Store: db}).Record(TraceEvent{Request: Request{Question: "current"}, Packet: Packet{TraceID: "current", Items: []Item{}, Omitted: map[string]int{}}, Status: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := db.ListContextRuns(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].ID != "current" {
+		t.Fatalf("retained runs = %+v", runs)
 	}
 }
 

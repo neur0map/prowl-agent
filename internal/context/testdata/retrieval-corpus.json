@@ -1,0 +1,56 @@
+[
+  {
+    "name": "authentication identifier",
+    "question": "Authenticate",
+    "expected_sources": ["auth/main.go", "policy/policy.go"],
+    "expected_concepts": ["concept:authentication"],
+    "distractors": ["noise/auth_notes.go"],
+    "budget_tokens": 800,
+    "required_terms": ["Authenticate", "policy rule"]
+  },
+  {
+    "name": "authentication natural language",
+    "question": "where are suspended users denied",
+    "expected_sources": ["auth/main.go", "policy/policy.go"],
+    "expected_concepts": ["concept:authentication"],
+    "distractors": ["noise/auth_notes.go"],
+    "budget_tokens": 800,
+    "required_terms": ["suspended users", "policy rule"]
+  },
+  {
+    "name": "migration identifier",
+    "question": "ApplyMigration",
+    "expected_sources": ["migration/run.go", "schema/schema.go"],
+    "expected_concepts": ["concept:migrations"],
+    "distractors": ["noise/migration_notes.go"],
+    "budget_tokens": 800,
+    "required_terms": ["ApplyMigration", "schema version"]
+  },
+  {
+    "name": "migration natural language",
+    "question": "what checks schema before stored data writes",
+    "expected_sources": ["migration/run.go", "schema/schema.go"],
+    "expected_concepts": ["concept:migrations"],
+    "distractors": ["noise/migration_notes.go"],
+    "budget_tokens": 800,
+    "required_terms": ["schema version", "before writes"]
+  },
+  {
+    "name": "cache identifier",
+    "question": "InvalidateCache",
+    "expected_sources": ["cache/invalidate.go", "storage/storage.go"],
+    "expected_concepts": ["concept:cache-invalidation"],
+    "distractors": ["noise/cache_notes.go"],
+    "budget_tokens": 800,
+    "required_terms": ["InvalidateCache", "storage epoch"]
+  },
+  {
+    "name": "cache natural language",
+    "question": "how are stale cache reads prevented",
+    "expected_sources": ["cache/invalidate.go", "storage/storage.go"],
+    "expected_concepts": ["concept:cache-invalidation"],
+    "distractors": ["noise/cache_notes.go"],
+    "budget_tokens": 800,
+    "required_terms": ["storage epoch", "stale cache reads"]
+  }
+]

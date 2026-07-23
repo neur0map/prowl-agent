@@ -114,6 +114,8 @@ prowl-agent doctor              # general health: cycles, fan risk, dangling ref
 prowl-agent doctor --profile rice # add keybind, desktop command, color, orphan checks
 prowl-agent tests <path>        # configs/keybinds that launch or reload a file
 prowl-agent changed             # your git changes mapped to the files they could affect
+prowl-agent context search <question> --mode compact --budget-tokens 1800 --json
+prowl-agent capabilities search <query> # discover workflows without loading every schema
 ```
 
 TTY output defaults to a human view; pipes and agent calls default to compact
@@ -150,8 +152,10 @@ fits and the answers stay identical and cited:
   prowl. Nothing to start, and none of MCP's upfront per-call tool-schema cost.
 - **MCP server.** For agents that prefer typed tools, select the standard
   `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, or OpenCode integration
-  during setup. It exposes 17 tools (`find_symbol`, `blast_radius`, `similar_code`,
-  `doctor`, and the rest). Point any other agent at one command, `prowl-agent serve`.
+  during setup. Compatibility mode exposes the historical 17 tools; MCP Resources
+  and Prompts are additive on every surface. Use `prowl-agent serve --mcp-surface
+  core` for six intent-oriented tools, or `--mcp-surface all` during migration.
+  Point any other agent at one command, `prowl-agent serve`.
 - **Editor language server.** `prowl-agent lsp` gives a human go-to-definition,
   find-references, hover (with use counts), document and workspace symbols, code
   lens, completion, and inline `doctor` diagnostics. Neovim attaches it
@@ -164,6 +168,10 @@ fits and the answers stay identical and cited:
   }
 }
 ```
+
+See [Context packets and MCP v2](docs/CONTEXT.md) for packet fields, resource
+URIs, prompts, compatibility modes, privacy-safe traces, capability discovery,
+and the deterministic retrieval evaluation.
 
 ## It understands how code connects
 

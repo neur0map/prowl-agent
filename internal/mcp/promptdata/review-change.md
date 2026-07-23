@@ -1,0 +1,1 @@
+Review the change to "{{path}}". Read `prowl://workspace/current/changes`, call `analyze_change`, and use `search_context` for cited compact context. Fetch individual detail resources only for affected behavior. Report risks, tests, and stale knowledge explicitly.

@@ -6,7 +6,10 @@ import (
 	"context"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prowl-agent/prowl-agent/internal/capability"
+	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -18,19 +21,44 @@ type ReindexFunc func(ctx context.Context) (string, error)
 type DoctorFunc func(ctx context.Context) (doctor.Report, error)
 
 type handlers struct {
-	q       *query.Querier
-	store   *store.Store
-	reindex ReindexFunc
-	doctor  DoctorFunc
-	onCall  func()
+	q            *query.Querier
+	store        *store.Store
+	reindex      ReindexFunc
+	doctor       DoctorFunc
+	onCall       func()
+	context      *contextpacket.Service
+	knowledge    *knowledge.Repository
+	capabilities *capability.Catalog
+	root         string
 }
 
 // Empty is the input type for tools that take no arguments.
 type Empty struct{}
 
-// NewServer builds an MCP server. onCall, when set, runs before each tool call
-// (used to keep the index fresh).
+// NewServer builds the compatibility MCP server used by existing generated configs.
 func NewServer(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc, onCall func()) *sdk.Server {
+	return NewServerWithOptions(q, st, version, reindex, doctorFn, onCall, ServerOptions{Surface: SurfaceLegacy})
+}
+
+// NewServerWithOptions builds legacy, core, or combined MCP surfaces.
+func NewServerWithOptions(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc, onCall func(), options ServerOptions) *sdk.Server {
+	options.normalize()
+	var server *sdk.Server
+	if options.Surface == SurfaceLegacy || options.Surface == SurfaceAll {
+		server = newLegacyServer(q, st, version, reindex, doctorFn, onCall)
+	} else {
+		server = sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
+	}
+	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn, onCall: onCall, context: options.Context, knowledge: options.Knowledge, capabilities: options.Capabilities, root: options.Root}
+	if options.Surface == SurfaceCore || options.Surface == SurfaceAll {
+		registerCoreTools(server, h)
+	}
+	registerResources(server, h)
+	registerPrompts(server)
+	return server
+}
+
+func newLegacyServer(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc, onCall func()) *sdk.Server {
 	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn, onCall: onCall}
 	s := sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
 

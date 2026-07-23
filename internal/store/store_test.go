@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -197,6 +198,11 @@ func TestSearchChunksPhraseToTermsFallback(t *testing.T) {
 	if hits, err := s.SearchChunks("panel gamma", 10); err != nil || len(hits) != 2 {
 		t.Fatalf("OR fallback = %v, %v; want both files", hits, err)
 	}
+	// Full-text packet retrieval must use the same natural-language fallback.
+	if hits, err := s.SearchChunkText("render status panel", 10); err != nil || len(hits) != 1 || hits[0].File != "a.go" || !strings.Contains(hits[0].Text, "draw the status") {
+		t.Fatalf("full-text AND fallback = %v, %v; want full a.go chunk", hits, err)
+	}
+
 	// A genuinely absent token yields empty with no error.
 	if hits, err := s.SearchChunks("nonexistenttoken", 10); err != nil || len(hits) != 0 {
 		t.Fatalf("absent term = %v, %v; want empty", hits, err)

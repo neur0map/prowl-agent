@@ -103,6 +103,30 @@ func TestProposalCollisionLeavesProposalReviewable(t *testing.T) {
 	}
 }
 
+func TestProposalRejectsSymlinkTargetWithoutDisclosingIt(t *testing.T) {
+	root := t.TempDir()
+	repo := knowledge.NewRepository(filepath.Join(root, "knowledge"), okfv01.Codec{})
+	if err := repo.Init(); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside.md")
+	if err := os.WriteFile(outside, []byte("TOP SECRET OUTSIDE CONTENT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo.Root, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidate, []byte("---\ntype: Note\n---\nSafe candidate.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inbox := knowledge.NewReviewInbox(filepath.Join(root, "proposals"), repo)
+	proposal, diff, err := inbox.Propose(candidate, "linked.md", "", time.Now())
+	if err == nil || proposal != nil || strings.Contains(diff, "TOP SECRET") {
+		t.Fatalf("symlink target proposal = %+v diff=%q err=%v", proposal, diff, err)
+	}
+}
+
 func TestProposalRejectsUnsafeTarget(t *testing.T) {
 	root := t.TempDir()
 	repo := knowledge.NewRepository(filepath.Join(root, "knowledge"), okfv01.Codec{})
@@ -111,5 +135,71 @@ func TestProposalRejectsUnsafeTarget(t *testing.T) {
 	_ = os.WriteFile(candidate, []byte("---\ntype: Note\n---\n"), 0o644)
 	if _, _, err := inbox.Propose(candidate, "../outside.md", "", time.Now()); err == nil {
 		t.Fatal("unsafe proposal path accepted")
+	}
+}
+
+func TestProposalAcceptRejectsIntermediateDirectorySymlinkSwap(t *testing.T) {
+	root := t.TempDir()
+	repo := knowledge.NewRepository(filepath.Join(root, "knowledge"), okfv01.Codec{})
+	if err := repo.Init(); err != nil {
+		t.Fatal(err)
+	}
+	inbox := knowledge.NewReviewInbox(filepath.Join(root, "proposals"), repo)
+	candidate := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidate, []byte("---\ntype: Note\ntitle: Candidate\n---\nSafe.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal, _, err := inbox.Propose(candidate, "nested/candidate.md", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo.Root, "nested")); err != nil {
+		t.Fatal(err)
+	}
+	direct, _ := okfv01.Codec{}.Parse("nested/direct.md", []byte("---\ntype: Note\ntitle: Direct\n---\nNo escape.\n"))
+	if err := repo.Write(direct); err == nil {
+		t.Fatal("repository write followed an intermediate directory symlink")
+	}
+	if _, err := inbox.Accept(proposal.ID, time.Now()); err == nil {
+		t.Fatal("accept followed an intermediate directory symlink")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "candidate.md")); !os.IsNotExist(err) {
+		t.Fatal("proposal escaped the knowledge root")
+	}
+}
+
+func TestProposalAcceptRejectsChangedUpdateBase(t *testing.T) {
+	root := t.TempDir()
+	repo := knowledge.NewRepository(filepath.Join(root, "knowledge"), okfv01.Codec{})
+	if err := repo.Init(); err != nil {
+		t.Fatal(err)
+	}
+	base, _ := okfv01.Codec{}.Parse("existing.md", []byte("---\ntype: Note\ntitle: Original\n---\nOriginal.\n"))
+	if err := repo.Write(base); err != nil {
+		t.Fatal(err)
+	}
+	inbox := knowledge.NewReviewInbox(filepath.Join(root, "proposals"), repo)
+	candidate := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidate, []byte("---\ntype: Note\ntitle: Proposed\n---\nProposed.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal, _, err := inbox.Propose(candidate, "existing.md", "", time.Now())
+	if err != nil || proposal.BaseHash == "" {
+		t.Fatalf("proposal = %+v err=%v", proposal, err)
+	}
+	human, _ := okfv01.Codec{}.Parse("existing.md", []byte("---\ntype: Note\ntitle: Human\n---\nKeep human edit.\n"))
+	if err := repo.Write(human); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Accept(proposal.ID, time.Now()); err == nil {
+		t.Fatal("accept overwrote a target changed after proposal creation")
+	}
+	kept, err := repo.ReadBundleFile("existing.md")
+	if err != nil || !bytes.Contains(kept, []byte("Keep human edit.")) {
+		t.Fatalf("human edit lost: %q err=%v", kept, err)
 	}
 }

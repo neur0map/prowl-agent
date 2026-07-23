@@ -47,7 +47,7 @@ func (r *Repository) Lint(sourceRoot string) ([]Finding, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		data, err := os.ReadFile(path)
+		data, err := readRootFile(r.Root, rel, MaxDocumentBytes)
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ func (r *Repository) Lint(sourceRoot string) ([]Finding, error) {
 				findings = append(findings, Finding{Code: "knowledge.broken_link", Severity: "warning", Path: doc.Path, Message: fmt.Sprintf("linked document escapes the bundle: %s", link)})
 				continue
 			}
-			if _, err := os.Stat(filepath.Join(r.Root, filepath.FromSlash(target))); err != nil {
+			if _, err := r.ReadBundleFile(target); err != nil {
 				findings = append(findings, Finding{Code: "knowledge.broken_link", Severity: "warning", Path: doc.Path, Message: fmt.Sprintf("linked document does not exist: %s", link)})
 			} else {
 				inbound[target]++

@@ -10,7 +10,10 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
-const traceHashVersion = "hmac-sha256-v1"
+const (
+	traceHashVersion = "hmac-sha256-v1"
+	traceRetention   = 30 * 24 * time.Hour
+)
 
 // TraceEvent exists only in memory; the store adapter hashes Question before
 // creating a persistence record.
@@ -34,6 +37,9 @@ func (tracer StoreTracer) Record(event TraceEvent) error {
 	if tracer.Store == nil {
 		return nil
 	}
+	// Retention cleanup is best-effort telemetry maintenance. It must never make
+	// retrieval fail or prevent the current aggregate record from being stored.
+	_, _ = tracer.Store.PruneContextRuns(time.Now().Add(-traceRetention))
 	salt, err := tracer.Store.ContextTraceSalt()
 	if err != nil {
 		return err

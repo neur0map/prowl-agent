@@ -1,0 +1,12 @@
+name: discover-capabilities
+title: Discover Prowl workflows
+description: Search token-lean workflow metadata before fetching a detailed manifest.
+triggers: [what can prowl do, find workflow, discover tool, capability search]
+requires: []
+outputs: [capability summaries, manifest references]
+privacy: no project content required
+read_only: true
+version: "1"
+prompts: []
+resources: []
+tools: [search_capabilities]

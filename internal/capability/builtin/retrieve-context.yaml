@@ -1,0 +1,12 @@
+name: retrieve-context
+title: Retrieve bounded project context
+description: Build a cited, budget-aware packet from curated knowledge and source evidence.
+triggers: [understand project, research code, gather context, answer question]
+requires: [workspace index]
+outputs: [context packet, citations, freshness warnings]
+privacy: local-only query hash tracing
+read_only: true
+version: "1"
+prompts: [understand-project, research-topic]
+resources: [prowl://workspace/current/overview, prowl://workspace/current/knowledge/index]
+tools: [search_context, get_context]

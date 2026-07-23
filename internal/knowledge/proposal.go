@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ type Proposal struct {
 	Operation     string `json:"operation"`
 	TargetPath    string `json:"target_path"`
 	CandidatePath string `json:"candidate_path"`
+	BaseHash      string `json:"base_hash,omitempty"`
 	Status        string `json:"status"`
 	Author        string `json:"author,omitempty"`
 	CreatedAt     string `json:"created_at"`
@@ -28,6 +30,9 @@ type Proposal struct {
 type ReviewInbox struct {
 	Root       string
 	Repository *Repository
+	// afterCanonicalWrite is a package-private fault-injection seam used to
+	// verify transactional rollback after the first canonical mutation.
+	afterCanonicalWrite func() error
 }
 
 func NewReviewInbox(root string, repository *Repository) *ReviewInbox {
@@ -39,7 +44,7 @@ func (inbox *ReviewInbox) Propose(candidateFile, targetPath, author string, now 
 	if inbox.Repository == nil || inbox.Repository.Codec == nil {
 		return nil, "", fmt.Errorf("knowledge repository is required")
 	}
-	data, err := os.ReadFile(candidateFile)
+	data, err := readRegularFile(candidateFile, MaxDocumentBytes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -55,11 +60,13 @@ func (inbox *ReviewInbox) Propose(candidateFile, targetPath, author string, now 
 	if err != nil {
 		return nil, "", err
 	}
-	target, _, _ := inbox.Repository.resolve(clean)
 	operation := "create"
-	old, readErr := os.ReadFile(target)
+	baseHash := ""
+	old, readErr := inbox.Repository.ReadBundleFile(clean)
 	if readErr == nil {
 		operation = "update"
+		hash := sha256.Sum256(old)
+		baseHash = hex.EncodeToString(hash[:])
 	} else if !os.IsNotExist(readErr) {
 		return nil, "", readErr
 	}
@@ -78,7 +85,7 @@ func (inbox *ReviewInbox) Propose(candidateFile, targetPath, author string, now 
 	proposal := &Proposal{
 		ID: id, Operation: operation, TargetPath: clean,
 		CandidatePath: filepath.ToSlash(filepath.Join(id, "candidate.md")),
-		Status:        "proposed", Author: author, CreatedAt: now.UTC().Format(time.RFC3339),
+		BaseHash:      baseHash, Status: "proposed", Author: author, CreatedAt: now.UTC().Format(time.RFC3339),
 	}
 	if err := atomicWrite(candidatePath, normalized, 0o644); err != nil {
 		return nil, "", err
@@ -125,15 +132,11 @@ func (inbox *ReviewInbox) Diff(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	candidate, err := os.ReadFile(filepath.Join(inbox.Root, filepath.FromSlash(proposal.CandidatePath)))
+	candidate, err := readRootFile(inbox.Root, proposal.CandidatePath, MaxDocumentBytes)
 	if err != nil {
 		return "", err
 	}
-	target, _, err := inbox.Repository.resolve(proposal.TargetPath)
-	if err != nil {
-		return "", err
-	}
-	old, err := os.ReadFile(target)
+	old, err := inbox.Repository.ReadBundleFile(proposal.TargetPath)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
@@ -149,8 +152,7 @@ func (inbox *ReviewInbox) Accept(id string, now time.Time) (*Proposal, error) {
 	if proposal.Status != "proposed" {
 		return nil, fmt.Errorf("proposal %s is %s", id, proposal.Status)
 	}
-	candidatePath := filepath.Join(inbox.Root, filepath.FromSlash(proposal.CandidatePath))
-	candidate, err := os.ReadFile(candidatePath)
+	candidate, err := readRootFile(inbox.Root, proposal.CandidatePath, MaxDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -158,38 +160,51 @@ func (inbox *ReviewInbox) Accept(id string, now time.Time) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	target, _, err := inbox.Repository.resolve(proposal.TargetPath)
+	current, currentErr := inbox.Repository.ReadBundleFile(proposal.TargetPath)
+	if proposal.Operation == "create" {
+		if currentErr == nil {
+			return nil, fmt.Errorf("proposal target now exists: %s", proposal.TargetPath)
+		}
+		if !os.IsNotExist(currentErr) {
+			return nil, currentErr
+		}
+	} else {
+		if currentErr != nil {
+			return nil, fmt.Errorf("proposal target is unavailable: %s: %w", proposal.TargetPath, currentErr)
+		}
+		hash := sha256.Sum256(current)
+		if proposal.BaseHash == "" || !strings.EqualFold(proposal.BaseHash, hex.EncodeToString(hash[:])) {
+			return nil, fmt.Errorf("proposal target changed after review was created: %s", proposal.TargetPath)
+		}
+	}
+	backups, err := snapshotBundleFiles(inbox.Repository, proposal.TargetPath, "index.md", "log.md")
 	if err != nil {
 		return nil, err
 	}
-	_, statErr := os.Stat(target)
-	if proposal.Operation == "create" && statErr == nil {
-		return nil, fmt.Errorf("proposal target now exists: %s", proposal.TargetPath)
+	rollback := func(cause error) error {
+		if rollbackErr := restoreBundleSnapshots(inbox.Repository, backups); rollbackErr != nil {
+			return errors.Join(cause, fmt.Errorf("proposal rollback failed: %w", rollbackErr))
+		}
+		return cause
 	}
-	if proposal.Operation == "update" && os.IsNotExist(statErr) {
-		return nil, fmt.Errorf("proposal target no longer exists: %s", proposal.TargetPath)
-	}
-	backups, err := snapshotFiles(target, filepath.Join(inbox.Repository.Root, "index.md"), filepath.Join(inbox.Repository.Root, "log.md"))
-	if err != nil {
-		return nil, err
-	}
-	rollback := func() { restoreSnapshots(backups) }
 	if err := inbox.Repository.Write(doc); err != nil {
 		return nil, err
 	}
+	if inbox.afterCanonicalWrite != nil {
+		if err := inbox.afterCanonicalWrite(); err != nil {
+			return nil, rollback(err)
+		}
+	}
 	if err := inbox.Repository.AppendLog("accepted", proposal.TargetPath, now); err != nil {
-		rollback()
-		return nil, err
+		return nil, rollback(err)
 	}
 	if err := inbox.Repository.GenerateIndex(); err != nil {
-		rollback()
-		return nil, err
+		return nil, rollback(err)
 	}
 	proposal.Status = "accepted"
 	proposal.ReviewedAt = now.UTC().Format(time.RFC3339)
 	if err := inbox.writeProposal(proposal); err != nil {
-		rollback()
-		return nil, err
+		return nil, rollback(err)
 	}
 	return proposal, nil
 }
@@ -215,7 +230,7 @@ func (inbox *ReviewInbox) load(id string) (*Proposal, error) {
 	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
 		return nil, fmt.Errorf("invalid proposal id %q", id)
 	}
-	data, err := os.ReadFile(filepath.Join(inbox.Root, id, "proposal.json"))
+	data, err := readRootFile(inbox.Root, filepath.ToSlash(filepath.Join(id, "proposal.json")), MaxDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -265,15 +280,20 @@ type fileSnapshot struct {
 	exists bool
 }
 
-func snapshotFiles(paths ...string) ([]fileSnapshot, error) {
+func snapshotBundleFiles(repository *Repository, paths ...string) ([]fileSnapshot, error) {
+	root, err := os.OpenRoot(repository.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	out := make([]fileSnapshot, 0, len(paths))
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
+		data, err := repository.ReadBundleFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
-		entry := fileSnapshot{path: path, data: data, exists: err == nil, mode: 0o644}
-		if info, statErr := os.Stat(path); statErr == nil {
+		entry := fileSnapshot{path: filepath.ToSlash(path), data: data, exists: err == nil, mode: 0o644}
+		if info, statErr := root.Lstat(filepath.FromSlash(path)); statErr == nil {
 			entry.mode = info.Mode().Perm()
 		}
 		out = append(out, entry)
@@ -281,12 +301,23 @@ func snapshotFiles(paths ...string) ([]fileSnapshot, error) {
 	return out, nil
 }
 
-func restoreSnapshots(snapshots []fileSnapshot) {
+func restoreBundleSnapshots(repository *Repository, snapshots []fileSnapshot) error {
+	root, err := os.OpenRoot(repository.Root)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	var restoreErrors []error
 	for _, snapshot := range snapshots {
 		if snapshot.exists {
-			_ = atomicWrite(snapshot.path, snapshot.data, snapshot.mode)
+			if err := atomicWriteInRoot(root, snapshot.path, snapshot.data, snapshot.mode); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Errorf("restore %s: %w", snapshot.path, err))
+			}
 		} else {
-			_ = os.Remove(snapshot.path)
+			if err := root.Remove(filepath.FromSlash(snapshot.path)); err != nil && !os.IsNotExist(err) {
+				restoreErrors = append(restoreErrors, fmt.Errorf("remove %s: %w", snapshot.path, err))
+			}
 		}
 	}
+	return errors.Join(restoreErrors...)
 }

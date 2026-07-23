@@ -118,6 +118,44 @@ func (s *Store) AncestorsToward(fileID int64) ([]Dep, error) {
 	return s.traverseDeps(fileID, false)
 }
 
+// ImmediateGraphNeighbors returns at most limit unique one-hop dependencies and
+// dependents of fileID without loading or traversing the complete edge graph.
+func (s *Store) ImmediateGraphNeighbors(fileID int64, limit int) ([]Dep, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	clause, kindArgs := inClause("kind", blastKinds)
+	forwardArgs := append([]any{fileID}, kindArgs...)
+	reverseArgs := append([]any{fileID}, kindArgs...)
+	args := append(append(forwardArgs, reverseArgs...), limit)
+	rows, err := s.db.Query(`
+		SELECT DISTINCT f.rel_path
+		FROM files f
+		JOIN (
+			SELECT dst_id AS id FROM edges
+			WHERE file_id=? AND resolved=1 AND dst_type='file'`+clause+`
+			UNION
+			SELECT file_id AS id FROM edges
+			WHERE dst_id=? AND resolved=1 AND dst_type='file'`+clause+`
+		) neighbors ON neighbors.id=f.id
+		ORDER BY f.rel_path
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Dep
+	for rows.Next() {
+		var dep Dep
+		if err := rows.Scan(&dep.File); err != nil {
+			return nil, err
+		}
+		dep.Depth = 1
+		out = append(out, dep)
+	}
+	return out, rows.Err()
+}
+
 // traverseDeps walks the dependency graph from fileID with an in-memory BFS.
 // reverse=true follows incoming edges (who depends on fileID -> blast radius);
 // reverse=false follows outgoing edges (what fileID depends on -> ancestors).

@@ -8,9 +8,10 @@ import "fmt"
 type Mode string
 
 const (
-	ModeCompact  Mode = "compact"
-	ModeStandard Mode = "standard"
-	ModeFull     Mode = "full"
+	ModeCompact         Mode = "compact"
+	ModeStandard        Mode = "standard"
+	ModeFull            Mode = "full"
+	PacketSchemaVersion      = "prowl.context/v1"
 )
 
 // Request asks the compiler for bounded project context.
@@ -54,17 +55,19 @@ type Budget struct {
 	RequestedBytes  int `json:"requested_bytes,omitempty"`
 	EstimatedTokens int `json:"estimated_tokens"`
 	EstimatedBytes  int `json:"estimated_bytes"`
+	ExactBytes      int `json:"exact_bytes"`
 }
 
 // Packet is the stable context result shared by every transport.
 type Packet struct {
-	Question string         `json:"question,omitempty"`
-	Summary  string         `json:"summary"`
-	Items    []Item         `json:"items"`
-	Budget   Budget         `json:"budget"`
-	Omitted  map[string]int `json:"omitted"`
-	Next     []string       `json:"next"`
-	TraceID  string         `json:"trace_id"`
+	SchemaVersion string         `json:"schema_version"`
+	Question      string         `json:"question,omitempty"`
+	Summary       string         `json:"summary"`
+	Items         []Item         `json:"items"`
+	Budget        Budget         `json:"budget"`
+	Omitted       map[string]int `json:"omitted"`
+	Next          []string       `json:"next"`
+	TraceID       string         `json:"trace_id"`
 }
 
 // Validate rejects ambiguous or unbounded requests.
@@ -94,7 +97,7 @@ func (request *Request) Validate() error {
 
 func emptyPacket(request Request) Packet {
 	return Packet{
-		Question: request.Question, Items: []Item{}, Omitted: map[string]int{}, Next: []string{},
+		SchemaVersion: PacketSchemaVersion, Question: request.Question, Items: []Item{}, Omitted: map[string]int{}, Next: []string{},
 		Budget: Budget{RequestedTokens: request.BudgetTokens, RequestedBytes: request.BudgetBytes},
 	}
 }

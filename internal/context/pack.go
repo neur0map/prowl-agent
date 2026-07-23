@@ -54,6 +54,7 @@ func Pack(request Request, candidates []Candidate, estimator CostEstimator) (Pac
 		packet.Items = append(packet.Items, item)
 		packet.Budget.EstimatedTokens += tokens
 		packet.Budget.EstimatedBytes += bytesCost
+		packet.Budget.ExactBytes += bytesCost
 	}
 	packet.Summary = fmt.Sprintf("Selected %d context item(s) within the requested estimated budget.", len(packet.Items))
 	if packet.Omitted["budget"] > 0 {

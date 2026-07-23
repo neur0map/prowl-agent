@@ -1,0 +1,1 @@
+Research "{{topic}}" locally. Call `search_context` in compact mode first, preserve freshness warnings and citations, then fetch only relevant `prowl://workspace/current/concept/...` or `prowl://workspace/current/source/...` detail resources. Separate direct evidence from inference.

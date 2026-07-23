@@ -2,6 +2,7 @@ package context
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -54,7 +55,7 @@ func TestPackHonorsExactBudgetAndReportsOmissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(packet.Items) != 1 || packet.Items[0].ID != "a" || packet.Budget.EstimatedBytes != 7 || packet.Omitted["budget"] != 1 {
+	if packet.SchemaVersion != PacketSchemaVersion || len(packet.Items) != 1 || packet.Items[0].ID != "a" || packet.Budget.EstimatedBytes != 7 || packet.Budget.ExactBytes != 7 || packet.Omitted["budget"] != 1 {
 		t.Fatalf("packet = %+v", packet)
 	}
 	if len(packet.Next) == 0 || len(packet.Items[0].WhySelected) == 0 {
@@ -79,6 +80,46 @@ func TestPackFallsBackToCompactAndDiversifiesSources(t *testing.T) {
 	if !containsReason(packet.Items[0].WhySelected, "packed as compact") {
 		t.Fatalf("fallback not disclosed: %+v", packet.Items[0])
 	}
+}
+
+func TestSemanticRerankingIsOptionalAndFailurePreservesDeterminism(t *testing.T) {
+	candidates := []Candidate{
+		{Item: Item{ID: "a"}, LexicalScore: 1},
+		{Item: Item{ID: "b"}, LexicalScore: 1},
+	}
+	boosted := applySemanticScores("question", candidates, fakeSemanticReranker{scores: map[string]float64{"b": 1}})
+	if ranked := RankCandidates(boosted); ranked[0].ID != "b" {
+		t.Fatalf("semantic ranking = %+v", ranked)
+	}
+	fallback := applySemanticScores("question", candidates, fakeSemanticReranker{err: fmt.Errorf("provider unavailable")})
+	if ranked := RankCandidates(fallback); ranked[0].ID != "a" {
+		t.Fatalf("fallback ranking = %+v", ranked)
+	}
+}
+
+func TestCitationEndLineUsesInclusiveChunkRange(t *testing.T) {
+	for _, test := range []struct {
+		text string
+		want int
+	}{
+		{"one line\n", 10},
+		{"one\ntwo\n", 11},
+		{"one\ntwo", 11},
+		{"", 10},
+	} {
+		if got := citationEndLine(10, test.text); got != test.want {
+			t.Fatalf("citationEndLine(10, %q) = %d, want %d", test.text, got, test.want)
+		}
+	}
+}
+
+type fakeSemanticReranker struct {
+	scores map[string]float64
+	err    error
+}
+
+func (reranker fakeSemanticReranker) Scores(_ string, _ []Candidate) (map[string]float64, error) {
+	return reranker.scores, reranker.err
 }
 
 func containsReason(values []string, want string) bool {

@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -96,15 +98,24 @@ func (repository *Repository) List() ([]*Document, error) {
 
 // Read parses a bundle-relative document after enforcing path containment.
 func (r *Repository) Read(rel string) (*Document, error) {
-	path, clean, err := r.resolve(rel)
+	_, clean, err := r.resolve(rel)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readRootFile(r.Root, clean, MaxDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
 	return r.Codec.Parse(clean, data)
+}
+
+// ReadBundleFile returns a bounded regular file from the canonical bundle.
+func (r *Repository) ReadBundleFile(rel string) ([]byte, error) {
+	_, clean, err := r.resolve(rel)
+	if err != nil {
+		return nil, err
+	}
+	return readRootFile(r.Root, clean, MaxDocumentBytes)
 }
 
 // Write validates and atomically writes a canonical document.
@@ -112,7 +123,7 @@ func (r *Repository) Write(doc *Document) error {
 	if doc == nil {
 		return errors.New("nil knowledge document")
 	}
-	path, clean, err := r.resolve(doc.Path)
+	_, clean, err := r.resolve(doc.Path)
 	if err != nil {
 		return err
 	}
@@ -121,19 +132,26 @@ func (r *Repository) Write(doc *Document) error {
 	if err != nil {
 		return err
 	}
-	mode := fs.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	root, err := os.OpenRoot(r.Root)
+	if err != nil {
 		return err
 	}
-	return atomicWrite(path, data, mode)
+	defer root.Close()
+	mode := fs.FileMode(0o644)
+	if info, err := root.Lstat(filepath.FromSlash(clean)); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("knowledge destination is not a regular file: %s", clean)
+		}
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return atomicWriteInRoot(root, clean, data, mode)
 }
 
 // Import copies and validates a Markdown document without modifying the source.
 func (r *Repository) Import(source, destination string) (*Document, error) {
-	data, err := os.ReadFile(source)
+	data, err := readRegularFile(source, MaxDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +180,7 @@ func (r *Repository) GenerateIndex() error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(r.Root, "index.md")
-	data, err := os.ReadFile(path)
+	data, err := readRootFile(r.Root, "index.md", MaxDocumentBytes)
 	if os.IsNotExist(err) {
 		data = []byte("# Knowledge\n")
 	} else if err != nil {
@@ -184,13 +201,12 @@ func (r *Repository) GenerateIndex() error {
 	}
 	generated.WriteString(indexEnd + "\n")
 	updated := replaceOwnedBlock(data, []byte(generated.String()))
-	return atomicWrite(path, updated, 0o644)
+	return r.writeBundleFile("index.md", updated, 0o644)
 }
 
 // AppendLog adds one UTC event using an atomic file replacement.
 func (r *Repository) AppendLog(action, path string, at time.Time) error {
-	logPath := filepath.Join(r.Root, "log.md")
-	data, err := os.ReadFile(logPath)
+	data, err := readRootFile(r.Root, "log.md", MaxDocumentBytes)
 	if os.IsNotExist(err) {
 		data = []byte("# Knowledge log\n")
 	} else if err != nil {
@@ -200,7 +216,7 @@ func (r *Repository) AppendLog(action, path string, at time.Time) error {
 		data = append(data, '\n')
 	}
 	line := fmt.Sprintf("- %s — %s `%s`\n", at.UTC().Format(time.RFC3339), action, filepath.ToSlash(path))
-	return atomicWrite(logPath, append(data, []byte(line)...), 0o644)
+	return r.writeBundleFile("log.md", append(data, []byte(line)...), 0o644)
 }
 
 // Export copies the complete bundle, including unknown files, to an empty path.
@@ -228,7 +244,7 @@ func (r *Repository) Export(destination string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		data, err := os.ReadFile(path)
+		data, err := readRootFile(r.Root, filepath.ToSlash(rel), 0)
 		if err != nil {
 			return err
 		}
@@ -295,4 +311,49 @@ func atomicWrite(path string, data []byte, mode fs.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func (r *Repository) writeBundleFile(rel string, data []byte, mode fs.FileMode) error {
+	_, clean, err := r.resolve(rel)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(r.Root)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return atomicWriteInRoot(root, clean, data, mode)
+}
+
+func atomicWriteInRoot(root *os.Root, rel string, data []byte, mode fs.FileMode) error {
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	dir := filepath.Dir(clean)
+	if dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	var random [12]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, ".prowl-write-"+hex.EncodeToString(random[:]))
+	file, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp)
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return root.Rename(tmp, clean)
 }

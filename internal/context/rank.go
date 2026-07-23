@@ -1,6 +1,9 @@
 package context
 
-import "sort"
+import (
+	"sort"
+	"strconv"
+)
 
 // Candidate is an unpacked retrieval result with progressive detail variants.
 type Candidate struct {
@@ -9,10 +12,41 @@ type Candidate struct {
 	StandardContent string
 	FullContent     string
 	LexicalScore    float64
+	SemanticScore   float64
 	DirectMatch     bool
 	Knowledge       bool
 	GraphDistance   int
 	ChangedRelated  bool
+}
+
+// SemanticReranker optionally assigns normalized relevance scores. Implementations
+// may use local embeddings or a host provider; errors always preserve deterministic ranking.
+type SemanticReranker interface {
+	Scores(question string, candidates []Candidate) (map[string]float64, error)
+}
+
+func applySemanticScores(question string, candidates []Candidate, reranker SemanticReranker) []Candidate {
+	out := append([]Candidate(nil), candidates...)
+	if reranker == nil || len(out) == 0 {
+		return out
+	}
+	scores, err := reranker.Scores(question, append([]Candidate(nil), out...))
+	if err != nil {
+		return out
+	}
+	for index := range out {
+		score, ok := scores[out[index].ID]
+		if !ok {
+			continue
+		}
+		if score < 0 {
+			score = 0
+		} else if score > 1 {
+			score = 1
+		}
+		out[index].SemanticScore = score
+	}
+	return out
 }
 
 // RankCandidates applies explicit deterministic factors and records every
@@ -26,6 +60,10 @@ func RankCandidates(candidates []Candidate) []Candidate {
 	for _, candidate := range candidates {
 		score := candidate.LexicalScore
 		reasons := append([]string(nil), candidate.WhySelected...)
+		if candidate.SemanticScore > 0 {
+			score += candidate.SemanticScore * 12
+			reasons = append(reasons, "semantic relevance score "+formatScore(candidate.SemanticScore))
+		}
 		if candidate.DirectMatch {
 			score += 100
 			reasons = append(reasons, "direct ID match")
@@ -79,6 +117,10 @@ func uniqueStrings(values []string) []string {
 		return []string{}
 	}
 	return out
+}
+
+func formatScore(value float64) string {
+	return strconv.FormatFloat(value, 'f', 2, 64)
 }
 
 func itoa(value int) string {

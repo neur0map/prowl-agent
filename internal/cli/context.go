@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/config"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
@@ -17,7 +19,7 @@ import (
 
 func newContextCmd() *cobra.Command {
 	command := &cobra.Command{Use: "context", Short: "Build bounded, cited context packets"}
-	command.AddCommand(newContextSearchCmd(), newContextGetCmd())
+	command.AddCommand(newContextSearchCmd(), newContextGetCmd(), newContextTracesCmd())
 	return command
 }
 
@@ -30,7 +32,7 @@ func newContextSearchCmd() *cobra.Command {
 		Short: "Retrieve bounded context for a question",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			service, closeStore, err := openContextService()
+			service, closeStore, err := openContextService(command.Context())
 			if err != nil {
 				return err
 			}
@@ -55,7 +57,7 @@ func newContextGetCmd() *cobra.Command {
 		Short: "Fetch selected context IDs within a budget",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			service, closeStore, err := openContextService()
+			service, closeStore, err := openContextService(command.Context())
 			if err != nil {
 				return err
 			}
@@ -71,6 +73,59 @@ func newContextGetCmd() *cobra.Command {
 	return command
 }
 
+func newContextTracesCmd() *cobra.Command {
+	var limit int
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "traces",
+		Short: "Inspect privacy-safe context execution metadata",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			workspaceState, err := workspace.Resolve("")
+			if err != nil {
+				return err
+			}
+			database, err := store.Open(workspaceState.DB)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+			runs, err := database.ListContextRuns(limit)
+			if err != nil {
+				return err
+			}
+			if runs == nil {
+				runs = []store.ContextRun{}
+			}
+			if asJSON {
+				encoded, err := json.MarshalIndent(runs, "", "  ")
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(command.OutOrStdout(), string(encoded))
+				return err
+			}
+			if len(runs) == 0 {
+				_, err = fmt.Fprintln(command.OutOrStdout(), "No context traces.")
+				return err
+			}
+			for _, run := range runs {
+				hash := run.QueryHash
+				if len(hash) > 12 {
+					hash = hash[:12]
+				}
+				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s %s status=%s mode=%s query_hash=%s cost=%dt/%dB selected=%s omissions=%s timing=%s\n", run.CreatedAt, run.ID, run.Status, run.Mode, hash, run.EstimatedTokens, run.EstimatedBytes, run.SelectedIDsJSON, run.OmissionsJSON, run.TimingsJSON); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	command.Flags().IntVar(&limit, "limit", 20, "maximum traces to show")
+	command.Flags().BoolVar(&asJSON, "json", false, "emit stable privacy-safe JSON")
+	return command
+}
+
 func addContextFlags(command *cobra.Command, mode *string, budgetTokens, budgetBytes *int, asJSON *bool) {
 	command.Flags().StringVar(mode, "mode", string(contextpacket.ModeCompact), "detail mode: compact, standard, or full")
 	command.Flags().IntVar(budgetTokens, "budget-tokens", 1800, "estimated token budget")
@@ -78,7 +133,7 @@ func addContextFlags(command *cobra.Command, mode *string, budgetTokens, budgetB
 	command.Flags().BoolVar(asJSON, "json", false, "emit the stable context packet as JSON")
 }
 
-func openContextService() (*contextpacket.Service, func(), error) {
+func openContextService(ctx context.Context) (*contextpacket.Service, func(), error) {
 	workspaceState, err := workspace.Resolve("")
 	if err != nil {
 		return nil, nil, err
@@ -87,8 +142,17 @@ func openContextService() (*contextpacket.Service, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	cfg, _ := config.Load(workspaceState.Path)
+	inferencer := maybeInferencer(ctx, cfg)
+	if err := freshenIndex(ctx, database, workspaceState.Root, cfg.Ignore, cfg.Languages, cfg.AI.EmbedModel, inferencer); err != nil {
+		_ = database.Close()
+		return nil, nil, err
+	}
 	repository := knowledge.NewRepository(workspaceState.Knowledge, okfv01.Codec{})
 	service := &contextpacket.Service{Store: database, Knowledge: repository, Root: workspaceState.Root, Tracer: contextpacket.StoreTracer{Store: database}}
+	if inferencer != nil {
+		service.Reranker = contextpacket.AssistSemanticReranker{Inferencer: inferencer}
+	}
 	return service, func() { _ = database.Close() }, nil
 }
 

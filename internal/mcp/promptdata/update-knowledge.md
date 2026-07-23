@@ -1,0 +1,1 @@
+Prepare a reviewable knowledge update for "{{objective}}". Read `prowl://workspace/current/knowledge/index`, use `search_context` to gather cited evidence, and run `validate_knowledge`. Draft OKF Markdown and show the diff. Never accept knowledge automatically; create a proposal only after explicit human approval.

@@ -13,9 +13,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/prowl-agent/prowl-agent/internal/assist"
+	"github.com/prowl-agent/prowl-agent/internal/capability"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/index"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	mcpserver "github.com/prowl-agent/prowl-agent/internal/mcp"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -66,11 +70,16 @@ func reindexer(s *store.Store, root string, ignore, languages []string, embedMod
 
 // newServeCmd is hidden: agents launch it via the injected .mcp.json.
 func newServeCmd(version string) *cobra.Command {
-	return &cobra.Command{
+	var surfaceName string
+	command := &cobra.Command{
 		Use:    "serve",
 		Short:  "Run the MCP server over stdio (launched by coding agents)",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			surface, err := mcpserver.ParseSurface(surfaceName)
+			if err != nil {
+				return err
+			}
 			ws, err := workspace.Resolve(".")
 			if err != nil {
 				return err
@@ -100,7 +109,18 @@ func newServeCmd(version string) *cobra.Command {
 			}
 			fresh := newFreshness(cmd.Context(), ws.Root, reindex)
 			fresh.start()
-			srv := mcpserver.NewServer(q, s, version, reindex, doctorFn, fresh.onCall)
+			repository := knowledge.NewRepository(ws.Knowledge, okfv01.Codec{})
+			catalog, err := capability.BuiltinCatalog()
+			if err != nil {
+				return err
+			}
+			contextService := &contextpacket.Service{Store: s, Knowledge: repository, Root: ws.Root, Tracer: contextpacket.StoreTracer{Store: s}}
+			if inf != nil {
+				contextService.Reranker = contextpacket.AssistSemanticReranker{Inferencer: inf}
+			}
+			srv := mcpserver.NewServerWithOptions(q, s, version, reindex, doctorFn, fresh.onCall, mcpserver.ServerOptions{
+				Surface: surface, Context: contextService, Knowledge: repository, Capabilities: catalog, Root: ws.Root,
+			})
 			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
 			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&
 				!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) &&
@@ -110,4 +130,6 @@ func newServeCmd(version string) *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().StringVar(&surfaceName, "mcp-surface", string(mcpserver.SurfaceLegacy), "MCP tool surface: legacy, core, or all")
+	return command
 }

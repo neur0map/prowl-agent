@@ -1,0 +1,12 @@
+name: inspect-structure
+title: Inspect code structure and impact
+description: Find symbols, relations, entrypoints, tests, clusters, and change blast radius.
+triggers: [find symbol, analyze dependency, review impact, locate tests]
+requires: [workspace index]
+outputs: [symbols, cited relations, impact summary]
+privacy: local-only
+read_only: true
+version: "1"
+prompts: [review-change, prepare-implementation]
+resources: [prowl://workspace/current/overview, prowl://workspace/current/changes]
+tools: [analyze_change]

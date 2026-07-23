@@ -72,6 +72,32 @@ func TestRepositoryInitWriteListIndexLogAndExport(t *testing.T) {
 	}
 }
 
+func TestRepositoryRejectsSymlinkAndOversizedDocuments(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "knowledge")
+	repo := knowledge.NewRepository(root, okfv01.Codec{})
+	if err := repo.Init(); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(tmp, "secret.md")
+	if err := os.WriteFile(outside, []byte("---\ntype: Note\n---\nsecret outside bundle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Read("leak.md"); err == nil {
+		t.Fatal("repository followed a document symlink")
+	}
+	oversized := filepath.Join(root, "oversized.md")
+	if err := os.WriteFile(oversized, bytes.Repeat([]byte("x"), int(knowledge.MaxDocumentBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Read("oversized.md"); err == nil {
+		t.Fatal("repository accepted an oversized document")
+	}
+}
+
 func TestRepositoryImportPreservesSourceAndRejectsCollision(t *testing.T) {
 	tmp := t.TempDir()
 	source := filepath.Join(tmp, "candidate.md")

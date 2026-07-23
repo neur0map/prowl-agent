@@ -261,10 +261,27 @@ type ChunkBody struct {
 // SearchChunkText runs the same FTS query as SearchChunks but returns each
 // matched chunk's full text instead of a snippet.
 func (s *Store) SearchChunkText(query string, limit int) ([]ChunkBody, error) {
+	matches := []string{ftsQuote(query)}
+	if terms := ftsTerms(query); len(terms) > 1 {
+		matches = append(matches, strings.Join(terms, " "), strings.Join(terms, " OR "))
+	}
+	for _, match := range matches {
+		hits, err := s.searchChunkTextMatch(match, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(hits) > 0 {
+			return hits, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) searchChunkTextMatch(match string, limit int) ([]ChunkBody, error) {
 	rows, err := s.db.Query(`
 		SELECT f.rel_path, c.start_line, c.text
 		FROM fts_chunks ft JOIN chunks c ON c.id=ft.rowid JOIN files f ON f.id=c.file_id
-		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, ftsQuote(query), limit)
+		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, match, limit)
 	if err != nil {
 		return nil, err
 	}

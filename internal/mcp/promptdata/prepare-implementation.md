@@ -1,0 +1,1 @@
+Prepare implementation work for "{{task}}". Start from `prowl://workspace/current/overview`, use `search_context` compactly, call `analyze_change` for candidate files, and fetch only selected detail resources. Produce ordered edits, tests, compatibility concerns, and citations.

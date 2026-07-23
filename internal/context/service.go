@@ -21,6 +21,7 @@ type Service struct {
 	Root      string
 	Estimator CostEstimator
 	Tracer    Tracer
+	Reranker  SemanticReranker
 }
 
 // Search retrieves, ranks, and packs curated knowledge plus raw source evidence.
@@ -41,7 +42,13 @@ func (service *Service) Search(request Request) (packet Packet, err error) {
 	if err != nil {
 		return Packet{}, err
 	}
-	packet, err = Pack(request, append(curated, sources...), service.Estimator)
+	graph, err := graphCandidates(service.Store, sources, 8)
+	if err != nil {
+		return Packet{}, err
+	}
+	candidates := append(append(curated, sources...), graph...)
+	candidates = applySemanticScores(request.Question, candidates, service.Reranker)
+	packet, err = Pack(request, candidates, service.Estimator)
 	if err != nil {
 		return Packet{}, err
 	}
@@ -132,14 +139,14 @@ func (service *Service) sourceByID(id string) (Candidate, bool, error) {
 	if err != nil || !ok {
 		return Candidate{}, ok, err
 	}
-	end := chunk.StartLine + strings.Count(chunk.Text, "\n")
+	end := citationEndLine(chunk.StartLine, chunk.Text)
 	return Candidate{
 		Item: Item{
 			ID: id, Kind: "source", Title: filepath.ToSlash(chunk.File), Summary: firstParagraph([]byte(chunk.Text)),
 			WhySelected: []string{"selected source ID"}, Freshness: "current", Confidence: 1,
 			Audience:       []string{"assistant", "user"},
-			Citations:      []Citation{{URI: "file://" + filepath.ToSlash(chunk.File), Path: filepath.ToSlash(chunk.File), LineStart: chunk.StartLine, LineEnd: end}},
-			DetailResource: "prowl://workspace/current/source/" + base64.RawURLEncoding.EncodeToString([]byte(filepath.ToSlash(chunk.File))),
+			Citations:      []Citation{{URI: sourceResourceURI(chunk.File), Path: filepath.ToSlash(chunk.File), LineStart: chunk.StartLine, LineEnd: end}},
+			DetailResource: sourceResourceURI(chunk.File),
 		},
 		CompactContent: firstParagraph([]byte(chunk.Text)), StandardContent: chunk.Text, FullContent: chunk.Text,
 	}, true, nil

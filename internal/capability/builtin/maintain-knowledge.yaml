@@ -1,0 +1,12 @@
+name: maintain-knowledge
+title: Propose and validate durable knowledge
+description: Validate OKF documents and create a reviewable proposal without accepting it.
+triggers: [document decision, update knowledge, validate claims, stale evidence]
+requires: [knowledge bundle]
+outputs: [proposal diff, lint findings]
+privacy: local canonical files
+read_only: false
+version: "1"
+prompts: [update-knowledge]
+resources: [prowl://workspace/current/knowledge/index]
+tools: [propose_knowledge_change, validate_knowledge]

@@ -52,7 +52,7 @@ func CheckAnchor(sourceRoot string, anchor Anchor) AnchorCheck {
 		result.Message = "unsafe or empty source path"
 		return result
 	}
-	data, err := os.ReadFile(filepath.Join(sourceRoot, clean))
+	data, err := readRootFile(sourceRoot, filepath.ToSlash(clean), MaxDocumentBytes)
 	if os.IsNotExist(err) {
 		result.Status = AnchorMissing
 		result.Message = "source file is missing"

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -76,5 +77,53 @@ func TestServiceRequiresQuestionAndIDs(t *testing.T) {
 	}
 	if _, err := service.Get(Request{}); err == nil {
 		t.Fatal("empty get accepted")
+	}
+}
+
+func TestServiceExpandsOneGraphHopWithSelectionReason(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":           "module fixture\n\ngo 1.25\n",
+		"auth/main.go":     "package auth\nimport \"fixture/policy\"\n// Checks each incoming request and returns whether policy allowed it.\nfunc Authenticate() bool { return policy.Allowed() }\n",
+		"policy/policy.go": "package policy\nimport \"fixture/audit\"\nfunc Allowed() bool { audit.Record(); return true }\n",
+		"audit/audit.go":   "package audit\nfunc Record() {}\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	database, err := store.Open(filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := index.IndexWithOptions(database, root, index.Options{Languages: []string{"go"}}); err != nil {
+		t.Fatal(err)
+	}
+	packet, err := (&Service{Store: database, Root: root}).Search(Request{Question: "checks request allowed", Mode: ModeCompact, BudgetTokens: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	foundDirect := false
+	foundSecondHop := false
+	for _, item := range packet.Items {
+		if item.Title == "auth/main.go" {
+			foundDirect = true
+		}
+		if item.Title == "policy/policy.go" && strings.Contains(strings.Join(item.WhySelected, " "), "graph distance 1") {
+			found = true
+		}
+		if item.Title == "audit/audit.go" {
+			foundSecondHop = true
+		}
+	}
+	if !foundDirect || !found || foundSecondHop {
+		t.Fatalf("natural-language direct hit or graph neighbor missing from packet: %+v", packet.Items)
 	}
 }

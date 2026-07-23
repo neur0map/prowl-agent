@@ -45,7 +45,7 @@ func newRestartCmd(string) *cobra.Command {
 			// Rebuild structural data only; the relaunched serve re-embeds lazily.
 			// This keeps restart fast and immune to an Ollama or model issue
 			// blocking the server stop below.
-			msg, err := reindexer(s, ws.Root, cfg.Ignore, "", nil)(cmd.Context())
+			msg, err := reindexer(s, ws.Root, cfg.Ignore, cfg.Languages, "", nil)(cmd.Context())
 			if err != nil {
 				return err
 			}

@@ -122,7 +122,7 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	}
 	defer s.Close()
 	_ = s.SetMeta("ai_enabled", strconv.FormatBool(aiOn))
-	sum, err := index.Index(s, root, cfg.Ignore)
+	sum, err := index.IndexWithOptions(s, root, index.Options{Ignore: cfg.Ignore, Languages: cfg.Languages})
 	if err != nil {
 		return sum, err
 	}

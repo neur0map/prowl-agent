@@ -107,8 +107,14 @@ func Walk(root string, ignore []string) ([]string, error) {
 // read-and-hash re-index when nothing changed. It only reads directory entries
 // and stats, never file contents, so it stays fast on large repositories.
 func Signature(root string, ignore []string) (uint64, error) {
+	return SignatureWithOptions(root, Options{Ignore: ignore})
+}
+
+// SignatureWithOptions includes indexing policy in the freshness fingerprint so
+// changing configured languages invalidates an otherwise unchanged file tree.
+func SignatureWithOptions(root string, opt Options) (uint64, error) {
 	var entries []string
-	err := walkFiles(root, ignore, func(rel string, d fs.DirEntry) error {
+	err := walkFiles(root, opt.Ignore, func(rel string, d fs.DirEntry) error {
 		var mt int64
 		if info, ierr := d.Info(); ierr == nil {
 			mt = info.ModTime().UnixNano()
@@ -121,6 +127,15 @@ func Signature(root string, ignore []string) (uint64, error) {
 	}
 	sort.Strings(entries)
 	h := xxhash.New()
+	languages := append([]string(nil), opt.Languages...)
+	for i := range languages {
+		languages[i] = strings.ToLower(strings.TrimSpace(languages[i]))
+	}
+	if len(languages) == 0 {
+		languages = []string{"auto"}
+	}
+	sort.Strings(languages)
+	_, _ = h.WriteString("languages\x00" + strings.Join(languages, ",") + "\n")
 	for _, e := range entries {
 		_, _ = h.WriteString(e)
 		_, _ = h.WriteString("\n")

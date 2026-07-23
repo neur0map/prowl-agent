@@ -40,7 +40,7 @@ func newLSPCmd(version string) *cobra.Command {
 			rules, _ := config.LoadRules(ws.Path)
 
 			reindex := func() error {
-				_, err := index.Index(s, ws.Root, cfg.Ignore)
+				_, err := index.IndexWithOptions(s, ws.Root, index.Options{Ignore: cfg.Ignore, Languages: cfg.Languages})
 				return err
 			}
 			// Freshen on startup (incremental, cheap after the first run).

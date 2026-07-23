@@ -17,7 +17,7 @@ func TestReindexer(t *testing.T) {
 	}
 	defer s.Close()
 	root, _ := filepath.Abs(filepath.Join("..", "..", "testdata", "sample-config"))
-	r := reindexer(s, root, nil, "", nil)
+	r := reindexer(s, root, nil, nil, "", nil)
 
 	msg, err := r(context.Background())
 	if err != nil {

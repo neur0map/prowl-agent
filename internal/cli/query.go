@@ -83,14 +83,14 @@ func openQuerier(ctx context.Context, needsAI bool) (*query.Querier, *workspace.
 	if needsAI && cfg.AI.Enabled {
 		if oll := maybeInferencer(ctx, cfg); oll != nil {
 			q = query.NewWithAssist(s, oll)
-			if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, cfg.AI.EmbedModel, oll); err != nil {
+			if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, cfg.Languages, cfg.AI.EmbedModel, oll); err != nil {
 				s.Close()
 				return nil, nil, nil, nil, err
 			}
 			return q, ws, s, s.Close, nil
 		}
 	}
-	if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, "", nil); err != nil {
+	if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, cfg.Languages, "", nil); err != nil {
 		s.Close()
 		return nil, nil, nil, nil, err
 	}
@@ -103,8 +103,8 @@ func openQuerier(ctx context.Context, needsAI bool) (*query.Querier, *workspace.
 // against what was last recorded. With an inferencer it also re-embeds, and only
 // skips when the vector index is already populated. This keeps repeated shell
 // calls fast on large repositories while never serving stale data.
-func freshenIndex(ctx context.Context, s *store.Store, root string, ignore []string, embedModel string, inf assist.Inferencer) error {
-	sig, sErr := index.Signature(root, ignore)
+func freshenIndex(ctx context.Context, s *store.Store, root string, ignore, languages []string, embedModel string, inf assist.Inferencer) error {
+	sig, sErr := index.SignatureWithOptions(root, index.Options{Ignore: ignore, Languages: languages})
 	ver, _ := s.GetMeta("index_version")
 	storedSig, _ := s.GetMeta("cli_sig")
 	current := sErr == nil && sig != 0 &&
@@ -113,7 +113,7 @@ func freshenIndex(ctx context.Context, s *store.Store, root string, ignore []str
 	if current && (inf == nil || s.VectorsReady()) {
 		return nil
 	}
-	if _, err := reindexer(s, root, ignore, embedModel, inf)(ctx); err != nil {
+	if _, err := reindexer(s, root, ignore, languages, embedModel, inf)(ctx); err != nil {
 		return err
 	}
 	if sErr == nil {

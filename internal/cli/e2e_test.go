@@ -57,7 +57,9 @@ func TestServeProcessE2E(t *testing.T) {
 		return res.Content[0].(*sdk.TextContent).Text
 	}
 
-	if out := call("status", nil); !strings.Contains(out, "\"files\":12") {
+	// The generated Prowl-only AGENTS.md block is intentionally excluded, so the
+	// index contains only the fixture's 11 source/config files.
+	if out := call("status", nil); !strings.Contains(out, "\"files\":11") {
 		t.Fatalf("status over process: %s", out)
 	}
 	if out := call("blast_radius", map[string]any{"path": "hypr/colors.conf"}); !strings.Contains(out, "hypr/hyprland.conf") {

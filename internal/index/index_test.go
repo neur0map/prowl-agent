@@ -134,3 +134,79 @@ func TestIndexIncremental(t *testing.T) {
 		t.Fatal("b.lua still indexed after deletion")
 	}
 }
+
+func TestIndexLanguagesFilterAndAuto(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tool.py"), []byte("def tool():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := openStore(t)
+	sum, err := IndexWithOptions(s, root, Options{Languages: []string{"go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Indexed != 1 {
+		t.Fatalf("go-only indexed = %d, want 1", sum.Indexed)
+	}
+	if _, ok, _ := s.GetFileByPath("main.go"); !ok {
+		t.Fatal("main.go was not indexed")
+	}
+	if _, ok, _ := s.GetFileByPath("tool.py"); ok {
+		t.Fatal("tool.py was indexed despite languages=[go]")
+	}
+
+	sum, err = IndexWithOptions(s, root, Options{Languages: []string{"auto"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Indexed != 2 {
+		t.Fatalf("auto indexed = %d, want 2", sum.Indexed)
+	}
+}
+
+func TestIndexStripsGeneratedAgentsBlockButKeepsUserGuidance(t *testing.T) {
+	root := t.TempDir()
+	agents := "# House rules\n\nRun the focused tests.\n\n<!-- prowl-agent -->\ngenerated routing instructions\n<!-- /prowl-agent -->\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(agents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := openStore(t)
+	if _, err := IndexWithOptions(s, root, Options{Languages: []string{"auto"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.GetFileByPath("AGENTS.md"); !ok {
+		t.Fatal("user-authored AGENTS.md content should remain indexed")
+	}
+	hits, err := s.SearchChunks("focused tests", 10)
+	if err != nil || len(hits) == 0 {
+		t.Fatalf("user guidance not searchable: %v %v", hits, err)
+	}
+	generated, err := s.SearchChunks("generated routing instructions", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(generated) != 0 {
+		t.Fatalf("generated Prowl block leaked into index: %+v", generated)
+	}
+}
+
+func TestSignatureIncludesLanguageSelection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSig, err := SignatureWithOptions(root, Options{Languages: []string{"go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pySig, err := SignatureWithOptions(root, Options{Languages: []string{"python"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if goSig == pySig {
+		t.Fatal("language selection must affect freshness signature")
+	}
+}

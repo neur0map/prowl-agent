@@ -54,7 +54,7 @@ const (
 func Default() Config {
 	p := PresetByName(DefaultTier)
 	return Config{
-		Languages: []string{"lua", "python", "bash", "css", "scss", "json", "yaml", "toml", "ini", "qml", "hyprlang", "rasi", "generic"},
+		Languages: []string{"auto"},
 		Ignore:    []string{".mcp.json", "opencode.json", "*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ttf", "*.otf", "*.woff", "*.woff2"},
 		AI: AI{
 			Enabled:     false,

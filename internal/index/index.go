@@ -27,12 +27,26 @@ type Summary struct {
 	Edges   int // edges in the index (total)
 }
 
+// Options controls which files and detected languages enter the structural
+// index. An empty language list, or one containing "auto", enables every
+// supported parser. Explicit lists use the canonical IDs returned by parse.Detect.
+type Options struct {
+	Ignore    []string
+	Languages []string
+}
+
 // Index incrementally synchronizes the store with the project rooted at root.
 // Only files whose content hash changed are reparsed; removed files are deleted;
 // the global resolution passes always run afterward.
 func Index(s *store.Store, root string, ignore []string) (Summary, error) {
+	return IndexWithOptions(s, root, Options{Ignore: ignore})
+}
+
+// IndexWithOptions incrementally synchronizes the store while enforcing the
+// configured language policy.
+func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error) {
 	var sum Summary
-	rels, err := Walk(root, ignore)
+	rels, err := Walk(root, opt.Ignore)
 	if err != nil {
 		return sum, err
 	}
@@ -52,12 +66,16 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 		if err != nil {
 			continue
 		}
+		data = stripGeneratedContent(rel, data)
+		if len(strings.TrimSpace(string(data))) == 0 {
+			continue
+		}
 		head := data
 		if len(head) > 512 {
 			head = head[:512]
 		}
 		lang := parse.Detect(rel, head)
-		if lang == "" {
+		if lang == "" || !languageAllowed(lang, opt.Languages) {
 			continue
 		}
 		current[rel] = true
@@ -114,6 +132,10 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 			sum.Deleted++
 		}
 	}
+	all, err = s.AllFiles()
+	if err != nil {
+		return sum, err
+	}
 
 	// Record the Go module path (if any) so resolution can link package imports
 	// to the files in those packages.
@@ -136,6 +158,41 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 		return sum, err
 	}
 	return sum, nil
+}
+
+func languageAllowed(lang string, configured []string) bool {
+	if len(configured) == 0 {
+		return true
+	}
+	for _, candidate := range configured {
+		candidate = strings.ToLower(strings.TrimSpace(candidate))
+		if candidate == "auto" || candidate == "*" || candidate == lang {
+			return true
+		}
+	}
+	return false
+}
+
+func stripGeneratedContent(rel string, data []byte) []byte {
+	if !strings.EqualFold(filepath.Base(rel), "AGENTS.md") {
+		return data
+	}
+	const startMarker = "<!-- prowl-agent -->"
+	const endMarker = "<!-- /prowl-agent -->"
+	content := string(data)
+	for {
+		start := strings.Index(content, startMarker)
+		if start < 0 {
+			break
+		}
+		endRel := strings.Index(content[start:], endMarker)
+		if endRel < 0 {
+			break
+		}
+		end := start + endRel + len(endMarker)
+		content = content[:start] + content[end:]
+	}
+	return []byte(strings.TrimSpace(content))
 }
 
 // Version returns the indexing-logic version (the binary's VCS revision). The

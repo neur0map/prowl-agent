@@ -41,12 +41,12 @@ func maybeInferencer(ctx context.Context, cfg config.Config) assist.Inferencer {
 
 // reindexer returns a serialized re-index function: structural always, plus
 // embeddings when inf is set. Shared by serve and watch.
-func reindexer(s *store.Store, root string, ignore []string, embedModel string, inf assist.Inferencer) func(context.Context) (string, error) {
+func reindexer(s *store.Store, root string, ignore, languages []string, embedModel string, inf assist.Inferencer) func(context.Context) (string, error) {
 	var mu sync.Mutex
 	return func(ctx context.Context) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		sum, err := index.Index(s, root, ignore)
+		sum, err := index.IndexWithOptions(s, root, index.Options{Ignore: ignore, Languages: languages})
 		if err != nil {
 			return "", err
 		}
@@ -85,7 +85,7 @@ func newServeCmd(version string) *cobra.Command {
 			inf := maybeInferencer(cmd.Context(), cfg)
 			_ = s.SetMeta("ai_enabled", strconv.FormatBool(inf != nil))
 
-			reindex := reindexer(s, ws.Root, cfg.Ignore, cfg.AI.EmbedModel, inf)
+			reindex := reindexer(s, ws.Root, cfg.Ignore, cfg.Languages, cfg.AI.EmbedModel, inf)
 			// Freshen the index on startup (incremental, so cheap after first run).
 			if _, err := reindex(cmd.Context()); err != nil {
 				return err

@@ -2,33 +2,47 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/prowl-agent/prowl-agent/internal/config"
-	"github.com/prowl-agent/prowl-agent/internal/store"
+	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
 func TestReindexer(t *testing.T) {
-	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	root := t.TempDir()
+	state, err := workspace.Create(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	root, _ := filepath.Abs(filepath.Join("..", "..", "testdata", "sample-config"))
-	r := reindexer(s, root, nil, nil, "", nil)
+	if err := config.Save(state.Path, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package fixture\nfunc Main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	project, err := openServeProject(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer project.Close()
+	if err := project.Store.SetMeta("index_version", ""); err != nil {
+		t.Fatal(err)
+	}
+	r := reindexer(project)
 
 	msg, err := r(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "indexed=11") {
-		t.Fatalf("first pass = %q, want indexed=11", msg)
+	if !strings.Contains(msg, "indexed=1") || !strings.Contains(msg, "parsed=1") {
+		t.Fatalf("first pass = %q, want indexed=1 parsed=1", msg)
 	}
-	// A second pass should re-parse nothing.
-	if msg2, _ := r(context.Background()); !strings.Contains(msg2, "skipped=11") {
-		t.Fatalf("second pass = %q, want skipped=11", msg2)
+	if msg2, _ := r(context.Background()); !strings.Contains(msg2, "skipped=1") {
+		t.Fatalf("second pass = %q, want skipped=1", msg2)
 	}
 }
 

@@ -6,24 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/assist"
-	"github.com/prowl-agent/prowl-agent/internal/capability"
 	"github.com/prowl-agent/prowl-agent/internal/config"
-	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
-	"github.com/prowl-agent/prowl-agent/internal/index"
-	"github.com/prowl-agent/prowl-agent/internal/knowledge"
-	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	mcpserver "github.com/prowl-agent/prowl-agent/internal/mcp"
-	"github.com/prowl-agent/prowl-agent/internal/query"
-	"github.com/prowl-agent/prowl-agent/internal/store"
-	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
 // maybeInferencer returns an Ollama inferencer when AI is enabled and reachable.
@@ -43,29 +34,26 @@ func maybeInferencer(ctx context.Context, cfg config.Config) assist.Inferencer {
 	return oll
 }
 
-// reindexer returns a serialized re-index function: structural always, plus
-// embeddings when inf is set. Shared by serve and watch.
-func reindexer(s *store.Store, root string, ignore, languages []string, embedModel string, inf assist.Inferencer) func(context.Context) (string, error) {
-	var mu sync.Mutex
+// reindexer formats the shared Project refresh operation for MCP and restart.
+func reindexer(project *application.Project) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		sum, err := index.IndexWithOptions(s, root, index.Options{Ignore: ignore, Languages: languages})
+		result, err := project.Refresh(ctx)
 		if err != nil {
 			return "", err
 		}
+		sum := result.Summary
 		msg := fmt.Sprintf("indexed=%d parsed=%d skipped=%d deleted=%d", sum.Indexed, sum.Parsed, sum.Skipped, sum.Deleted)
-		if inf != nil {
-			// Embeddings are optional: a transient Ollama failure or a missing
-			// model must not fail the index. Structural search still works.
-			if n, err := index.BuildVectors(ctx, s, inf, embedModel); err != nil {
-				msg += fmt.Sprintf(" embed_error=%q", err.Error())
-			} else {
-				msg += fmt.Sprintf(" embedded=%d", n)
-			}
+		if result.EmbeddingError != nil {
+			msg += fmt.Sprintf(" embed_error=%q", result.EmbeddingError.Error())
+		} else if project.Inferencer != nil {
+			msg += fmt.Sprintf(" embedded=%d", result.Embedded)
 		}
 		return msg, nil
 	}
+}
+
+func openServeProject(ctx context.Context) (*application.Project, error) {
+	return application.OpenProject(ctx, ".", application.Options{EnableAI: true, InferencerProvider: maybeInferencer})
 }
 
 // newServeCmd is hidden: agents launch it via the injected .mcp.json.
@@ -80,46 +68,33 @@ func newServeCmd(version string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ws, err := workspace.Resolve(".")
+			project, err := openServeProject(cmd.Context())
 			if err != nil {
 				return err
 			}
-			s, err := store.Open(ws.DB)
-			if err != nil {
-				return err
+			defer project.Close()
+			reindex := reindexer(project)
+			doctorFn := func(ctx context.Context) (doctor.Report, error) {
+				release, err := project.ReadGuard(ctx)
+				if err != nil {
+					return doctor.Report{}, err
+				}
+				defer release()
+				if err := project.Store.RequirePublishedGeneration(); err != nil {
+					return doctor.Report{}, err
+				}
+				rules, err := config.LoadRules(project.Workspace.Path)
+				if err != nil {
+					return doctor.Report{}, err
+				}
+				return doctor.Run(project.Store, rules, doctor.Options{Root: project.Workspace.Root})
 			}
-			defer s.Close()
-			cfg, _ := config.Load(ws.Path)
-
-			inf := maybeInferencer(cmd.Context(), cfg)
-			_ = s.SetMeta("ai_enabled", strconv.FormatBool(inf != nil))
-
-			reindex := reindexer(s, ws.Root, cfg.Ignore, cfg.Languages, cfg.AI.EmbedModel, inf)
-			// Freshen the index on startup (incremental, so cheap after first run).
-			if _, err := reindex(cmd.Context()); err != nil {
-				return err
-			}
-			q := query.New(s)
-			if inf != nil {
-				q = query.NewWithAssist(s, inf)
-			}
-			doctorFn := func(context.Context) (doctor.Report, error) {
-				rules, _ := config.LoadRules(ws.Path)
-				return doctor.Run(s, rules, doctor.Options{Root: ws.Root})
-			}
-			fresh := newFreshness(cmd.Context(), ws.Root, reindex)
+			fresh := newFreshness(cmd.Context(), project.Workspace.Root, reindex)
 			fresh.start()
-			repository := knowledge.NewRepository(ws.Knowledge, okfv01.Codec{})
-			catalog, err := capability.BuiltinCatalog()
-			if err != nil {
-				return err
-			}
-			contextService := &contextpacket.Service{Store: s, Knowledge: repository, Root: ws.Root, Tracer: contextpacket.StoreTracer{Store: s}}
-			if inf != nil {
-				contextService.Reranker = contextpacket.AssistSemanticReranker{Inferencer: inf}
-			}
-			srv := mcpserver.NewServerWithOptions(q, s, version, reindex, doctorFn, fresh.onCall, mcpserver.ServerOptions{
-				Surface: surface, Context: contextService, Knowledge: repository, Capabilities: catalog, Root: ws.Root,
+			defer fresh.stop()
+			srv := mcpserver.NewServerWithOptions(project.Query, project.Store, version, reindex, doctorFn, nil, mcpserver.ServerOptions{
+				Surface: surface, Context: project.Context, Knowledge: project.Knowledge, Capabilities: project.Capabilities, Root: project.Workspace.Root,
+				BeforeCall: fresh.onCall,
 			})
 			// A clean client disconnect surfaces as EOF / "closing"; treat it as success.
 			if err := mcpserver.Serve(cmd.Context(), srv); err != nil &&

@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,5 +85,28 @@ func TestContextCLIEmitsSharedPacket(t *testing.T) {
 	command.SetArgs([]string{"bounded context", "--mode", "full", "--budget-tokens", "0"})
 	if err := command.Execute(); err == nil {
 		t.Fatal("unbounded full CLI request accepted")
+	}
+}
+
+func TestOpenContextServiceReturnsMalformedConfigError(t *testing.T) {
+	root := t.TempDir()
+	state, err := workspace.Create(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state.Path, "config.toml"), []byte("languages = [\"go\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	service, closeProject, err := openContextService(context.Background())
+	if err == nil {
+		if closeProject != nil {
+			closeProject()
+		}
+		t.Fatalf("openContextService = %v, want malformed config error", service)
+	}
+	if !strings.Contains(err.Error(), "load project config") {
+		t.Fatalf("error = %q, want config context", err)
 	}
 }

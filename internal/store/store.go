@@ -3,8 +3,10 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,8 +23,96 @@ var schemaSQL string
 // SchemaVersion is bumped whenever Open must migrate an existing cache.
 const SchemaVersion = 3
 
-// Store wraps a SQLite connection to a single project's index.db.
-type Store struct{ db *sql.DB }
+// ErrGenerationIncomplete indicates that a failed refresh deliberately withheld
+// publication and readers must wait for a successful repair.
+var ErrGenerationIncomplete = errors.New("index generation is incomplete")
+
+// ReadGuard pins one published generation for a complete logical read. The
+// returned release function must be called after the operation's final query.
+type ReadGuard func(context.Context) (release func(), err error)
+
+type sqlRunner interface {
+	Exec(string, ...any) (sql.Result, error)
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	Query(string, ...any) (*sql.Rows, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type writeRunner interface {
+	Exec(string, ...any) (sql.Result, error)
+	Prepare(string) (*sql.Stmt, error)
+	QueryRow(string, ...any) *sql.Row
+}
+
+// Store wraps a SQLite connection to a single project's index.db. A generation
+// store reuses the same database through one transaction and must be completed
+// through Generation.Commit or Generation.Rollback rather than closed directly.
+type Store struct {
+	db *sql.DB
+	tx *sql.Tx
+}
+
+func (s *Store) sql() sqlRunner {
+	if s.tx != nil {
+		return s.tx
+	}
+	return s.db
+}
+
+func (s *Store) writeTransaction(fn func(writeRunner) error) error {
+	if s.tx != nil {
+		return fn(s.tx)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// Generation owns an atomic derived-index publication transaction.
+type Generation struct {
+	Store *Store
+	tx    *sql.Tx
+	done  bool
+}
+
+// BeginGeneration starts a transaction whose writes remain invisible to readers
+// until Commit. The returned Store can be passed to the normal indexing APIs.
+func (s *Store) BeginGeneration(ctx context.Context) (*Generation, error) {
+	if s.tx != nil {
+		return nil, fmt.Errorf("nested store generation")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Generation{Store: &Store{db: s.db, tx: tx}, tx: tx}, nil
+}
+
+// Commit atomically publishes every write in the generation.
+func (g *Generation) Commit() error {
+	if g == nil || g.done {
+		return fmt.Errorf("store generation already completed")
+	}
+	g.done = true
+	return g.tx.Commit()
+}
+
+// Rollback discards every write in the generation.
+func (g *Generation) Rollback() error {
+	if g == nil || g.done {
+		return nil
+	}
+	g.done = true
+	return g.tx.Rollback()
+}
 
 // Open opens (creating if needed) the index database at path, applies the
 // schema, and records the schema version. WAL mode lets `index` write while
@@ -150,7 +240,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // SetMeta upserts a key/value into the meta table.
 func (s *Store) SetMeta(key, value string) error {
-	_, err := s.db.Exec(
+	_, err := s.sql().Exec(
 		`INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 		key, value)
 	return err
@@ -159,9 +249,21 @@ func (s *Store) SetMeta(key, value string) error {
 // GetMeta returns the value for key, or "" if absent.
 func (s *Store) GetMeta(key string) (string, error) {
 	var v string
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&v)
+	err := s.sql().QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&v)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return v, err
+}
+
+// RequirePublishedGeneration fails closed after a refresh withheld publication.
+func (s *Store) RequirePublishedGeneration() error {
+	state, err := s.GetMeta("index_state")
+	if err != nil {
+		return err
+	}
+	if state != "complete" {
+		return ErrGenerationIncomplete
+	}
+	return nil
 }

@@ -9,12 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
-	"github.com/prowl-agent/prowl-agent/internal/knowledge"
-	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/store"
-	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
 func newContextCmd() *cobra.Command {
@@ -81,16 +78,20 @@ func newContextTracesCmd() *cobra.Command {
 		Short: "Inspect privacy-safe context execution metadata",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			workspaceState, err := workspace.Resolve("")
+			project, err := application.OpenProject(command.Context(), ".", application.Options{})
 			if err != nil {
 				return err
 			}
-			database, err := store.Open(workspaceState.DB)
+			defer project.Close()
+			release, err := project.ReadGuard(command.Context())
 			if err != nil {
 				return err
 			}
-			defer database.Close()
-			runs, err := database.ListContextRuns(limit)
+			defer release()
+			if err := project.Store.RequirePublishedGeneration(); err != nil {
+				return err
+			}
+			runs, err := project.Store.ListContextRuns(limit)
 			if err != nil {
 				return err
 			}
@@ -134,26 +135,11 @@ func addContextFlags(command *cobra.Command, mode *string, budgetTokens, budgetB
 }
 
 func openContextService(ctx context.Context) (*contextpacket.Service, func(), error) {
-	workspaceState, err := workspace.Resolve("")
+	project, err := application.OpenProject(ctx, "", application.Options{EnableAI: true, InferencerProvider: maybeInferencer})
 	if err != nil {
 		return nil, nil, err
 	}
-	database, err := store.Open(workspaceState.DB)
-	if err != nil {
-		return nil, nil, err
-	}
-	cfg, _ := config.Load(workspaceState.Path)
-	inferencer := maybeInferencer(ctx, cfg)
-	if err := freshenIndex(ctx, database, workspaceState.Root, cfg.Ignore, cfg.Languages, cfg.AI.EmbedModel, inferencer); err != nil {
-		_ = database.Close()
-		return nil, nil, err
-	}
-	repository := knowledge.NewRepository(workspaceState.Knowledge, okfv01.Codec{})
-	service := &contextpacket.Service{Store: database, Knowledge: repository, Root: workspaceState.Root, Tracer: contextpacket.StoreTracer{Store: database}}
-	if inferencer != nil {
-		service.Reranker = contextpacket.AssistSemanticReranker{Inferencer: inferencer}
-	}
-	return service, func() { _ = database.Close() }, nil
+	return project.Context, func() { _ = project.Close() }, nil
 }
 
 func writeContextPacket(command *cobra.Command, packet contextpacket.Packet, asJSON bool) error {

@@ -34,66 +34,62 @@ type Chunk struct {
 
 // ReplaceFileGraph atomically replaces all derived rows for fileID.
 func (s *Store) ReplaceFileGraph(fileID int64, syms []Symbol, res []Resource, edges []RawEdge, chunks []Chunk) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err := deleteFileChildren(tx, fileID); err != nil {
-		return err
-	}
-
-	nameToID := make(map[string]int64, len(syms))
-	for _, sym := range syms {
-		r, err := tx.Exec(
-			`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity) VALUES(?,?,?,?,?,?,?)`,
-			fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity)
-		if err != nil {
+	return s.writeTransaction(func(tx writeRunner) error {
+		if err := deleteFileChildren(tx, fileID); err != nil {
 			return err
 		}
-		id, _ := r.LastInsertId()
-		if _, dup := nameToID[sym.Name]; !dup {
-			nameToID[sym.Name] = id
+
+		nameToID := make(map[string]int64, len(syms))
+		for _, sym := range syms {
+			r, err := tx.Exec(
+				`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity) VALUES(?,?,?,?,?,?,?)`,
+				fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity)
+			if err != nil {
+				return err
+			}
+			id, _ := r.LastInsertId()
+			if _, dup := nameToID[sym.Name]; !dup {
+				nameToID[sym.Name] = id
+			}
 		}
-	}
-	for _, sym := range syms {
-		if sym.ParentName == "" {
-			continue
+		for _, sym := range syms {
+			if sym.ParentName == "" {
+				continue
+			}
+			if pid, ok := nameToID[sym.ParentName]; ok {
+				if _, err := tx.Exec(`UPDATE symbols SET parent_id=? WHERE file_id=? AND name=? AND parent_id IS NULL`,
+					pid, fileID, sym.Name); err != nil {
+					return err
+				}
+			}
 		}
-		if pid, ok := nameToID[sym.ParentName]; ok {
-			if _, err := tx.Exec(`UPDATE symbols SET parent_id=? WHERE file_id=? AND name=? AND parent_id IS NULL`,
-				pid, fileID, sym.Name); err != nil {
+		for _, rsc := range res {
+			if _, err := tx.Exec(`INSERT INTO resources(kind,name,value,file_id,line) VALUES(?,?,?,?,?)`,
+				rsc.Kind, nullStr(rsc.Name), nullStr(rsc.Value), fileID, rsc.Line); err != nil {
 				return err
 			}
 		}
-	}
-	for _, rsc := range res {
-		if _, err := tx.Exec(`INSERT INTO resources(kind,name,value,file_id,line) VALUES(?,?,?,?,?)`,
-			rsc.Kind, nullStr(rsc.Name), nullStr(rsc.Value), fileID, rsc.Line); err != nil {
-			return err
-		}
-	}
-	for _, e := range edges {
-		srcType, srcID := "file", fileID
-		if e.SrcName != "" {
-			if id, ok := nameToID[e.SrcName]; ok {
-				srcType, srcID = "symbol", id
+		for _, e := range edges {
+			srcType, srcID := "file", fileID
+			if e.SrcName != "" {
+				if id, ok := nameToID[e.SrcName]; ok {
+					srcType, srcID = "symbol", id
+				}
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw) VALUES(?,?,NULL,NULL,?,?,?,0,?)`,
+				srcType, srcID, e.Kind, fileID, e.Line, e.Raw); err != nil {
+				return err
 			}
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw) VALUES(?,?,NULL,NULL,?,?,?,0,?)`,
-			srcType, srcID, e.Kind, fileID, e.Line, e.Raw); err != nil {
-			return err
+		for _, c := range chunks {
+			if _, err := tx.Exec(`INSERT INTO chunks(file_id,start_line,end_line,text) VALUES(?,?,?,?)`,
+				fileID, c.StartLine, c.EndLine, c.Text); err != nil {
+				return err
+			}
 		}
-	}
-	for _, c := range chunks {
-		if _, err := tx.Exec(`INSERT INTO chunks(file_id,start_line,end_line,text) VALUES(?,?,?,?)`,
-			fileID, c.StartLine, c.EndLine, c.Text); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 // SymbolHit is a search/lookup result for a symbol. Signature and EndLine are
@@ -150,7 +146,7 @@ type SymbolSpan struct {
 // SymbolSpans returns the definitions in a file (by repo-relative path) ordered
 // by start line, so a caller can locate the innermost one enclosing a line.
 func (s *Store) SymbolSpans(relPath string) ([]SymbolSpan, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT sy.name, sy.kind, sy.start_line, sy.end_line
 		FROM symbols sy JOIN files f ON f.id=sy.file_id
 		WHERE f.rel_path=? ORDER BY sy.start_line`, relPath)
@@ -181,7 +177,7 @@ func (s *Store) SymbolByID(id int64) (SymbolHit, bool, error) {
 }
 
 func (s *Store) scanSymbolHits(q string, args ...any) ([]SymbolHit, error) {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.sql().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +226,7 @@ func (s *Store) SearchChunks(query string, limit int) ([]ChunkHit, error) {
 }
 
 func (s *Store) searchChunksMatch(match string, limit int) ([]ChunkHit, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT f.rel_path, c.start_line, c.end_line, snippet(fts_chunks,0,'[',']',' … ',12)
 		FROM fts_chunks ft JOIN chunks c ON c.id=ft.rowid JOIN files f ON f.id=c.file_id
 		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, match, limit)
@@ -278,7 +274,7 @@ func (s *Store) SearchChunkText(query string, limit int) ([]ChunkBody, error) {
 }
 
 func (s *Store) searchChunkTextMatch(match string, limit int) ([]ChunkBody, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT f.rel_path, c.start_line, c.text
 		FROM fts_chunks ft JOIN chunks c ON c.id=ft.rowid JOIN files f ON f.id=c.file_id
 		WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?`, match, limit)

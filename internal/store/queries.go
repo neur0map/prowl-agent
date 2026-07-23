@@ -23,7 +23,7 @@ type EdgeRow struct {
 const edgeCols = `e.id,e.src_type,e.src_id,IFNULL(e.dst_type,''),IFNULL(e.dst_id,0),e.kind,e.file_id,f.rel_path,IFNULL(e.line,0),e.resolved,IFNULL(e.raw,'')`
 
 func (s *Store) scanEdges(q string, args ...any) ([]EdgeRow, error) {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.sql().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (s *Store) DeleteUnresolvedEdges(kinds ...string) error {
 	for i, k := range kinds {
 		args[i] = k
 	}
-	_, err := s.db.Exec(`DELETE FROM edges WHERE resolved=0 AND kind IN (`+ph+`)`, args...)
+	_, err := s.sql().Exec(`DELETE FROM edges WHERE resolved=0 AND kind IN (`+ph+`)`, args...)
 	return err
 }
 
@@ -128,7 +128,7 @@ func (s *Store) ImmediateGraphNeighbors(fileID int64, limit int) ([]Dep, error) 
 	forwardArgs := append([]any{fileID}, kindArgs...)
 	reverseArgs := append([]any{fileID}, kindArgs...)
 	args := append(append(forwardArgs, reverseArgs...), limit)
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT DISTINCT f.rel_path
 		FROM files f
 		JOIN (
@@ -206,7 +206,7 @@ func (s *Store) traverseDeps(fileID int64, reverse bool) ([]Dep, error) {
 // (file -> what it depends on).
 func (s *Store) depAdjacency(reverse bool) (map[int64][]int64, error) {
 	clause, kargs := inClause("kind", blastKinds)
-	rows, err := s.db.Query(`SELECT file_id, dst_id FROM edges WHERE resolved=1 AND dst_type='file'`+clause, kargs...)
+	rows, err := s.sql().Query(`SELECT file_id, dst_id FROM edges WHERE resolved=1 AND dst_type='file'`+clause, kargs...)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func (s *Store) depAdjacency(reverse bool) (map[int64][]int64, error) {
 
 // filePathsByID maps every file id to its repo-relative path.
 func (s *Store) filePathsByID() (map[int64]string, error) {
-	rows, err := s.db.Query(`SELECT id, rel_path FROM files`)
+	rows, err := s.sql().Query(`SELECT id, rel_path FROM files`)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ type ResourceRow struct {
 
 // AllResources returns every resource (declarations and literals).
 func (s *Store) AllResources() ([]ResourceRow, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT r.id, r.kind, IFNULL(r.name,''), IFNULL(r.value,''), IFNULL(f.rel_path,''), IFNULL(r.line,0)
 		FROM resources r LEFT JOIN files f ON f.id=r.file_id ORDER BY r.id`)
 	if err != nil {
@@ -285,7 +285,7 @@ func (s *Store) AllResources() ([]ResourceRow, error) {
 // FilesByRole lists files of any of the given roles.
 func (s *Store) FilesByRole(roles ...string) ([]File, error) {
 	clause, args := inClause("role", roles)
-	rows, err := s.db.Query(`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files WHERE 1=1`+clause+` ORDER BY rel_path`, args...)
+	rows, err := s.sql().Query(`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files WHERE 1=1`+clause+` ORDER BY rel_path`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +309,7 @@ func (s *Store) OrphanFiles(roles ...string) ([]File, error) {
 			SELECT 1 FROM edges e WHERE e.dst_type='file' AND e.dst_id=f.id AND e.resolved=1
 			  AND e.kind IN ('includes','execs','binds','autostarts','references')
 		)` + clause + ` ORDER BY f.rel_path`
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.sql().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +348,7 @@ func kindNotIn(extra ...string) (string, []any) {
 // passes "pkg" so normal Go package fan-in is not flagged as a risk).
 func (s *Store) FanIn(limit int, exclude ...string) ([]FanRow, error) {
 	clause, args := kindNotIn(exclude...)
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT f.rel_path, count(*) c FROM edges e JOIN files f ON f.id=e.dst_id
 		WHERE e.dst_type='file' AND e.resolved=1`+clause+` GROUP BY e.dst_id ORDER BY c DESC, f.rel_path LIMIT ?`,
 		append(args, limit)...)
@@ -384,7 +384,7 @@ func (s *Store) Counts() (Counts, error) {
 	c := Counts{Langs: map[string]int{}}
 	scalar := func(q string) (int, error) {
 		var n int
-		err := s.db.QueryRow(q).Scan(&n)
+		err := s.sql().QueryRow(q).Scan(&n)
 		return n, err
 	}
 	var err error
@@ -409,7 +409,7 @@ func (s *Store) Counts() (Counts, error) {
 	if c.Dangling, err = scalar(`SELECT count(*) FROM edges WHERE resolved=0`); err != nil {
 		return c, err
 	}
-	rows, err := s.db.Query(`SELECT lang, count(*) FROM files GROUP BY lang`)
+	rows, err := s.sql().Query(`SELECT lang, count(*) FROM files GROUP BY lang`)
 	if err != nil {
 		return c, err
 	}
@@ -429,10 +429,10 @@ func (s *Store) Counts() (Counts, error) {
 // also drops the synthetic "pkg" edges (Go package dependencies), which the
 // resolve pass rebuilds, so they never accumulate across re-resolves.
 func (s *Store) ResetResolution() error {
-	if _, err := s.db.Exec(`DELETE FROM edges WHERE kind='pkg'`); err != nil {
+	if _, err := s.sql().Exec(`DELETE FROM edges WHERE kind='pkg'`); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`UPDATE edges SET resolved=0, dst_type=NULL, dst_id=NULL`)
+	_, err := s.sql().Exec(`UPDATE edges SET resolved=0, dst_type=NULL, dst_id=NULL`)
 	return err
 }
 
@@ -450,26 +450,23 @@ func (s *Store) AddPackageEdges(es []PkgEdge) error {
 	if len(es) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, e := range es {
-		if _, err := tx.Exec(
-			`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw)
-			 VALUES('file',?,'file',?,'pkg',?,?,1,?)`,
-			e.FileID, e.DstFileID, e.FileID, e.Line, e.Raw); err != nil {
-			return err
+	return s.writeTransaction(func(tx writeRunner) error {
+		for _, e := range es {
+			if _, err := tx.Exec(
+				`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw)
+				 VALUES('file',?,'file',?,'pkg',?,?,1,?)`,
+				e.FileID, e.DstFileID, e.FileID, e.Line, e.Raw); err != nil {
+				return err
+			}
 		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 // NamespaceFiles maps each declared namespace to the file ids that declare it,
 // for resolving C# `using` imports to the files of the imported namespace.
 func (s *Store) NamespaceFiles() (map[string][]int64, error) {
-	rows, err := s.db.Query(`SELECT name, file_id FROM resources WHERE kind='namespace' AND file_id IS NOT NULL`)
+	rows, err := s.sql().Query(`SELECT name, file_id FROM resources WHERE kind='namespace' AND file_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -488,6 +485,6 @@ func (s *Store) NamespaceFiles() (map[string][]int64, error) {
 
 // SetEdgeResolved points an edge at a resolved target.
 func (s *Store) SetEdgeResolved(edgeID int64, dstType string, dstID int64) error {
-	_, err := s.db.Exec(`UPDATE edges SET resolved=1, dst_type=?, dst_id=? WHERE id=?`, dstType, dstID, edgeID)
+	_, err := s.sql().Exec(`UPDATE edges SET resolved=1, dst_type=?, dst_id=? WHERE id=?`, dstType, dstID, edgeID)
 	return err
 }

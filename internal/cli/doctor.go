@@ -11,10 +11,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
-	"github.com/prowl-agent/prowl-agent/internal/store"
-	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
 // cRedHex is the error accent (Catppuccin red); the shared palette in
@@ -31,17 +30,24 @@ func newDoctorCmd() *cobra.Command {
 			if profile != doctor.ProfileGeneral && profile != doctor.ProfileRice {
 				return fmt.Errorf("unknown doctor profile %q (choose general or rice)", profile)
 			}
-			ws, err := workspace.Resolve(".")
+			project, err := application.OpenProject(cmd.Context(), ".", application.Options{})
 			if err != nil {
 				return err
 			}
-			s, err := store.Open(ws.DB)
+			defer project.Close()
+			release, err := project.ReadGuard(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer s.Close()
-			rules, _ := config.LoadRules(ws.Path)
-			rep, err := doctor.Run(s, rules, doctor.Options{Root: ws.Root, Profile: profile})
+			defer release()
+			if err := project.Store.RequirePublishedGeneration(); err != nil {
+				return err
+			}
+			rules, err := config.LoadRules(project.Workspace.Path)
+			if err != nil {
+				return err
+			}
+			rep, err := doctor.Run(project.Store, rules, doctor.Options{Root: project.Workspace.Root, Profile: profile})
 			if err != nil {
 				return err
 			}

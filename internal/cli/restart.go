@@ -10,9 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/prowl-agent/prowl-agent/internal/config"
-	"github.com/prowl-agent/prowl-agent/internal/store"
-	"github.com/prowl-agent/prowl-agent/internal/workspace"
+	"github.com/prowl-agent/prowl-agent/internal/application"
 )
 
 // newRestartCmd rebuilds the index from scratch and stops any running servers so
@@ -23,16 +21,14 @@ func newRestartCmd(string) *cobra.Command {
 		Use:   "restart",
 		Short: "Rebuild the index from scratch and restart running MCP/LSP servers",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ws, err := workspace.Resolve(".")
+			project, err := application.OpenProject(cmd.Context(), ".", application.Options{
+				EnableAI: true, InferencerProvider: maybeInferencer,
+			})
 			if err != nil {
 				return err
 			}
-			s, err := store.Open(ws.DB)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-			cfg, _ := config.Load(ws.Path)
+			defer project.Close()
+			ws, s := project.Workspace, project.Store
 			out := cmd.OutOrStdout()
 
 			// Rebuild first: restart is then the sole writer while any live server
@@ -42,10 +38,9 @@ func newRestartCmd(string) *cobra.Command {
 			if err := s.SetMeta("index_version", ""); err != nil { // force a full reparse
 				return err
 			}
-			// Rebuild structural data only; the relaunched serve re-embeds lazily.
-			// This keeps restart fast and immune to an Ollama or model issue
-			// blocking the server stop below.
-			msg, err := reindexer(s, ws.Root, cfg.Ignore, cfg.Languages, "", nil)(cmd.Context())
+			// Refresh through the shared project graph. Embedding remains best-effort,
+			// so an Ollama or model issue cannot block the server stop below.
+			msg, err := reindexer(project)(cmd.Context())
 			if err != nil {
 				return err
 			}

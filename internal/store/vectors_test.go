@@ -28,8 +28,8 @@ func TestVectorStore(t *testing.T) {
 	if err := s.EnableVectors(3, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if !s.VectorsReady() {
-		t.Fatal("VectorsReady false after EnableVectors")
+	if s.VectorsReady() {
+		t.Fatal("VectorsReady true before generation publication")
 	}
 	vecs := map[string][]float32{
 		"alpha": {1, 0, 0},
@@ -40,6 +40,12 @@ func TestVectorStore(t *testing.T) {
 		if err := s.UpsertChunkVector(c.ID, vecs[c.Text]); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := s.SetMeta("vectors_complete", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.VectorsReady() {
+		t.Fatal("VectorsReady false after generation publication")
 	}
 
 	// KNN: query close to beta.
@@ -62,5 +68,32 @@ func TestVectorStore(t *testing.T) {
 	}
 	if hits, _ := s.VectorSearch([]float32{0, 1, 0}, 2); len(hits) != 0 {
 		t.Fatalf("vectors not cleared after delete: %+v", hits)
+	}
+}
+
+func TestResetDerivedInvalidatesPublishedGeneration(t *testing.T) {
+	s := openTmp(t)
+	if err := s.SetMeta("index_state", "complete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMeta("vectors_complete", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnableVectors(3, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResetDerived(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.GetMeta("index_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectors, err := s.GetMeta("vectors_complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != "incomplete" || vectors != "0" || s.VectorsReady() {
+		t.Fatalf("reset state=%q vectors_complete=%q ready=%v", state, vectors, s.VectorsReady())
 	}
 }

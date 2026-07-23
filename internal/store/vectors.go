@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
 	"strconv"
 
@@ -21,12 +20,12 @@ type ChunkText struct {
 // recreating it if the dimension changed (e.g. a different embedding model).
 func (s *Store) EnableVectors(dim int, model string) error {
 	if cur, _ := s.GetMeta("embed_dim"); cur != "" && cur != strconv.Itoa(dim) {
-		if _, err := s.db.Exec(`DROP TABLE IF EXISTS vec_chunks`); err != nil {
+		if _, err := s.sql().Exec(`DROP TABLE IF EXISTS vec_chunks`); err != nil {
 			return err
 		}
 	}
 	q := fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(embedding float[%d])`, dim)
-	if _, err := s.db.Exec(q); err != nil {
+	if _, err := s.sql().Exec(q); err != nil {
 		return err
 	}
 	if err := s.SetMeta("embed_dim", strconv.Itoa(dim)); err != nil {
@@ -35,11 +34,33 @@ func (s *Store) EnableVectors(dim int, model string) error {
 	return s.SetMeta("embed_model", model)
 }
 
-// VectorsReady reports whether the vec0 table exists.
-func (s *Store) VectorsReady() bool {
+// VectorsInitialized reports whether the physical vec0 table exists. It is for
+// embedding writers; readers must use VectorsReady.
+func (s *Store) VectorsInitialized() bool {
 	var n int
-	err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n)
+	err := s.sql().QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n)
 	return err == nil && n > 0
+}
+
+// VectorsReady reports whether a complete vector generation was published.
+func (s *Store) VectorsReady() bool {
+	complete, err := s.GetMeta("vectors_complete")
+	return err == nil && complete == "1" && s.VectorsInitialized()
+}
+
+// ResetVectors removes embeddings and their model/dimension metadata so every
+// current chunk is re-embedded after an embedding model change.
+func (s *Store) ResetVectors() error {
+	if _, err := s.sql().Exec(`DROP TABLE IF EXISTS vec_chunks`); err != nil {
+		return err
+	}
+	if err := s.SetMeta("embed_dim", ""); err != nil {
+		return err
+	}
+	if err := s.SetMeta("embed_model", ""); err != nil {
+		return err
+	}
+	return s.SetMeta("vectors_complete", "0")
 }
 
 // UpsertChunkVector stores (or replaces) the embedding for a chunk.
@@ -48,7 +69,7 @@ func (s *Store) UpsertChunkVector(chunkID int64, vec []float32) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO vec_chunks(rowid, embedding) VALUES(?,?)`, chunkID, b)
+	_, err = s.sql().Exec(`INSERT OR REPLACE INTO vec_chunks(rowid, embedding) VALUES(?,?)`, chunkID, b)
 	return err
 }
 
@@ -58,7 +79,7 @@ func (s *Store) VectorSearch(vec []float32, k int) ([]ChunkHit, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT f.rel_path, c.start_line, c.end_line, substr(c.text,1,160)
 		FROM vec_chunks v JOIN chunks c ON c.id=v.rowid JOIN files f ON f.id=c.file_id
 		WHERE v.embedding MATCH ? AND k = ? ORDER BY v.distance`, b, k)
@@ -81,10 +102,10 @@ func (s *Store) VectorSearch(vec []float32, k int) ([]ChunkHit, error) {
 // table does not exist yet, every chunk is returned.
 func (s *Store) ChunksWithoutVectors() ([]ChunkText, error) {
 	q := `SELECT c.id, c.text FROM chunks c ORDER BY c.id`
-	if s.VectorsReady() {
+	if s.VectorsInitialized() {
 		q = `SELECT c.id, c.text FROM chunks c WHERE c.id NOT IN (SELECT rowid FROM vec_chunks) ORDER BY c.id`
 	}
-	rows, err := s.db.Query(q)
+	rows, err := s.sql().Query(q)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +123,7 @@ func (s *Store) ChunksWithoutVectors() ([]ChunkText, error) {
 
 // deleteChunkVectors removes vectors for a file's chunks (if the table exists),
 // keeping the vector index consistent when chunks are replaced or deleted.
-func deleteChunkVectors(tx *sql.Tx, fileID int64) error {
+func deleteChunkVectors(tx writeRunner, fileID int64) error {
 	var n int
 	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil || n == 0 {
 		return nil

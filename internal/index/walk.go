@@ -3,11 +3,13 @@
 package index
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/cespare/xxhash/v2"
@@ -20,12 +22,15 @@ var alwaysSkipDirs = map[string]bool{
 	".omp": true, ".factory": true,
 }
 
-// walkFiles invokes fn for each non-ignored file under root, honoring .gitignore
+// walkFilesContext invokes fn for each non-ignored file under root, honoring .gitignore
 // (the root one and every nested one, each scoped to its own directory) and
 // extra ignore globs, and always skipping .prowl/, .git/, node_modules/.
-func walkFiles(root string, ignore []string, fn func(rel string, d fs.DirEntry) error) error {
+func walkFilesContext(ctx context.Context, root string, ignore []string, fn func(rel string, d fs.DirEntry) error) error {
 	gitignores := map[string][]string{"": loadGitignore(root)} // rel dir -> patterns
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -92,8 +97,13 @@ func ancestorDirs(rel string) []string {
 // Walk returns rel paths under root, honoring .gitignore and extra ignore globs,
 // and always skipping .prowl/, .git/, node_modules/.
 func Walk(root string, ignore []string) ([]string, error) {
+	return WalkContext(context.Background(), root, ignore)
+}
+
+// WalkContext is Walk with cancellation checks during directory traversal.
+func WalkContext(ctx context.Context, root string, ignore []string) ([]string, error) {
 	var out []string
-	err := walkFiles(root, ignore, func(rel string, _ fs.DirEntry) error {
+	err := walkFilesContext(ctx, root, ignore, func(rel string, _ fs.DirEntry) error {
 		out = append(out, rel)
 		return nil
 	})
@@ -101,11 +111,9 @@ func Walk(root string, ignore []string) ([]string, error) {
 	return out, err
 }
 
-// Signature is a content-free fingerprint of the project's tracked files: a hash
-// over each file's path and modification time. It changes when any file is
-// added, removed, renamed, or edited, so the CLI can skip the expensive
-// read-and-hash re-index when nothing changed. It only reads directory entries
-// and stats, never file contents, so it stays fast on large repositories.
+// Signature fingerprints the indexing policy and every tracked file's path,
+// size, modification time, and content. Content closes the same-size/same-mtime
+// replacement hole; the streamed read remains context-cancellable.
 func Signature(root string, ignore []string) (uint64, error) {
 	return SignatureWithOptions(root, Options{Ignore: ignore})
 }
@@ -113,17 +121,43 @@ func Signature(root string, ignore []string) (uint64, error) {
 // SignatureWithOptions includes indexing policy in the freshness fingerprint so
 // changing configured languages invalidates an otherwise unchanged file tree.
 func SignatureWithOptions(root string, opt Options) (uint64, error) {
+	return SignatureWithOptionsContext(context.Background(), root, opt)
+}
+
+// SignatureWithOptionsContext is SignatureWithOptions with cancellation checks
+// during traversal and fingerprint construction.
+func SignatureWithOptionsContext(ctx context.Context, root string, opt Options) (uint64, error) {
+	snapshot, err := SourceSnapshotWithOptionsContext(ctx, root, opt)
+	return snapshot.Signature, err
+}
+
+// SourceSnapshot binds a freshness signature to the exact path set used to
+// construct it. Publication validation uses Paths to reject an index walk that
+// transiently omitted a source present in the accepted pre-snapshot.
+type SourceSnapshot struct {
+	Signature uint64
+	Paths     []string
+}
+
+// SourceSnapshotWithOptionsContext constructs a content-aware source snapshot.
+func SourceSnapshotWithOptionsContext(ctx context.Context, root string, opt Options) (SourceSnapshot, error) {
 	var entries []string
-	err := walkFiles(root, opt.Ignore, func(rel string, d fs.DirEntry) error {
-		var mt int64
-		if info, ierr := d.Info(); ierr == nil {
-			mt = info.ModTime().UnixNano()
+	var paths []string
+	err := walkFilesContext(ctx, root, opt.Ignore, func(rel string, d fs.DirEntry) error {
+		info, err := d.Info()
+		if err != nil {
+			return err
 		}
-		entries = append(entries, rel+"\x00"+strconv.FormatInt(mt, 10))
+		content, err := fileSignature(ctx, filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return err
+		}
+		entries = append(entries, fmt.Sprintf("%s\x00%d\x00%d\x00%x", rel, info.Size(), info.ModTime().UnixNano(), content))
+		paths = append(paths, rel)
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return SourceSnapshot{}, err
 	}
 	sort.Strings(entries)
 	h := xxhash.New()
@@ -136,11 +170,43 @@ func SignatureWithOptions(root string, opt Options) (uint64, error) {
 	}
 	sort.Strings(languages)
 	_, _ = h.WriteString("languages\x00" + strings.Join(languages, ",") + "\n")
+	for _, pattern := range opt.Ignore {
+		_, _ = h.WriteString("ignore\x00" + pattern + "\n")
+	}
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return SourceSnapshot{}, err
+		}
 		_, _ = h.WriteString(e)
 		_, _ = h.WriteString("\n")
 	}
-	return h.Sum64(), nil
+	sort.Strings(paths)
+	return SourceSnapshot{Signature: h.Sum64(), Paths: paths}, nil
+}
+
+func fileSignature(ctx context.Context, path string) (uint64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	h := xxhash.New()
+	buffer := make([]byte, 128*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		n, readErr := file.Read(buffer)
+		if n > 0 {
+			_, _ = h.Write(buffer[:n])
+		}
+		if readErr == io.EOF {
+			return h.Sum64(), nil
+		}
+		if readErr != nil {
+			return 0, readErr
+		}
+	}
 }
 
 func loadGitignore(root string) []string {

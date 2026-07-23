@@ -2,15 +2,37 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/prowl-agent/prowl-agent/internal/graph"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
+
+func TestPublishedGenerationGuard(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	q := New(s).RequirePublishedGeneration()
+	if _, err := q.FindSymbol("anything"); !errors.Is(err, store.ErrGenerationIncomplete) {
+		t.Fatalf("unpublished query error = %v", err)
+	}
+	if err := s.SetMeta("index_state", "complete"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.FindSymbol("anything"); err != nil {
+		t.Fatalf("published query: %v", err)
+	}
+}
 
 func indexed(t *testing.T) *Querier {
 	t.Helper()
@@ -854,5 +876,86 @@ func TestTestsForFindsColocatedTests(t *testing.T) {
 		if x == "other/x_test.go" {
 			t.Errorf("TestsFor(os.go) wrongly included a test from another directory: %v", tf.Tests)
 		}
+	}
+}
+
+func TestLogicalQueryPinsGenerationAcrossStatements(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "main.go")
+	if err := os.WriteFile(source, []byte("package main\nfunc Alpha() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+	reader, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if _, err := index.Index(reader, root, nil); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(t.TempDir(), "index-refresh.lock")
+	guard := func(ctx context.Context) (func(), error) {
+		l := flock.New(lockPath)
+		locked, err := l.TryRLockContext(ctx, time.Millisecond)
+		if err != nil || !locked {
+			return nil, fmt.Errorf("read lock: locked=%v: %w", locked, err)
+		}
+		return func() { _ = l.Unlock() }, nil
+	}
+	q := New(reader).WithReadGuard(guard)
+	firstRead := make(chan struct{})
+	continueRead := make(chan struct{})
+	q.afterFirstRead = func() { close(firstRead); <-continueRead }
+	queryDone := make(chan []store.SymbolHit, 1)
+	queryErr := make(chan error, 1)
+	go func() { hits, err := q.FindSymbol("Alpha"); queryDone <- hits; queryErr <- err }()
+	<-firstRead
+	if err := os.WriteFile(source, []byte("package main\nfunc Beta() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	writerStarted := make(chan struct{})
+	writerDone := make(chan error, 1)
+	go func() {
+		close(writerStarted)
+		l := flock.New(lockPath)
+		locked, err := l.TryLockContext(context.Background(), time.Millisecond)
+		if err != nil || !locked {
+			writerDone <- fmt.Errorf("write lock: locked=%v: %w", locked, err)
+			return
+		}
+		defer l.Unlock()
+		generation, err := writer.BeginGeneration(context.Background())
+		if err == nil {
+			_, err = index.Index(generation.Store, root, nil)
+		}
+		if err == nil {
+			err = generation.Commit()
+		} else if generation != nil {
+			_ = generation.Rollback()
+		}
+		writerDone <- err
+	}()
+	<-writerStarted
+	select {
+	case err := <-writerDone:
+		t.Fatalf("writer crossed active logical read: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(continueRead)
+	hits := <-queryDone
+	if err := <-queryErr; err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 || hits[0].Name != "Alpha" {
+		t.Fatalf("mixed query hits = %+v", hits)
+	}
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
 	}
 }

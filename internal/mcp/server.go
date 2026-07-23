@@ -26,6 +26,7 @@ type handlers struct {
 	reindex      ReindexFunc
 	doctor       DoctorFunc
 	onCall       func()
+	beforeCall   func(context.Context) error
 	context      *contextpacket.Service
 	knowledge    *knowledge.Repository
 	capabilities *capability.Catalog
@@ -43,13 +44,13 @@ func NewServer(q *query.Querier, st *store.Store, version string, reindex Reinde
 // NewServerWithOptions builds legacy, core, or combined MCP surfaces.
 func NewServerWithOptions(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc, onCall func(), options ServerOptions) *sdk.Server {
 	options.normalize()
+	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn, onCall: onCall, beforeCall: options.BeforeCall, context: options.Context, knowledge: options.Knowledge, capabilities: options.Capabilities, root: options.Root}
 	var server *sdk.Server
 	if options.Surface == SurfaceLegacy || options.Surface == SurfaceAll {
-		server = newLegacyServer(q, st, version, reindex, doctorFn, onCall)
+		server = newLegacyServer(h, version)
 	} else {
 		server = sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
 	}
-	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn, onCall: onCall, context: options.Context, knowledge: options.Knowledge, capabilities: options.Capabilities, root: options.Root}
 	if options.Surface == SurfaceCore || options.Surface == SurfaceAll {
 		registerCoreTools(server, h)
 	}
@@ -58,8 +59,7 @@ func NewServerWithOptions(q *query.Querier, st *store.Store, version string, rei
 	return server
 }
 
-func newLegacyServer(q *query.Querier, st *store.Store, version string, reindex ReindexFunc, doctorFn DoctorFunc, onCall func()) *sdk.Server {
-	h := &handlers{q: q, store: st, reindex: reindex, doctor: doctorFn, onCall: onCall}
+func newLegacyServer(h *handlers, version string) *sdk.Server {
 	s := sdk.NewServer(&sdk.Implementation{Name: "prowl-agent", Version: version}, nil)
 
 	sdk.AddTool(s, &sdk.Tool{Name: "find_symbol",
@@ -254,6 +254,12 @@ func (h *handlers) doctorTool(ctx context.Context, _ *sdk.CallToolRequest, _ Emp
 // counters: the bytes prowl returned, and the size of the files it pointed at.
 func tracked[In, Out any](h *handlers, fn func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error)) func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+		if h.beforeCall != nil {
+			if err := h.beforeCall(ctx); err != nil {
+				var zero Out
+				return nil, zero, err
+			}
+		}
 		if h.onCall != nil {
 			h.onCall()
 		}

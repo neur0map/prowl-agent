@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -21,10 +22,14 @@ type freshness struct {
 	idle     time.Duration
 	reindex  func(context.Context) (string, error)
 
-	mu     sync.Mutex
-	last   time.Time
-	dirty  bool
-	cancel context.CancelFunc // non-nil while the watcher is running
+	mu        sync.Mutex
+	callGate  chan struct{}
+	wg        sync.WaitGroup
+	last      time.Time
+	dirty     bool
+	cancel    context.CancelFunc // non-nil while the watcher is running
+	watcherID uint64
+	watch     func(context.Context, string, time.Duration, func()) error
 }
 
 func newFreshness(parent context.Context, root string, reindex func(context.Context) (string, error)) *freshness {
@@ -34,6 +39,8 @@ func newFreshness(parent context.Context, root string, reindex func(context.Cont
 		debounce: 750 * time.Millisecond,
 		idle:     30 * time.Minute,
 		reindex:  reindex,
+		callGate: make(chan struct{}, 1),
+		watch:    index.Watch,
 	}
 }
 
@@ -49,36 +56,82 @@ func (f *freshness) start() {
 // onCall runs before each MCP request: it keeps the active window alive, re-indexes
 // when the watcher flagged a change, and resumes (re-indexing to catch up) when the
 // watcher had suspended after an idle period.
-func (f *freshness) onCall() {
+func (f *freshness) onCall(ctx context.Context) error {
+	select {
+	case f.callGate <- struct{}{}:
+		defer func() { <-f.callGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	f.mu.Lock()
 	f.last = time.Now()
 	if f.cancel == nil { // resumed from idle
 		f.dirty = false
 		f.startWatcherLocked()
 		f.mu.Unlock()
-		_, _ = f.reindex(f.parent)
-		return
+		_, err := f.reindex(ctx)
+		if err != nil {
+			f.mu.Lock()
+			f.dirty = true
+			f.mu.Unlock()
+		}
+		return err
 	}
 	dirty := f.dirty
 	f.dirty = false
 	f.mu.Unlock()
 	if dirty {
-		_, _ = f.reindex(f.parent)
+		_, err := f.reindex(ctx)
+		if err != nil {
+			f.mu.Lock()
+			f.dirty = true
+			f.mu.Unlock()
+		}
+		return err
 	}
+	return nil
 }
 
 // startWatcherLocked launches the watcher and idle monitor. The caller holds f.mu.
 func (f *freshness) startWatcherLocked() {
 	ctx, cancel := context.WithCancel(f.parent)
 	f.cancel = cancel
+	f.watcherID++
+	id := f.watcherID
+	f.wg.Add(2)
 	go func() {
-		_ = index.Watch(ctx, f.root, f.debounce, func() {
+		defer f.wg.Done()
+		err := f.watch(ctx, f.root, f.debounce, func() {
 			f.mu.Lock()
 			f.dirty = true
 			f.mu.Unlock()
 		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			f.mu.Lock()
+			if f.watcherID == id && f.cancel != nil {
+				f.cancel()
+				f.cancel = nil
+				f.dirty = true
+			}
+			f.mu.Unlock()
+		}
 	}()
-	go f.idleLoop(ctx)
+	go func() {
+		defer f.wg.Done()
+		f.idleLoop(ctx)
+	}()
+}
+
+// stop cancels and joins all watcher work. Call it after the MCP server stops
+// accepting requests and before closing the shared project.
+func (f *freshness) stop() {
+	f.mu.Lock()
+	if f.cancel != nil {
+		f.cancel()
+		f.cancel = nil
+	}
+	f.mu.Unlock()
+	f.wg.Wait()
 }
 
 // idleLoop suspends the watcher once no request has arrived for f.idle.

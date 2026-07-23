@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/selfupdate"
-	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
@@ -47,12 +47,12 @@ func newStatusCmd(version string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := store.Open(ws.DB)
+			project, err := application.OpenProject(cmd.Context(), ws.Root, application.Options{})
 			if err != nil {
 				return err
 			}
-			defer s.Close()
-			st, err := query.New(s).Status()
+			defer project.Close()
+			st, err := project.Query.Status()
 			if err != nil {
 				return err
 			}

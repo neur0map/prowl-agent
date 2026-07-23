@@ -15,6 +15,14 @@ const embedBatch = 32
 // an index refresh are cheap. The vec0 table is created lazily from the first
 // embedding's dimension. Returns the number of chunks embedded.
 func BuildVectors(ctx context.Context, s *store.Store, inf assist.Inferencer, model string) (int, error) {
+	if err := s.SetMeta("vectors_complete", "0"); err != nil {
+		return 0, err
+	}
+	if currentModel, _ := s.GetMeta("embed_model"); s.VectorsInitialized() && currentModel != model {
+		if err := s.ResetVectors(); err != nil {
+			return 0, err
+		}
+	}
 	pending, err := s.ChunksWithoutVectors()
 	if err != nil {
 		return 0, err
@@ -37,7 +45,7 @@ func BuildVectors(ctx context.Context, s *store.Store, inf assist.Inferencer, mo
 		if len(vecs) != len(batch) {
 			return embedded, fmt.Errorf("embed returned %d vectors for %d texts", len(vecs), len(batch))
 		}
-		if !s.VectorsReady() {
+		if !s.VectorsInitialized() {
 			if len(vecs[0]) == 0 {
 				return embedded, fmt.Errorf("embedding model returned empty vector")
 			}
@@ -51,6 +59,12 @@ func BuildVectors(ctx context.Context, s *store.Store, inf assist.Inferencer, mo
 			}
 			embedded++
 		}
+	}
+	if err := s.SetMeta("embed_model", model); err != nil {
+		return embedded, err
+	}
+	if err := s.SetMeta("vectors_complete", "1"); err != nil {
+		return embedded, err
 	}
 	return embedded, nil
 }

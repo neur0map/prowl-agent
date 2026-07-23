@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -247,6 +248,11 @@ func (s *Server) hover(raw json.RawMessage) (any, *rpcError) {
 
 // publishDiagnostics runs doctor and sends findings for one document.
 func (s *Server) publishDiagnostics(uri string) {
+	release, err := s.beginRead(context.Background())
+	if err != nil {
+		return
+	}
+	defer release()
 	rel, in := relFromURI(s.Root, uri)
 	if !in {
 		return

@@ -1,18 +1,36 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	lspserver "github.com/prowl-agent/prowl-agent/internal/lsp"
-	"github.com/prowl-agent/prowl-agent/internal/store"
-	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
+
+func openLSPProject(ctx context.Context) (*application.Project, error) {
+	return application.OpenProject(ctx, ".", application.Options{
+		EnableAI: true, InferencerProvider: maybeInferencer,
+	})
+}
+
+func runLSP(ctx context.Context, srv *lspserver.Server, stdin *os.File, stdout io.Writer) error {
+	input, err := lspserver.NewCancellableInput(ctx, stdin)
+	if err != nil {
+		return fmt.Errorf("prepare cancellable LSP input: %w", err)
+	}
+	defer input.Close()
+	return srv.Run(ctx, input, stdout)
+}
 
 // newLSPCmd is hidden: editors launch it via the config that init writes. It
 // serves the same per-project index as `serve`, but over LSP for a human editor.
@@ -27,35 +45,46 @@ func newLSPCmd(version string) *cobra.Command {
 				fmt.Fprintln(os.Stderr, "You do not run it by hand. See .prowl/editor/SETUP.md for editor setup.")
 				return nil
 			}
-			ws, err := workspace.Resolve(".")
+			project, err := openLSPProject(cmd.Context())
 			if err != nil {
 				return err
 			}
-			s, err := store.Open(ws.DB)
+			defer project.Close()
+			ws, s := project.Workspace, project.Store
+			rules, err := config.LoadRules(ws.Path)
 			if err != nil {
 				return err
 			}
-			defer s.Close()
-			cfg, _ := config.Load(ws.Path)
-			rules, _ := config.LoadRules(ws.Path)
 
 			reindex := func() error {
-				_, err := index.IndexWithOptions(s, ws.Root, index.Options{Ignore: cfg.Ignore, Languages: cfg.Languages})
+				_, err := project.Refresh(cmd.Context())
 				return err
 			}
-			// Freshen on startup (incremental, cheap after the first run).
-			_ = reindex()
 
-			srv := lspserver.New(ws.Root, version, s, rules, reindex)
+			srv := lspserver.New(ws.Root, version, s, rules, reindex).WithReadGuard(project.ReadGuard)
 			// External edits (agent, git, formatter): reindex and refresh squiggles.
-			go func() {
-				_ = index.Watch(cmd.Context(), ws.Root, 750*time.Millisecond, func() {
-					if reindex() == nil {
-						srv.RepublishOpen()
-					}
-				})
+			watchCtx, cancelWatch := context.WithCancel(cmd.Context())
+			var watchGroup sync.WaitGroup
+			watchGroup.Add(1)
+			defer func() {
+				cancelWatch()
+				watchGroup.Wait()
 			}()
-			return srv.Run(cmd.Context(), os.Stdin, os.Stdout)
+			go func() {
+				defer watchGroup.Done()
+				watchErr := index.Watch(watchCtx, ws.Root, 750*time.Millisecond, func() {
+					refreshID := srv.BeginIndexRefresh()
+					_, err := project.Refresh(watchCtx)
+					if !srv.CompleteIndexRefresh(refreshID, err) || err != nil {
+						return
+					}
+					srv.RepublishOpen()
+				})
+				if watchErr != nil && !errors.Is(watchErr, context.Canceled) {
+					srv.SetIndexError(watchErr)
+				}
+			}()
+			return runLSP(cmd.Context(), srv, os.Stdin, os.Stdout)
 		},
 	}
 }

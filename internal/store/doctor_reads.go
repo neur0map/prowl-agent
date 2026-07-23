@@ -4,7 +4,7 @@ package store
 // excluding "instantiates" and any extra kinds given.
 func (s *Store) FanOut(limit int, exclude ...string) ([]FanRow, error) {
 	clause, args := kindNotIn(exclude...)
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT f.rel_path, count(*) c FROM edges e JOIN files f ON f.id=e.file_id
 		WHERE e.dst_type='file' AND e.resolved=1`+clause+` GROUP BY e.file_id
 		ORDER BY c DESC, f.rel_path LIMIT ?`, append(args, limit)...)
@@ -47,7 +47,7 @@ func (s *Store) FileDepEdges(kinds ...string) ([]FileEdge, error) {
 	q := `SELECT sf.rel_path, e.file_id, df.rel_path, e.dst_id, e.kind, IFNULL(e.line,0)
 		FROM edges e JOIN files sf ON sf.id=e.file_id JOIN files df ON df.id=e.dst_id
 		WHERE e.resolved=1 AND e.dst_type='file'` + clause + ` ORDER BY sf.rel_path, e.line`
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.sql().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ type FileMetric struct {
 
 // FileMetrics returns size and line count (max chunk end line) per file.
 func (s *Store) FileMetrics() ([]FileMetric, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT f.id, f.rel_path, IFNULL(f.role,''), f.size,
 		       IFNULL((SELECT max(end_line) FROM chunks c WHERE c.file_id=f.id),0)
 		FROM files f ORDER BY f.rel_path`)
@@ -97,7 +97,7 @@ func (s *Store) FileMetrics() ([]FileMetric, error) {
 // that uses a resource (SrcFile) and the file that declares it (DstFile). Used
 // to cluster files that share colors, fonts, or variables.
 func (s *Store) ResourceFileLinks() ([]FileEdge, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT uf.rel_path, e.file_id, df.rel_path, r.file_id
 		FROM edges e
 		JOIN resources r ON e.dst_type='resource' AND e.dst_id=r.id
@@ -122,7 +122,7 @@ func (s *Store) ResourceFileLinks() ([]FileEdge, error) {
 
 // ColorPalette returns declared color resources (named) deduped by name.
 func (s *Store) ColorPalette() ([]ResourceRow, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT r.id, r.kind, r.name, IFNULL(r.value,''), IFNULL(f.rel_path,''), IFNULL(r.line,0)
 		FROM resources r LEFT JOIN files f ON f.id=r.file_id
 		WHERE r.kind='color' AND r.name IS NOT NULL AND r.name<>'' GROUP BY r.name ORDER BY r.name`)
@@ -155,7 +155,7 @@ type FuncSpan struct {
 // LargestFunctions returns function/method symbols with the widest line span,
 // longest first. Single-line definitions are excluded.
 func (s *Store) LargestFunctions(limit int) ([]FuncSpan, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT sy.name, sy.kind, f.rel_path, sy.start_line,
 		       (sy.end_line - sy.start_line + 1) AS lines
 		FROM symbols sy JOIN files f ON f.id=sy.file_id
@@ -180,7 +180,7 @@ func (s *Store) LargestFunctions(limit int) ([]FuncSpan, error) {
 // complexity, highest first. Trivial functions (complexity <= 1) and languages
 // where complexity is not computed are excluded.
 func (s *Store) MostComplex(limit int) ([]FuncSpan, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT sy.name, sy.kind, f.rel_path, sy.start_line, sy.complexity
 		FROM symbols sy JOIN files f ON f.id=sy.file_id
 		WHERE sy.kind IN ('function','method') AND sy.complexity > 1

@@ -52,7 +52,12 @@ func (h *handlers) readWorkspaces(_ context.Context, request *sdk.ReadResourceRe
 	return textResource(request.Params.URI, "application/json", marshalResource(payload)), nil
 }
 
-func (h *handlers) readOverview(_ context.Context, request *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+func (h *handlers) readOverview(ctx context.Context, request *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+	if h.beforeCall != nil {
+		if err := h.beforeCall(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if h.q == nil {
 		return nil, sdk.ResourceNotFoundError(request.Params.URI)
 	}

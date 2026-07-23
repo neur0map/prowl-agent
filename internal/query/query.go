@@ -14,8 +14,12 @@ import (
 
 // Querier answers structural queries against an index.
 type Querier struct {
-	s   *store.Store
-	inf assist.Inferencer // optional; when set, SimilarCode is hybrid semantic
+	s                *store.Store
+	inf              assist.Inferencer // optional; when set, SimilarCode is hybrid semantic
+	requirePublished bool
+	readGuard        store.ReadGuard
+	// afterFirstRead is a package-private deterministic concurrency test seam.
+	afterFirstRead func()
 }
 
 // New wraps a store for structural (FTS-only) queries.
@@ -24,6 +28,44 @@ func New(s *store.Store) *Querier { return &Querier{s: s} }
 // NewWithAssist wraps a store with a local inferencer for hybrid semantic search.
 func NewWithAssist(s *store.Store, inf assist.Inferencer) *Querier {
 	return &Querier{s: s, inf: inf}
+}
+
+// RequirePublishedGeneration makes every exported operation reject an index
+// generation that a failed refresh deliberately left unpublished.
+func (q *Querier) RequirePublishedGeneration() *Querier {
+	q.requirePublished = true
+	return q
+}
+
+// WithReadGuard pins each exported logical operation to one committed
+// generation. Application assembly supplies a shared cross-process file lock;
+// low-level callers remain compatible when no guard is configured.
+func (q *Querier) WithReadGuard(guard store.ReadGuard) *Querier {
+	q.readGuard = guard
+	return q
+}
+
+func (q *Querier) beginRead(ctx context.Context) (func(), error) {
+	release := func() {}
+	if q.readGuard != nil {
+		var err error
+		release, err = q.readGuard(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := q.ready(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func (q *Querier) ready() error {
+	if q.requirePublished {
+		return q.s.RequirePublishedGeneration()
+	}
+	return nil
 }
 
 // DefaultLimit bounds result sizes.
@@ -44,9 +86,17 @@ func (q *Querier) fileID(path string) (int64, bool, error) {
 // config/doc entries (settings, headings) and project files outrank vendored
 // or generated ones, while the match-quality order is kept within each tier.
 func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	exact, err := q.s.SymbolsByName(name, DefaultLimit)
 	if err != nil {
 		return nil, err
+	}
+	if q.afterFirstRead != nil {
+		q.afterFirstRead()
 	}
 	seen := make(map[int64]bool, len(exact))
 	out := make([]store.SymbolHit, 0, len(exact))
@@ -100,6 +150,11 @@ type CallSite struct {
 // full-text usages of the symbol name, excluding the definition's own chunk, so
 // `find <name>` -> `references <id>` answers "what calls this" instead of empty.
 func (q *Querier) FindReferences(symbolID int64) (Usages, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return Usages{}, err
+	}
+	defer release()
 	var u Usages
 	sym, ok, err := q.s.SymbolByID(symbolID)
 	if err != nil {
@@ -285,6 +340,11 @@ func edgeViews(rows []store.EdgeRow) []EdgeView {
 // FindCallers returns configs/scripts that include, exec, or bind to a file
 // (including cross-package importers via the synthetic pkg edge).
 func (q *Querier) FindCallers(path string) ([]EdgeView, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
@@ -295,6 +355,11 @@ func (q *Querier) FindCallers(path string) ([]EdgeView, error) {
 
 // FindCallees returns what a file directly includes, execs, or binds to.
 func (q *Querier) FindCallees(path string) ([]EdgeView, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
@@ -314,6 +379,11 @@ type Relations struct {
 
 // FileRelations returns a file's symbols and include neighbors.
 func (q *Querier) FileRelations(path string) (Relations, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return Relations{}, err
+	}
+	defer release()
 	r := Relations{File: path}
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
@@ -330,6 +400,11 @@ func (q *Querier) FileRelations(path string) (Relations, error) {
 
 // BlastRadius returns the full list of files that transitively depend on a file.
 func (q *Querier) BlastRadius(path string) ([]store.Dep, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return nil, err
@@ -358,6 +433,11 @@ type BlastSummary struct {
 
 // BlastSummarize returns a grouped blast-radius summary instead of the full list.
 func (q *Querier) BlastSummarize(path string) (BlastSummary, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return BlastSummary{}, err
+	}
+	defer release()
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
 		return BlastSummary{File: path}, err
@@ -423,6 +503,11 @@ type EntrypointSet struct {
 // EntrypointsFor returns the root files (no incoming dependency edges) from which
 // path is reachable, as a count plus a shallow-first sample.
 func (q *Querier) EntrypointsFor(path string) (EntrypointSet, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return EntrypointSet{}, err
+	}
+	defer release()
 	out := EntrypointSet{File: path}
 	id, ok, err := q.fileID(path)
 	if err != nil || !ok {
@@ -478,6 +563,11 @@ type TestsResult struct {
 // first. With no test files -- the usual case for a config or script -- it falls
 // back to the configs/keybinds that launch or reload the file.
 func (q *Querier) TestsFor(path string) (TestsResult, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return TestsResult{}, err
+	}
+	defer release()
 	res := TestsResult{File: path}
 	seen := map[string]bool{path: true}
 	collect := func(p string) {
@@ -569,6 +659,11 @@ func testCoversStem(testPath, stem string) bool {
 // fuses semantic (vector KNN) and lexical (FTS) results via reciprocal rank
 // fusion; otherwise it falls back to FTS only.
 func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHit, error) {
+	release, err := q.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if q.inf == nil || !q.s.VectorsReady() {
 		return q.searchChunksRanked(text, DefaultLimit)
 	}
@@ -723,6 +818,11 @@ type SmartResult struct {
 // assist layer is unavailable. Every model output is constrained (a query
 // string, an index ordering); the model never invents or edits results.
 func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, error) {
+	release, err := q.beginRead(ctx)
+	if err != nil {
+		return SmartResult{}, err
+	}
+	defer release()
 	res := SmartResult{Query: text}
 	if q.inf == nil || !q.s.VectorsReady() {
 		hits, err := q.searchChunksRanked(text, DefaultLimit)
@@ -787,6 +887,11 @@ type Violation struct {
 // ArchitectureViolations returns dangling references, orphan scripts, and
 // hardcoded colors that duplicate a declared variable.
 func (q *Querier) ArchitectureViolations() ([]Violation, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var v []Violation
 	dang, err := q.s.UnresolvedEdges("includes", "references", "uses_resource")
 	if err != nil {
@@ -897,6 +1002,11 @@ func findRank(h store.SymbolHit) int {
 // RepoHotspots returns fan-in and size rankings over the project's own code
 // (vendored and generated files are excluded as noise). Git churn arrives in M3.
 func (q *Querier) RepoHotspots() (Hotspots, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return Hotspots{}, err
+	}
+	defer release()
 	var h Hotspots
 	const top, pool = 10, 200
 	fan, err := q.s.FanIn(pool)
@@ -983,6 +1093,11 @@ func ComputeSavings(s store.Stats) Savings {
 
 // Status returns the index summary.
 func (q *Querier) Status() (Status, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return Status{}, err
+	}
+	defer release()
 	c, err := q.s.Counts()
 	if err != nil {
 		return Status{}, err

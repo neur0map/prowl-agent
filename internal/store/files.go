@@ -35,7 +35,7 @@ func (s *Store) UpsertFile(f File) (int64, error) {
 	if f.IndexedAt == 0 {
 		f.IndexedAt = time.Now().Unix()
 	}
-	_, err := s.db.Exec(`
+	_, err := s.sql().Exec(`
 		INSERT INTO files(rel_path,lang,role,size,hash,mtime,indexed_at)
 		VALUES(?,?,?,?,?,?,?)
 		ON CONFLICT(rel_path) DO UPDATE SET
@@ -51,13 +51,13 @@ func (s *Store) UpsertFile(f File) (int64, error) {
 // FileID returns the id for a rel_path (sql.ErrNoRows if absent).
 func (s *Store) FileID(relPath string) (int64, error) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM files WHERE rel_path=?`, relPath).Scan(&id)
+	err := s.sql().QueryRow(`SELECT id FROM files WHERE rel_path=?`, relPath).Scan(&id)
 	return id, err
 }
 
 // GetFileByPath returns the file row and whether it exists.
 func (s *Store) GetFileByPath(relPath string) (File, bool, error) {
-	f, err := scanFile(s.db.QueryRow(
+	f, err := scanFile(s.sql().QueryRow(
 		`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files WHERE rel_path=?`, relPath))
 	if err == sql.ErrNoRows {
 		return File{}, false, nil
@@ -70,7 +70,7 @@ func (s *Store) GetFileByPath(relPath string) (File, bool, error) {
 
 // AllFiles returns every indexed file ordered by path.
 func (s *Store) AllFiles() ([]File, error) {
-	rows, err := s.db.Query(`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files ORDER BY rel_path`)
+	rows, err := s.sql().Query(`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files ORDER BY rel_path`)
 	if err != nil {
 		return nil, err
 	}
@@ -99,23 +99,18 @@ func (s *Store) DeleteFileByPath(relPath string) error {
 }
 
 func (s *Store) deleteFileByID(id int64) error {
-	tx, err := s.db.Begin()
-	if err != nil {
+	return s.writeTransaction(func(tx writeRunner) error {
+		if err := deleteFileChildren(tx, id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`DELETE FROM files WHERE id=?`, id)
 		return err
-	}
-	defer tx.Rollback()
-	if err := deleteFileChildren(tx, id); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM files WHERE id=?`, id); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 // deleteFileChildren removes derived rows for a file via direct deletes so the
 // AFTER DELETE FTS-sync triggers fire (cascade deletes are not relied upon).
-func deleteFileChildren(tx *sql.Tx, id int64) error {
+func deleteFileChildren(tx writeRunner, id int64) error {
 	if err := deleteChunkVectors(tx, id); err != nil {
 		return err
 	}

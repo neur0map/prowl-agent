@@ -27,7 +27,7 @@ type EntityRelationRow struct {
 
 // EntityArtifacts projects physical generic, legacy file, and knowledge rows.
 func (s *Store) EntityArtifacts() ([]EntityArtifactRow, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT id,uri,kind,IFNULL(title,''),IFNULL(language,''),IFNULL(content_hash,''),IFNULL(canonical_path,''),source_adapter,'artifacts',id FROM artifacts
 		UNION ALL
 		SELECT 'artifact:file:' || id,'file://' || rel_path,'file',rel_path,lang,hash,rel_path,'legacy','files',CAST(id AS TEXT) FROM files
@@ -51,7 +51,7 @@ func (s *Store) EntityArtifacts() ([]EntityArtifactRow, error) {
 
 // EntityNodes projects physical nodes, legacy symbols, and OKF concepts.
 func (s *Store) EntityNodes() ([]EntityNodeRow, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT id,IFNULL(artifact_id,''),stable_key,kind,name,IFNULL(summary,''),IFNULL(anchor_start,0),IFNULL(anchor_end,0),deterministic,confidence,'generic','nodes',id FROM nodes
 		UNION ALL
 		SELECT 'node:symbol:' || sy.id,'artifact:file:' || f.id,f.rel_path || '#L' || sy.start_line || ':' || sy.name,sy.kind,sy.name,IFNULL(sy.signature,''),sy.start_line,sy.end_line,1,1.0,'legacy','symbols',CAST(sy.id AS TEXT) FROM symbols sy JOIN files f ON f.id=sy.file_id
@@ -77,7 +77,7 @@ func (s *Store) EntityNodes() ([]EntityNodeRow, error) {
 
 // EntityRelations projects physical generic relations and existing graph edges.
 func (s *Store) EntityRelations() ([]EntityRelationRow, error) {
-	rows, err := s.db.Query(`SELECT id,from_node,to_node,kind,IFNULL(evidence_anchor,''),deterministic,confidence FROM relations ORDER BY id`)
+	rows, err := s.sql().Query(`SELECT id,from_node,to_node,kind,IFNULL(evidence_anchor,''),deterministic,confidence FROM relations ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (s *Store) EntityRelations() ([]EntityRelationRow, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	legacy, err := s.db.Query(`SELECT id,src_type,src_id,IFNULL(dst_type,''),IFNULL(dst_id,0),kind,IFNULL(raw,''),IFNULL(file_id,0),IFNULL(line,0) FROM edges ORDER BY id`)
+	legacy, err := s.sql().Query(`SELECT id,src_type,src_id,IFNULL(dst_type,''),IFNULL(dst_id,0),kind,IFNULL(raw,''),IFNULL(file_id,0),IFNULL(line,0) FROM edges ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

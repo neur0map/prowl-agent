@@ -3,10 +3,15 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
@@ -35,7 +40,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 func req(t *testing.T, srv *Server, method string, params any) any {
 	t.Helper()
 	raw, _ := json.Marshal(params)
-	res, rerr := srv.handleRequest(method, raw)
+	res, rerr := srv.handleRequest(context.Background(), method, raw)
 	if rerr != nil {
 		t.Fatalf("%s: rpc error: %s", method, rerr.Message)
 	}
@@ -263,5 +268,90 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 	if got["method"] != "x" {
 		t.Errorf("roundtrip lost data: %v", got)
+	}
+}
+
+func TestLSPRefreshFailureBlocksReadsUntilRecovery(t *testing.T) {
+	srv, root := newTestServer(t)
+	fail := true
+	sentinel := "refresh failed"
+	srv.reindex = func() error {
+		if fail {
+			return errors.New(sentinel)
+		}
+		return nil
+	}
+	uri := pathToURI(filepath.Join(root, "hypr", "hyprland.conf"))
+	params, _ := json.Marshal(didSaveParams{TextDocument: textDocumentIdentifier{URI: uri}})
+	srv.handleNotification("textDocument/didSave", params)
+	request, _ := json.Marshal(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: uri}})
+	if _, rerr := srv.handleRequest(context.Background(), "textDocument/definition", request); rerr == nil || !strings.Contains(rerr.Message, sentinel) {
+		t.Fatalf("request after failed refresh = %+v, want fail-closed error", rerr)
+	}
+	fail = false
+	srv.handleNotification("textDocument/didSave", params)
+	if _, rerr := srv.handleRequest(context.Background(), "textDocument/definition", request); rerr != nil {
+		t.Fatalf("request after recovery = %+v", rerr)
+	}
+}
+
+func TestLSPRefreshCompletionIgnoresStaleResults(t *testing.T) {
+	srv, _ := newTestServer(t)
+	stale := errors.New("stale refresh failed")
+	oldID := srv.BeginIndexRefresh()
+	newID := srv.BeginIndexRefresh()
+	if !srv.CompleteIndexRefresh(newID, nil) {
+		t.Fatal("new success was not applied")
+	}
+	if srv.CompleteIndexRefresh(oldID, stale) {
+		t.Fatal("stale failure was applied")
+	}
+	if release, err := srv.beginRead(context.Background()); err != nil {
+		t.Fatalf("stale failure blocked reads: %v", err)
+	} else {
+		release()
+	}
+
+	oldID = srv.BeginIndexRefresh()
+	newID = srv.BeginIndexRefresh()
+	if !srv.CompleteIndexRefresh(newID, stale) {
+		t.Fatal("new failure was not applied")
+	}
+	if srv.CompleteIndexRefresh(oldID, nil) {
+		t.Fatal("stale success was applied")
+	}
+	if _, err := srv.beginRead(context.Background()); !errors.Is(err, stale) {
+		t.Fatalf("read error = %v, want newest failure", err)
+	}
+}
+
+type notifyingReadCloser struct {
+	io.ReadCloser
+	started chan struct{}
+	once    sync.Once
+}
+
+func (r *notifyingReadCloser) Read(p []byte) (int, error) {
+	r.once.Do(func() { close(r.started) })
+	return r.ReadCloser.Read(p)
+}
+
+func TestLSPRunCancellationInterruptsIdleInput(t *testing.T) {
+	srv, _ := newTestServer(t)
+	pipeReader, writer := io.Pipe()
+	reader := &notifyingReadCloser{ReadCloser: pipeReader, started: make(chan struct{})}
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx, reader, io.Discard) }()
+	<-reader.started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run remained blocked on idle input after cancellation")
 	}
 }

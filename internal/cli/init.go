@@ -1,20 +1,20 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
-	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
@@ -116,15 +116,18 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 			return index.Summary{}, err
 		}
 	}
-	s, err := store.Open(ws.DB)
+	project, err := application.OpenProject(context.Background(), root, application.Options{})
 	if err != nil {
 		return index.Summary{}, err
 	}
-	defer s.Close()
-	_ = s.SetMeta("ai_enabled", strconv.FormatBool(aiOn))
-	sum, err := index.IndexWithOptions(s, root, index.Options{Ignore: cfg.Ignore, Languages: cfg.Languages})
-	if err != nil {
-		return sum, err
+	defer project.Close()
+	sum := project.InitialRefresh.Summary
+	if sum.Indexed == 0 {
+		// A current re-init still reports the existing index size without forcing
+		// another mutation pass.
+		if status, statusErr := project.Query.Status(); statusErr == nil {
+			sum.Indexed = status.Counts.Files
+		}
 	}
 	integrations := append([]string(nil), allIntegrations...)
 	if opt.IntegrationsSet {

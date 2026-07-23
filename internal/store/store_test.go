@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -206,5 +207,45 @@ func TestSearchChunksPhraseToTermsFallback(t *testing.T) {
 	// A genuinely absent token yields empty with no error.
 	if hits, err := s.SearchChunks("nonexistenttoken", 10); err != nil || len(hits) != 0 {
 		t.Fatalf("absent term = %v, %v; want empty", hits, err)
+	}
+}
+
+func TestGenerationRejectsNestedAndDoesNotPublishRollbackOrCommitFailure(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	g, err := s.BeginGeneration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Store.BeginGeneration(context.Background()); err == nil {
+		t.Fatal("nested generation succeeded")
+	}
+	if err := g.Store.SetMeta("candidate", "rollback"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetMeta("candidate"); err != nil || got != "" {
+		t.Fatalf("rollback published %q, %v", got, err)
+	}
+	g, err = s.BeginGeneration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Store.SetMeta("candidate", "failed-commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(); err == nil {
+		t.Fatal("forced failed commit succeeded")
+	}
+	if got, err := s.GetMeta("candidate"); err != nil || got != "" {
+		t.Fatalf("failed commit published %q, %v", got, err)
 	}
 }

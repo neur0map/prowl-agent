@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"path"
 	"sort"
 	"strings"
@@ -21,6 +22,11 @@ type Cluster struct {
 // shared resources into subsystems via connected components. Singletons are
 // omitted. Clusters are ordered by size, then label.
 func (q *Querier) Clusters() ([]Cluster, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	files, err := q.s.AllFiles()
 	if err != nil {
 		return nil, err
@@ -229,6 +235,11 @@ type Overview struct {
 
 // Overview assembles a high-level map of the project from the graph.
 func (q *Querier) Overview() (Overview, error) {
+	release, err := q.beginRead(context.Background())
+	if err != nil {
+		return Overview{}, err
+	}
+	defer release()
 	var o Overview
 	c, err := q.s.Counts()
 	if err != nil {

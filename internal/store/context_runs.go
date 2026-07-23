@@ -28,7 +28,7 @@ type ContextRun struct {
 }
 
 func (s *Store) SaveContextRun(run ContextRun) error {
-	_, err := s.db.Exec(`INSERT INTO context_runs(
+	_, err := s.sql().Exec(`INSERT INTO context_runs(
 		id,query_hash,hash_version,mode,budget_tokens,budget_bytes,estimated_tokens,estimated_bytes,
 		selected_ids_json,omissions_json,timings_json,strategy_version,status,error_code,created_at
 	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, run.QueryHash, run.HashVersion, run.Mode,
@@ -45,7 +45,7 @@ func (s *Store) ListContextRuns(limit int) ([]ContextRun, error) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	rows, err := s.db.Query(`SELECT id,query_hash,hash_version,mode,budget_tokens,budget_bytes,estimated_tokens,estimated_bytes,selected_ids_json,omissions_json,timings_json,strategy_version,status,IFNULL(error_code,''),created_at FROM context_runs ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := s.sql().Query(`SELECT id,query_hash,hash_version,mode,budget_tokens,budget_bytes,estimated_tokens,estimated_bytes,selected_ids_json,omissions_json,timings_json,strategy_version,status,IFNULL(error_code,''),created_at FROM context_runs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Store) ListContextRuns(limit int) ([]ContextRun, error) {
 // any context packet or trace row.
 func (s *Store) ContextTraceSalt() ([]byte, error) {
 	var encoded string
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='context_trace_salt'`).Scan(&encoded)
+	err := s.sql().QueryRow(`SELECT value FROM meta WHERE key='context_trace_salt'`).Scan(&encoded)
 	if err == nil {
 		return hex.DecodeString(encoded)
 	}
@@ -77,17 +77,17 @@ func (s *Store) ContextTraceSalt() ([]byte, error) {
 		return nil, err
 	}
 	encoded = hex.EncodeToString(salt[:])
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO meta(key,value) VALUES('context_trace_salt',?)`, encoded); err != nil {
+	if _, err := s.sql().Exec(`INSERT OR IGNORE INTO meta(key,value) VALUES('context_trace_salt',?)`, encoded); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='context_trace_salt'`).Scan(&encoded); err != nil {
+	if err := s.sql().QueryRow(`SELECT value FROM meta WHERE key='context_trace_salt'`).Scan(&encoded); err != nil {
 		return nil, err
 	}
 	return hex.DecodeString(encoded)
 }
 
 func (s *Store) PruneContextRuns(before time.Time) (int64, error) {
-	result, err := s.db.Exec(`DELETE FROM context_runs WHERE created_at < ?`, before.UTC().Format(time.RFC3339Nano))
+	result, err := s.sql().Exec(`DELETE FROM context_runs WHERE created_at < ?`, before.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}

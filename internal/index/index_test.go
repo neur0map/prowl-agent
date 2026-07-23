@@ -1,9 +1,14 @@
 package index
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -208,5 +213,132 @@ func TestSignatureIncludesLanguageSelection(t *testing.T) {
 	}
 	if goSig == pySig {
 		t.Fatal("language selection must affect freshness signature")
+	}
+}
+
+func TestSignatureIncludesIgnorePolicy(t *testing.T) {
+	root := t.TempDir()
+	first, err := SignatureWithOptions(root, Options{Ignore: []string{"vendor/**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := SignatureWithOptions(root, Options{Ignore: []string{"generated/**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("ignore policy must affect freshness signature even when the walked file set is unchanged")
+	}
+}
+
+func TestSignatureDetectsSameSizeSameMTimeReplacement(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "same.go")
+	original := []byte("package a\nfunc Alpha() {}\n")
+	replacement := []byte("package a\nfunc Bravo() {}\n")
+	if len(original) != len(replacement) {
+		t.Fatal("test fixture must preserve size")
+	}
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Unix(1_700_000_000, 123456789)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	before, err := SignatureWithOptions(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, replacement, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	after, err := SignatureWithOptions(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("same-size same-mtime content replacement did not change signature")
+	}
+}
+
+func TestWalkContextCancelsDuringDirectoryOnlyTraversal(t *testing.T) {
+	base := t.TempDir()
+	root := base
+	for i := 0; i < 20; i++ {
+		root = filepath.Join(root, "empty")
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := newCancelAfterChecks(8)
+	if _, err := WalkContext(ctx, base, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("WalkContext error = %v, want context.Canceled", err)
+	}
+}
+
+func TestInterruptedIndexIsMarkedIncompleteAndRecovers(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 12; i++ {
+		name := filepath.Join(root, fmt.Sprintf("file_%02d.go", i))
+		if err := os.WriteFile(name, []byte("package fixture\nfunc Value() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	database := openStore(t)
+	ctx := newCancelAfterChecks(35)
+	if _, err := IndexWithOptionsContext(ctx, database, root, Options{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted index error = %v, want context.Canceled", err)
+	}
+	state, err := database.GetMeta("index_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != "incomplete" {
+		t.Fatalf("index_state = %q, want incomplete", state)
+	}
+	if _, err := IndexWithOptionsContext(context.Background(), database, root, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = database.GetMeta("index_state")
+	if err != nil || state != "complete" {
+		t.Fatalf("recovered index_state = %q, %v; want complete", state, err)
+	}
+}
+
+type cancelAfterChecks struct{ remaining atomic.Int32 }
+
+func newCancelAfterChecks(count int32) *cancelAfterChecks {
+	ctx := &cancelAfterChecks{}
+	ctx.remaining.Store(count)
+	return ctx
+}
+
+func (*cancelAfterChecks) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (*cancelAfterChecks) Done() <-chan struct{}       { return nil }
+func (*cancelAfterChecks) Value(any) any               { return nil }
+func (ctx *cancelAfterChecks) Err() error {
+	if ctx.remaining.Add(-1) <= 0 {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestValidateSnapshotAcceptsGeneratedAgentsMarker(t *testing.T) {
+	root := t.TempDir()
+	body := []byte("# Project instructions\n\n<!-- prowl-agent -->\ngenerated material\n<!-- /prowl-agent -->\n\nKeep this human text.\n")
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := openStore(t)
+	defer s.Close()
+	if _, err := IndexWithOptionsContext(context.Background(), s, root, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSnapshotContext(context.Background(), s, root); err != nil {
+		t.Fatalf("generated marker snapshot: %v", err)
 	}
 }

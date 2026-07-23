@@ -4,7 +4,7 @@ import "database/sql"
 
 // GetFileByID returns the file row for an id and whether it exists.
 func (s *Store) GetFileByID(id int64) (File, bool, error) {
-	f, err := scanFile(s.db.QueryRow(
+	f, err := scanFile(s.sql().QueryRow(
 		`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return File{}, false, nil
@@ -18,7 +18,7 @@ func (s *Store) GetFileByID(id int64) (File, bool, error) {
 // ResourceByID returns a single resource (with its file path) and whether it exists.
 func (s *Store) ResourceByID(id int64) (ResourceRow, bool, error) {
 	var r ResourceRow
-	err := s.db.QueryRow(`
+	err := s.sql().QueryRow(`
 		SELECT r.id, r.kind, IFNULL(r.name,''), IFNULL(r.value,''), IFNULL(f.rel_path,''), IFNULL(r.line,0)
 		FROM resources r LEFT JOIN files f ON f.id=r.file_id WHERE r.id=?`, id).
 		Scan(&r.ID, &r.Kind, &r.Name, &r.Value, &r.File, &r.Line)
@@ -35,7 +35,7 @@ func (s *Store) ResourceByID(id int64) (ResourceRow, bool, error) {
 // (the declaration the resolver links usages to) and whether one exists.
 func (s *Store) ResourceDeclByName(name string) (ResourceRow, bool, error) {
 	var r ResourceRow
-	err := s.db.QueryRow(`
+	err := s.sql().QueryRow(`
 		SELECT r.id, r.kind, IFNULL(r.name,''), IFNULL(r.value,''), IFNULL(f.rel_path,''), IFNULL(r.line,0)
 		FROM resources r LEFT JOIN files f ON f.id=r.file_id
 		WHERE r.name=? ORDER BY r.id LIMIT 1`, name).
@@ -51,7 +51,7 @@ func (s *Store) ResourceDeclByName(name string) (ResourceRow, bool, error) {
 
 // ResourcesInFile lists named resources declared in a file, ordered by line.
 func (s *Store) ResourcesInFile(fileID int64) ([]ResourceRow, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.sql().Query(`
 		SELECT r.id, r.kind, IFNULL(r.name,''), IFNULL(r.value,''), f.rel_path, IFNULL(r.line,0)
 		FROM resources r JOIN files f ON f.id=r.file_id
 		WHERE r.file_id=? AND r.name IS NOT NULL AND r.name<>'' ORDER BY r.line`, fileID)
@@ -83,7 +83,7 @@ func (s *Store) NamedResources(limit int) ([]ResourceRow, error) {
 		q += " LIMIT ?"
 		args = append(args, limit)
 	}
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.sql().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

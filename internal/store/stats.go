@@ -18,28 +18,22 @@ type Stats struct {
 
 // BumpStats atomically increments the usage counters by the given deltas.
 func (s *Store) BumpStats(queries int, answerBytes, baselineBytes int64) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	bump := func(key string, delta int64) error {
-		_, err := tx.Exec(
-			`INSERT INTO meta(key,value) VALUES(?,?)
+	return s.writeTransaction(func(tx writeRunner) error {
+		bump := func(key string, delta int64) error {
+			_, err := tx.Exec(
+				`INSERT INTO meta(key,value) VALUES(?,?)
 			 ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + ?`,
-			key, strconv.FormatInt(delta, 10), delta)
-		return err
-	}
-	if err := bump("stat_queries", int64(queries)); err != nil {
-		return err
-	}
-	if err := bump("stat_answer_bytes", answerBytes); err != nil {
-		return err
-	}
-	if err := bump("stat_baseline_bytes", baselineBytes); err != nil {
-		return err
-	}
-	return tx.Commit()
+				key, strconv.FormatInt(delta, 10), delta)
+			return err
+		}
+		if err := bump("stat_queries", int64(queries)); err != nil {
+			return err
+		}
+		if err := bump("stat_answer_bytes", answerBytes); err != nil {
+			return err
+		}
+		return bump("stat_baseline_bytes", baselineBytes)
+	})
 }
 
 // Stats reads the cumulative usage counters (zero when unset).
@@ -58,7 +52,7 @@ func (s *Store) Stats() (Stats, error) {
 
 // FileSizes maps every indexed file's project-relative path to its byte size.
 func (s *Store) FileSizes() (map[string]int64, error) {
-	rows, err := s.db.Query(`SELECT rel_path, size FROM files`)
+	rows, err := s.sql().Query(`SELECT rel_path, size FROM files`)
 	if err != nil {
 		return nil, err
 	}

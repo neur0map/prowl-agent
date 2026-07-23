@@ -1,6 +1,7 @@
 package context
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,18 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
+
+func TestPublishedGenerationGuard(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	service := &Service{Store: db, RequirePublished: true}
+	if _, err := service.Search(Request{Question: "anything"}); !errors.Is(err, store.ErrGenerationIncomplete) {
+		t.Fatalf("unpublished context error = %v", err)
+	}
+}
 
 func TestServicePrefersHealthyKnowledgeAndFallsBackToChangedSource(t *testing.T) {
 	root := t.TempDir()

@@ -10,9 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/prowl-agent/prowl-agent/internal/assist"
-	"github.com/prowl-agent/prowl-agent/internal/config"
-	"github.com/prowl-agent/prowl-agent/internal/index"
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
@@ -70,56 +68,13 @@ func capSlice(out any, limit int) any {
 // enabled and reachable (and re-embeds during the refresh); structural commands
 // pass false to skip the Ollama probe and stay fast.
 func openQuerier(ctx context.Context, needsAI bool) (*query.Querier, *workspace.Workspace, *store.Store, func() error, error) {
-	ws, err := workspace.Resolve(".")
+	project, err := application.OpenProject(ctx, ".", application.Options{
+		EnableAI: needsAI, InferencerProvider: maybeInferencer,
+	})
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	s, err := store.Open(ws.DB)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	cfg, _ := config.Load(ws.Path)
-	q := query.New(s)
-	if needsAI && cfg.AI.Enabled {
-		if oll := maybeInferencer(ctx, cfg); oll != nil {
-			q = query.NewWithAssist(s, oll)
-			if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, cfg.Languages, cfg.AI.EmbedModel, oll); err != nil {
-				s.Close()
-				return nil, nil, nil, nil, err
-			}
-			return q, ws, s, s.Close, nil
-		}
-	}
-	if err := freshenIndex(ctx, s, ws.Root, cfg.Ignore, cfg.Languages, "", nil); err != nil {
-		s.Close()
-		return nil, nil, nil, nil, err
-	}
-	return q, ws, s, s.Close, nil
-}
-
-// freshenIndex brings the index up to date before a query, but skips the
-// expensive read-and-hash re-index when nothing changed: it compares a cheap
-// file fingerprint (paths + mtimes, no content reads) and the indexing version
-// against what was last recorded. With an inferencer it also re-embeds, and only
-// skips when the vector index is already populated. This keeps repeated shell
-// calls fast on large repositories while never serving stale data.
-func freshenIndex(ctx context.Context, s *store.Store, root string, ignore, languages []string, embedModel string, inf assist.Inferencer) error {
-	sig, sErr := index.SignatureWithOptions(root, index.Options{Ignore: ignore, Languages: languages})
-	ver, _ := s.GetMeta("index_version")
-	storedSig, _ := s.GetMeta("cli_sig")
-	current := sErr == nil && sig != 0 &&
-		ver == index.Version() &&
-		storedSig == strconv.FormatUint(sig, 10)
-	if current && (inf == nil || s.VectorsReady()) {
-		return nil
-	}
-	if _, err := reindexer(s, root, ignore, languages, embedModel, inf)(ctx); err != nil {
-		return err
-	}
-	if sErr == nil {
-		_ = s.SetMeta("cli_sig", strconv.FormatUint(sig, 10))
-	}
-	return nil
+	return project.Query, project.Workspace, project.Store, project.Close, nil
 }
 
 // newQueryCmd builds a thin subcommand that runs one querier method and prints

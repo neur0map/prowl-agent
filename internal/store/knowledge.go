@@ -35,50 +35,47 @@ type SourceAnchor struct {
 // ReplaceKnowledge atomically rebuilds canonical document and anchor metadata.
 // Proposal review state is intentionally not touched.
 func (s *Store) ReplaceKnowledge(documents []KnowledgeDocument, anchors []SourceAnchor) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM knowledge_documents`); err != nil {
-		return err
-	}
-	stmt, err := tx.Prepare(`INSERT INTO knowledge_documents(
+	return s.writeTransaction(func(tx writeRunner) error {
+		if _, err := tx.Exec(`DELETE FROM knowledge_documents`); err != nil {
+			return err
+		}
+		stmt, err := tx.Prepare(`INSERT INTO knowledge_documents(
 		id,concept_id,path,okf_type,title,description,resource,tags_json,timestamp,review_state,content_hash,metadata_json
 	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	for _, doc := range documents {
-		if _, err := stmt.Exec(doc.ID, doc.ConceptID, doc.Path, doc.Type, doc.Title, doc.Description, doc.Resource, doc.TagsJSON, doc.Timestamp, doc.ReviewState, doc.ContentHash, doc.MetadataJSON); err != nil {
-			stmt.Close()
+		if err != nil {
 			return err
 		}
-	}
-	if err := stmt.Close(); err != nil {
-		return err
-	}
-	anchorStmt, err := tx.Prepare(`INSERT INTO source_anchors(
+		for _, doc := range documents {
+			if _, err := stmt.Exec(doc.ID, doc.ConceptID, doc.Path, doc.Type, doc.Title, doc.Description, doc.Resource, doc.TagsJSON, doc.Timestamp, doc.ReviewState, doc.ContentHash, doc.MetadataJSON); err != nil {
+				stmt.Close()
+				return err
+			}
+		}
+		if err := stmt.Close(); err != nil {
+			return err
+		}
+		anchorStmt, err := tx.Prepare(`INSERT INTO source_anchors(
 		id,knowledge_id,uri,line_start,line_end,content_hash,region_hash,status,checked_at,metadata_json
 	) VALUES(?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	for _, anchor := range anchors {
-		if _, err := anchorStmt.Exec(anchor.ID, anchor.KnowledgeID, anchor.URI, nullableInt(anchor.LineStart), nullableInt(anchor.LineEnd), anchor.ContentHash, anchor.RegionHash, anchor.Status, anchor.CheckedAt, anchor.MetadataJSON); err != nil {
-			anchorStmt.Close()
+		if err != nil {
 			return err
 		}
-	}
-	if err := anchorStmt.Close(); err != nil {
-		return err
-	}
-	return tx.Commit()
+		for _, anchor := range anchors {
+			if _, err := anchorStmt.Exec(anchor.ID, anchor.KnowledgeID, anchor.URI, nullableInt(anchor.LineStart), nullableInt(anchor.LineEnd), anchor.ContentHash, anchor.RegionHash, anchor.Status, anchor.CheckedAt, anchor.MetadataJSON); err != nil {
+				anchorStmt.Close()
+				return err
+			}
+		}
+		if err := anchorStmt.Close(); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // ListKnowledge returns canonical metadata in deterministic path order.
 func (s *Store) ListKnowledge() ([]KnowledgeDocument, error) {
-	rows, err := s.db.Query(`SELECT id,concept_id,path,okf_type,title,IFNULL(description,''),IFNULL(resource,''),tags_json,IFNULL(timestamp,''),review_state,content_hash,metadata_json FROM knowledge_documents ORDER BY path`)
+	rows, err := s.sql().Query(`SELECT id,concept_id,path,okf_type,title,IFNULL(description,''),IFNULL(resource,''),tags_json,IFNULL(timestamp,''),review_state,content_hash,metadata_json FROM knowledge_documents ORDER BY path`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +94,7 @@ func (s *Store) ListKnowledge() ([]KnowledgeDocument, error) {
 // GetKnowledge resolves either a stable concept ID or a bundle-relative path.
 func (s *Store) GetKnowledge(idOrPath string) (KnowledgeDocument, bool, error) {
 	var doc KnowledgeDocument
-	err := s.db.QueryRow(`SELECT id,concept_id,path,okf_type,title,IFNULL(description,''),IFNULL(resource,''),tags_json,IFNULL(timestamp,''),review_state,content_hash,metadata_json FROM knowledge_documents WHERE concept_id=? OR path=? LIMIT 1`, idOrPath, idOrPath).
+	err := s.sql().QueryRow(`SELECT id,concept_id,path,okf_type,title,IFNULL(description,''),IFNULL(resource,''),tags_json,IFNULL(timestamp,''),review_state,content_hash,metadata_json FROM knowledge_documents WHERE concept_id=? OR path=? LIMIT 1`, idOrPath, idOrPath).
 		Scan(&doc.ID, &doc.ConceptID, &doc.Path, &doc.Type, &doc.Title, &doc.Description, &doc.Resource, &doc.TagsJSON, &doc.Timestamp, &doc.ReviewState, &doc.ContentHash, &doc.MetadataJSON)
 	if err == sql.ErrNoRows {
 		return KnowledgeDocument{}, false, nil

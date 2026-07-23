@@ -1,7 +1,10 @@
 package index
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +19,10 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
+
+// ErrSourcesChanged marks a transient source-tree read inconsistency. Project
+// refresh retries this class once before leaving publication incomplete.
+var ErrSourcesChanged = errors.New("project sources changed during refresh")
 
 // Summary reports what an Index run did.
 type Summary struct {
@@ -45,8 +52,23 @@ func Index(s *store.Store, root string, ignore []string) (Summary, error) {
 // IndexWithOptions incrementally synchronizes the store while enforcing the
 // configured language policy.
 func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error) {
+	return IndexWithOptionsContext(context.Background(), s, root, opt)
+}
+
+// IndexWithOptionsContext incrementally synchronizes the store while honoring
+// cancellation between traversal, file parsing, and graph resolution phases.
+func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
 	var sum Summary
-	rels, err := Walk(root, opt.Ignore)
+	if err := ctx.Err(); err != nil {
+		return sum, err
+	}
+	// Derived-table updates are incremental. Invalidate the generation before the
+	// first mutation and publish completion only after all graph and metadata
+	// writes succeed, so cancellation cannot masquerade as a fresh index.
+	if err := s.SetMeta("index_state", "incomplete"); err != nil {
+		return sum, err
+	}
+	rels, err := WalkContext(ctx, root, opt.Ignore)
 	if err != nil {
 		return sum, err
 	}
@@ -61,10 +83,13 @@ func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error)
 	}
 
 	for _, rel := range rels {
+		if err := ctx.Err(); err != nil {
+			return sum, err
+		}
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		data, err := os.ReadFile(full)
 		if err != nil {
-			continue
+			return sum, fmt.Errorf("%w: read indexed source %s: %v", ErrSourcesChanged, rel, err)
 		}
 		data = stripGeneratedContent(rel, data)
 		if len(strings.TrimSpace(string(data))) == 0 {
@@ -125,6 +150,9 @@ func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error)
 		return sum, err
 	}
 	for _, f := range all {
+		if err := ctx.Err(); err != nil {
+			return sum, err
+		}
 		if !current[f.RelPath] {
 			if err := s.DeleteFileByPath(f.RelPath); err != nil {
 				return sum, err
@@ -137,14 +165,33 @@ func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error)
 		return sum, err
 	}
 
-	// Record the Go module path (if any) so resolution can link package imports
-	// to the files in those packages.
-	_ = s.SetMeta("go_module", goModulePath(root))
-	_ = s.SetMeta("rust_crates", rustCrates(root, all))
-	_ = s.SetMeta("ts_packages", tsPackages(root, all))
-	_ = s.SetMeta("dart_packages", dartPackages(root, all))
-	_ = s.SetMeta("ts_aliases", tsAliases(root, all))
+	// Record package/module metadata before resolution. A generation cannot be
+	// marked complete if any of these writes fails.
+	metadata := []struct {
+		key   string
+		value func() string
+	}{
+		{key: "go_module", value: func() string { return goModulePath(root) }},
+		{key: "rust_crates", value: func() string { return rustCrates(root, all) }},
+		{key: "ts_packages", value: func() string { return tsPackages(root, all) }},
+		{key: "dart_packages", value: func() string { return dartPackages(root, all) }},
+		{key: "ts_aliases", value: func() string { return tsAliases(root, all) }},
+	}
+	for _, item := range metadata {
+		if err := ctx.Err(); err != nil {
+			return sum, err
+		}
+		if err := s.SetMeta(item.key, item.value()); err != nil {
+			return sum, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return sum, err
+	}
 	if err := graph.Resolve(s); err != nil {
+		return sum, err
+	}
+	if err := ctx.Err(); err != nil {
 		return sum, err
 	}
 	if c, err := s.Counts(); err == nil {
@@ -155,6 +202,9 @@ func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error)
 		return sum, err
 	}
 	if err := s.SetMeta("index_version", ver); err != nil {
+		return sum, err
+	}
+	if err := s.SetMeta("index_state", "complete"); err != nil {
 		return sum, err
 	}
 	return sum, nil
@@ -562,4 +612,61 @@ func stripJSONC(data []byte) []byte {
 		out = append(out, b[i])
 	}
 	return out
+}
+
+// ValidateSnapshotContext proves that every file row about to be published was
+// derived from the bytes still present on disk.
+func ValidateSnapshotContext(ctx context.Context, s *store.Store, root string) error {
+	return ValidateSnapshotWithExpectedContext(ctx, s, root, Options{}, nil)
+}
+
+// ValidateSnapshotWithExpectedContext validates both published rows and the
+// pre-signature's expected indexable paths. The reverse check prevents a source
+// that transiently disappeared during the index walk from being omitted.
+func ValidateSnapshotWithExpectedContext(ctx context.Context, s *store.Store, root string, opt Options, expected []string) error {
+	files, err := s.AllFiles()
+	if err != nil {
+		return err
+	}
+	byPath := make(map[string]store.File, len(files))
+	for _, file := range files {
+		byPath[file.RelPath] = file
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file.RelPath)))
+		if err != nil {
+			return fmt.Errorf("validate indexed file %s: %w", file.RelPath, err)
+		}
+		data = stripGeneratedContent(file.RelPath, data)
+		hash := strconv.FormatUint(xxhash.Sum64(data), 16)
+		if int64(len(data)) != file.Size || hash != file.Hash {
+			return fmt.Errorf("indexed file %s changed after it was read", file.RelPath)
+		}
+	}
+	for _, rel := range expected {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return fmt.Errorf("%w: validate expected source %s: %v", ErrSourcesChanged, rel, err)
+		}
+		data = stripGeneratedContent(rel, data)
+		if len(strings.TrimSpace(string(data))) == 0 {
+			continue
+		}
+		head := data
+		if len(head) > 512 {
+			head = head[:512]
+		}
+		lang := parse.Detect(rel, head)
+		if lang == "" || !languageAllowed(lang, opt.Languages) {
+			continue
+		}
+		if _, ok := byPath[rel]; !ok {
+			return fmt.Errorf("%w: indexed source %s was omitted", ErrSourcesChanged, rel)
+		}
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -36,6 +37,7 @@ type ServerOptions struct {
 	Knowledge    *knowledge.Repository
 	Capabilities *capability.Catalog
 	Root         string
+	BeforeCall   func(context.Context) error
 }
 
 func (options *ServerOptions) normalize() {

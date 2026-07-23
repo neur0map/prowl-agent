@@ -1,6 +1,7 @@
 package context
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -22,12 +23,33 @@ type Service struct {
 	Estimator CostEstimator
 	Tracer    Tracer
 	Reranker  SemanticReranker
+	// RequirePublished rejects structural reads while a failed refresh is
+	// awaiting repair. Low-level callers remain compatible by leaving it false.
+	RequirePublished bool
+	ReadGuard        store.ReadGuard
+}
+
+func (service *Service) beginRead() (func(), error) {
+	if service.ReadGuard == nil {
+		return func() {}, nil
+	}
+	return service.ReadGuard(context.Background())
 }
 
 // Search retrieves, ranks, and packs curated knowledge plus raw source evidence.
 func (service *Service) Search(request Request) (packet Packet, err error) {
+	release, err := service.beginRead()
+	if err != nil {
+		return Packet{}, err
+	}
+	defer release()
 	started := time.Now()
 	defer service.recordTrace(request, &packet, &err, started)
+	if service.RequirePublished {
+		if err := service.Store.RequirePublishedGeneration(); err != nil {
+			return Packet{}, err
+		}
+	}
 	if strings.TrimSpace(request.Question) == "" {
 		return Packet{}, fmt.Errorf("context search question is required")
 	}
@@ -58,8 +80,18 @@ func (service *Service) Search(request Request) (packet Packet, err error) {
 
 // Get fetches selected IDs with the same budget and packet contract.
 func (service *Service) Get(request Request) (packet Packet, err error) {
+	release, err := service.beginRead()
+	if err != nil {
+		return Packet{}, err
+	}
+	defer release()
 	started := time.Now()
 	defer service.recordTrace(request, &packet, &err, started)
+	if service.RequirePublished {
+		if err := service.Store.RequirePublishedGeneration(); err != nil {
+			return Packet{}, err
+		}
+	}
 	if len(request.IDs) == 0 {
 		return Packet{}, fmt.Errorf("context get requires at least one id")
 	}

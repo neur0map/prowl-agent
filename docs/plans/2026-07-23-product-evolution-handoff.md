@@ -11,7 +11,7 @@ Current contracts:
 - Detailed clean-room port plan and parity ledger: `docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md`
 - Upstream evidence pin: `NousResearch/hermes-agent@c4f5a45d5d9903998fb318ac6f3c5e6623e60445`
 
-Execution order: Phase 3A real-data workbench completion → Phase 3B provider-neutral agent kernel → Phase 3C durable Kanban/live operations → original Phases 4–6 → selected broader parity in Phase 7.
+Current execution order: Phase 3A A1–D2 real-data/security completion → bounded Phase 3B0 B0.1–B0.6d → bounded Phase 3C0 C0.1–C0.5c → Phase 3B/3C breadth → Phase 3C1 selected pinned Kanban behavior → Phase 4 bridge prerequisite and Obsidian → Phases 5–7.
 
 This file still records the exact `95ba94f` tracer-bullet checkpoint, verification, and review caveat. It is historical evidence, not the current end-of-work handoff.
 
@@ -40,7 +40,9 @@ The former stop directive was satisfied by commit `95ba94f`; this continuation i
 
 Most Phase 0 implementation is complete. Follow-up inspection confirmed that the five-target `.github/workflows/release.yml` is already committed and identical on `origin/product-evolution`; the repository account has `ADMIN` permission. The old authorization blocker is obsolete.
 
-Phase 0 remains open for a narrower reason: no pull request has exercised the branch workflow, and the green Actions history on `main` covers the older `build-binary` definition rather than the Linux amd64/arm64, macOS amd64/arm64, and Windows amd64 matrix. Do not claim Phase 0 complete until a PR or equivalent authorized run executes the tracked branch workflow and the job/artifact/smoke evidence is recorded. `/tmp/prowl-release-workflow.yml` is only a stale preparation artifact and is no longer authoritative.
+Phase 0 remains open for a narrower reason: no pull request has exercised the branch workflow, and the green Actions history on `main` covers the older `build-binary` definition rather than the Linux amd64/arm64, macOS amd64/arm64, and Windows amd64 matrix. A manual dispatch of the default `build-binary` workflow against `95ba94f` succeeded at build, test, and checksum in [run 30040678190](https://github.com/neur0map/prowl-agent/actions/runs/30040678190), with release publication correctly skipped; this is useful Linux branch sanity evidence but is not matrix evidence. GitHub would not load the expanded pull-request workflow from a non-default base branch, so the full matrix can run only after that workflow reaches `main` (or the default branch is deliberately changed).
+
+Do not claim Phase 0 complete until the tracked branch workflow executes after landing and the job/artifact/smoke evidence is recorded. `/tmp/prowl-release-workflow.yml` is only a stale preparation artifact and is no longer authoritative.
 
 ### Phase 1
 
@@ -91,8 +93,7 @@ secured loopback HTTP server → prowl-agent open → real Chromium + authentica
 
 - IPv4 loopback-only listener using `tcp4` and `127.0.0.1`
 - Kernel-selected free port by default
-- 32-byte cryptographically random, unpadded URL-safe bearer token
-- Token passed to the browser only in the URL fragment
+- **Historical implementation only:** 32-byte cryptographically random bearer placed in the browser fragment. This is superseded by Phase 3A A4: a 60-second single-use fragment nonce is atomically exchanged for a distinct memory-only API bearer.
 - Cross-platform browser launch using argv-safe `exec.Command`
 - Browser launcher is reaped asynchronously with `Wait`; a regression test uses a real short-lived child process
 - Ctrl-C/SIGTERM cancellation and bounded HTTP shutdown
@@ -208,7 +209,9 @@ go test -tags sqlite_fts5 ./internal/cli \
 
 Before the two review-driven fixes, the full tagged Go suite, tagged vet, and focused race suite passed. The final commit procedure reruns those gates; consult the commit/session output rather than assuming success.
 
-## First actions when resuming
+## Historical first actions (superseded)
+
+The commands below record the `95ba94f` checkpoint procedure only. **Do not treat them as the current resume procedure.** The final section of this file is the sole current instruction.
 
 1. Read this handoff and the Phase 3 section of the canonical plan.
 2. Confirm the branch and clean tree:
@@ -260,7 +263,7 @@ Before the two review-driven fixes, the full tagged Go suite, tagged vet, and fo
 
   The architecture review recommended a stable `schema_version: "prowl.api/v1"` envelope for non-context endpoints. Resolve this before many handlers depend on the current shape. Context endpoints must return canonical `prowl.context/v1` packets directly.
 
-- Decide whether to keep bearer-only requests for all operations or introduce a session-cookie/CSRF exchange. Bearer-only avoids cookie CSRF and already confines the token in memory; if cookies are introduced later, mutations must require strict CSRF protection.
+- Historical open question, now resolved: use A4's single-use nonce-to-memory-bearer exchange; do not introduce cookies in Phase 3A. Any future cookie mode requires a separate CSRF design and migration.
 
 - Extract shared project/service assembly before duplicating CLI, MCP, and web construction logic.
 
@@ -294,7 +297,7 @@ The current shell is a tracer bullet, not the completed workbench. Remaining con
 
 ## Later phases
 
-After Phase 3 is independently complete:
+Historical ordering only; superseded by the final current procedure:
 
 - Phase 4: Obsidian plugin and stdio bridge
 - Phase 5: episodic memory adapters and research facade/packs
@@ -312,3 +315,30 @@ After Phase 3 is independently complete:
 - `legacy` remains the default MCP surface and its 17 descriptors remain compatible.
 - The tracked five-target release workflow is already on `origin/product-evolution`; do not rewrite it without a source-backed need. Phase 0 requires real branch/PR Actions evidence before completion.
 - Commits use concise human-written messages with no AI/co-author attribution.
+
+## Current resume procedure (supersedes every earlier directive)
+
+This is the only operational resume procedure. Earlier checkpoint commands and “later phases” text remain historical evidence.
+
+1. Work in `/home/neur0map/workspace/prowl-agent` on `product-evolution`. Read the full current versions of the canonical product plan, Phase 3A execution plan, Hermes-port plan, and this final section before editing.
+2. Preserve existing work. Run `git status --short`, `git diff --name-only`, and `git diff --check`; do not reset the later Phase 0 CI-evidence correction in this file or any in-progress A1 files. At the time this procedure was written, A1 work existed in `internal/application/**`, `internal/cli/{init,query,context,serve,lsp,restart,freshness}.go` and tests, `internal/index/{index,walk,watch,embed}.go` and tests, `internal/store/vectors.go`, and the Go module lock dependency; re-inspect rather than assuming it is complete.
+3. Resume **Phase 3A A1** at its independent-review gate. Init, query CLI, context CLI, MCP serve, LSP, and restart refresh must all use `application.Project`; malformed configuration must fail consistently; interrupted/changed-during-refresh generations must fail closed and repair; local and cross-process lock waits must honor cancellation; watcher callbacks must be joined before project close; vector completeness must be model-scoped. A1 starts no goroutines. Run A1's focused command and record observed RED/GREEN/review output before advancing. **A3**, not A1, owns the 250 ms/2,000-path workbench startup probe and typed pre-listen/deferred-refresh behavior.
+4. Execute Phase 3A strictly by IDs **A2 → A3 → A4 → A5 → B1–B6 → B7a–B7c → C1–C5 → D1–D2**. Follow each task's exact file/route/DTO/migration ownership and seam serialization. A4's nonce-to-bearer bootstrap, C1–C2's scoped `project-job` outbox cursor/store, and D2's executable security/context/comprehension oracles are blocking gates.
+5. After D2 passes and receives independent security/requirements PASS, execute only Hermes-port **B0.1–B0.6d**, then **C0.1–C0.5c**. Run each table gate and the compiled-binary kill/restart oracles. Do not pull FTS, repair breadth, external lanes, broad attachments/subscriptions, provider breadth, automation breadth, or management UI into these tracer slices.
+6. Only after both tracer oracles pass may Phase 3B/3C breadth begin. Then execute Phase 3C1 HP-068/069/071–074; HP-070 swarm remains deferred. Before any Obsidian feature, pass the exact Phase 4 `internal/bridge/**` stdio v1 compatibility gate. TUI/broad ACP remain Phase 7.
+7. At every checkpoint run the focused task gate, then the plan's full gate where required. Before handoff run:
+
+   ```sh
+   export PATH="$HOME/sdk/go/bin:$PATH" CGO_ENABLED=1
+   go test -tags sqlite_fts5 ./... -count=1
+   go vet -tags sqlite_fts5 ./...
+   cd web
+   npm ci
+   npm audit --audit-level=low
+   npm run check
+   cd ..
+   git diff --exit-code -- web/dist
+   git diff --check
+   ```
+
+8. Update the relevant verification ledger with exact command output, fixture, excluded volatile fields, thresholds/sample evidence, changed paths, migration/rollback evidence, and independent review disposition. Never claim phase completion from subjective prose, mock-only tests, or a route count.

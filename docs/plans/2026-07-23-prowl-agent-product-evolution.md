@@ -426,8 +426,8 @@ Prowl-specific improvements are required rather than blind parity:
 
 - use clean-room Go behavior contracts; no upstream source transplant while Prowl has no license decision;
 - keep durable operational state separate from `.prowl/index.db`;
-- use authenticated fetch-streamed SSE for one-way events so bearer credentials never enter URLs;
-- append state and event in one transaction, then publish from an in-process broker with cursor replay after restart;
+- use a 60-second single-use fragment nonce only for same-origin bootstrap, mint a distinct memory-only API bearer, and use authenticated fetch-streamed SSE so bearer credentials never enter URLs;
+- append state and an outbox row in one transaction **within each owning SQLite authority**, then publish through a bounded broker plus durable publisher watermark/sweep; use scoped `{stream_scope, scope_id, epoch, sequence}` cursors and never claim a total order or cross-file transaction;
 - fail closed when authentication dependencies are unavailable, including tests;
 - make review a first-class status and approval policy rather than a magic block-reason prefix;
 - keep deterministic evidence and portable Markdown knowledge authoritative for project facts;
@@ -596,6 +596,8 @@ Do not assume vector search is always best. Build a retrieval benchmark with lex
 - The agent kernel uses a provider-neutral completion/tool-call interface; ship Ollama and OpenAI-compatible adapters first, then add providers without provider branches in task/session services.
 - Tool handlers extend the existing capability catalog through executable registrations, toolsets, availability gates, permissions, and result bounds; do not create a parallel capability universe.
 - A session pins its profile, prompt version, toolset/schema generation, project-context hashes, and approval policy so ordinary turns keep a stable cached prefix.
+- Context precedence, trust classification, root/nested scope, session-start snapshots, role-safe per-turn overlays, and inspectable secret-redacted exposure manifests are normative under HP-055–060 in the Hermes-port plan.
+- The frozen prompt contains the skill metadata index and force-preloaded task skills only. Ordinary full skill loads are tool results and never mutate the cached prompt/tool schemas; skill resolution, readiness, safe mutation, plugin qualification, profile isolation, reload, and import/export are separately tracked by HP-061–067.
 - Credentials stay outside indexed, session, event, profile, task, and project state; APIs return presence/status, never secret values.
 - Web research should be a packaged workflow/tool adapter with source capture, not a hardcoded search vendor inside the graph core.
 - Every AI-authored knowledge change enters a proposal/review flow and preserves citations.
@@ -604,11 +606,13 @@ Do not assume vector search is always best. Build a retrieval benchmark with lex
 
 CLI commands, MCP tools/resources/prompts, model tools, workbench handlers, plugins, automations, and worker lanes must all call the same application services. Transport layers do not own lifecycle SQL or duplicate transition rules.
 
-The project index remains derived. Durable agent/task state uses separate operational stores under the user data root. Each task board receives an isolated database, artifacts/logs root, and workspace root. State changes and append-only events commit in the same transaction.
+The project index remains derived. Durable agent/task state uses separate operational stores under the user data root. Each task board receives an isolated database, artifacts/logs root, and workspace root. State and outbox append atomically only inside the owning transaction boundary: board DB for board state, global operations DB for sessions/approvals, and project-job authority for project jobs. No transaction spans those stores.
 
-Live clients load authoritative snapshots and subscribe from a monotonic cursor. Events invalidate named resources; clients refetch canonical data. The in-process broker reduces latency, while database replay repairs missed publishes and survives restart. Bounded subscriber queues emit a gap/reset signal rather than accumulating unbounded memory.
+Live clients load authoritative snapshots and subscribe with `{stream_scope, scope_id, epoch, sequence}`. Sequence is monotonic only within one authority. Cross-domain presentation may merge scoped streams but does not imply a total order. Events invalidate named resources; clients refetch canonical data. A durable publisher watermark and bounded sweep while subscribers exist repairs commit-before-publish failures even for connected clients. Retention expiry, epoch mismatch, and queue overflow produce per-stream gap/reset signals and snapshot refetch rather than unbounded memory.
 
-Use bearer-authenticated fetch-streamed SSE for one-way project/job/session/task events. Reserve WebSockets for genuinely bidirectional terminal/media flows and require short-lived single-use upgrade tickets. Never put the process bearer, provider credentials, prompts, private file contents, or unbounded logs in event URLs or payloads.
+The launch fragment carries only a short-lived, atomically consumed nonce. `POST /api/v1/auth/bootstrap` returns a distinct bearer retained in process/browser module memory. Automatic launch prints only the redacted origin; non-browser handoff uses interactive reveal or a mode-`0600` one-time file/FD. Use bearer-authenticated fetch-streamed SSE for one-way project/job/session/task events. Reserve WebSockets for genuinely bidirectional terminal/media flows and require single-use upgrade tickets. Never put the API bearer, provider credentials, prompts, private file contents, or unbounded logs in event URLs or payloads.
+
+From the first Phase 3B0 schema, actor attribution is server-derived and separates authenticated `principal_id`, active `profile_id`, `surface_id`, delegated worker/run identity, and project/board owner scope. Local mode maps to one durable local operator; profile identity is not authentication; clients cannot submit authoritative actor IDs. Remote mode remains disabled until Phase 7 authorization passes.
 
 Task lifecycle, worker knowledge, runner interfaces, security invariants, storage classification, and phase-specific exit criteria are normative in `docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md`.
 
@@ -695,7 +699,7 @@ Architecture:
 
 - Go serves embedded static assets and a versioned loopback API.
 - Bind `127.0.0.1` only by default.
-- Generate an ephemeral bearer token; strict origin/CORS policy.
+- Generate a 60-second single-use bootstrap nonce; exchange it at same-origin `POST /api/v1/auth/bootstrap` for a distinct ephemeral bearer; strict origin/CORS policy.
 - Optional idle shutdown; no always-on daemon required.
 - REST for snapshots and SSE/WebSocket for progress/index updates.
 - `--no-browser`, `--port`, and `--export-html` modes.
@@ -985,14 +989,17 @@ Tasks:
 - Add stable versioned API envelopes, bounded pagination, request cancellation, and typed error codes.
 - Exercise the real compiled Go binary and committed bundle in browser fixtures; no mock-only acceptance.
 
-**Exit criteria:**
+**Executable exit oracle:** execute Task D2 in `docs/plans/2026-07-23-phase-3a-workbench-completion.md`. It specifies the three fixtures, exact Go/frontend/compiled-binary commands, route inventory, machine assertions, volatile Context Lens exclusions, secret/security/reconnect/cancellation gates, 5–12-step anchored tours, viewport/accessibility thresholds, and the newcomer sample/rubric (three participants × three fixtures × five questions; at least 36/45 overall and 4/5 for every participant-fixture journey). Every command exits 0 and the independent security/requirements audits report no blocker.
 
-- A newcomer can identify purpose, architecture, and a risky change area without using the CLI.
-- The Context Lens exactly matches MCP/CLI packet content.
-- UI binds loopback only and passes local API security tests.
-- A guided tour is useful on at least three very different fixture projects.
-- Every screen renders real shared-service data; no placeholder metric or client-owned domain rule remains.
-- Snapshot/event reconnect, cancellation, hostile Host/Origin, storage/token leakage, accessibility, and pseudolocale journeys pass.
+### Phase 3B0 — Bounded agent-kernel tracer
+
+**Execution contract:** Hermes-port tasks B0.1–B0.6d, with exact paths/routes/schema `prowl.operations/v1` and commands.
+
+**In scope only:** one durable local principal, one immutable profile/prompt/exposure snapshot, deterministic fake/OpenAI-compatible provider, one resumable session, `search_context|get_context|read_source` read-only tools, one operational scoped outbox stream, minimal CLI/API/UI, and kill/restart acceptance.
+
+**Deferred until the tracer passes:** FTS, broad repair/export management, provider breadth, side-effect tools, background processes, delegation, general skill mutation, and management UI.
+
+**Exit:** the Hermes-port B0 executable oracle passes with byte-identical frozen prompt/tool-schema hashes, inspectable exposure manifest, server-derived actor fields, cited fixture evidence, restart resume, and no secret/storage leakage.
 
 ### Phase 3B — Provider-neutral agent kernel
 
@@ -1008,14 +1015,20 @@ Tasks:
 - Add progressive skill discovery/full loading, provenance, and procedural-memory separation.
 - Add explicit writable scopes, network/filesystem/process permissions, and human approvals.
 - Add cancellation, mid-turn steering, bounded background processes, and fork/join delegation.
+- Enforce expanded-alias `child_capabilities ⊆ parent_capabilities`, `child_permissions ⊆ parent_permissions`, stricter-only child approval, deny interactive/risky child approvals by default, and repository-level durable-board mutation denial.
 - Expose the same run/session services through CLI, MCP, and authenticated workbench routes.
 
-**Exit criteria:**
+**Executable exit oracle:** run the Hermes-port Phase 3B command and compiled-binary `web/e2e/session-lifecycle.spec.ts`. The fixed fixture starts, streams, steers, cancels, resumes, searches, exports, and restarts one session; byte fixtures prove stable prompt/tool schemas including mid-session skill load; alias-expanded child subset, approval, principal attribution, and secret-redaction assertions pass.
 
-- A session can start, stream, steer, cancel, resume, search, export, and survive process restart.
-- Active tool schemas and prompt prefix remain stable across ordinary turns.
-- Tools enforce scope and approval policy before side effects.
-- No provider secret enters project, session, event, profile, task, log, or browser storage.
+### Phase 3C0 — Bounded Kanban/live-operations tracer
+
+**Execution contract:** Hermes-port tasks C0.1–C0.5c, with exact paths/routes/schema `prowl.board/v1` and commands.
+
+**In scope only:** one board; minimal task/dependency/comment/run/review/outbox tables; `triage|ready|running|blocked|review|done`; native Prowl worker; CAS claim/lease/heartbeat/crash reconcile; board-scoped SSE; live board/run view; fixed kill/restart acceptance.
+
+**Deferred until the tracer passes:** schedules, broad attachments/subscriptions, external runners, automation, general repair, project worktrees, specification/decomposition, swarm, and management breadth.
+
+**Exit:** the Hermes-port C0 executable oracle passes: exactly one claimant, commit-before-publish delivery to an already-connected subscriber, restart replay, stale-run rejection, immutable review, no lost event/outcome, and only scoped cursors.
 
 ### Phase 3C — Durable Kanban and live operations
 
@@ -1035,12 +1048,11 @@ Tasks:
 - Add shared-kernel CLI, MCP, workbench board/task/run/review/worker/diagnostic surfaces, and idempotent automation entry points.
 - Add race, crash, restart, migration, repair, redaction, path-security, and live-browser tests.
 
-**Exit criteria:**
+**Executable exit oracle:** run the Hermes-port Phase 3C gate against its fixed board fixture and compiled-binary `web/e2e/operations-lifecycle.spec.ts`. The test creates, concurrently claims, observes, heartbeats, steers, blocks, resumes, approves, completes, and audits one review-gated task; exactly one claim wins; stale/superseded termination fails; forced commit-before-publish and process restart lose no event/outcome; scoped snapshot reconciliation passes; canonical transition fixtures are byte-equal across CLI, MCP, model tool, API, automation, and worker adapters after excluding transport request IDs.
 
-- One review-gated task can be created, claimed, observed live, heartbeated, steered, blocked, resumed, approved, completed, and audited.
-- Exactly one concurrent claimant wins and stale/superseded workers cannot terminate the current run.
-- Restart loses no committed event or terminal outcome; clients reconcile from a durable cursor.
-- CLI, MCP, model tools, dashboard, automations, and workers produce identical lifecycle behavior through shared services.
+### Phase 3C1 — Pinned Kanban behavior after kernel proof
+
+Implement ledgered HP-068 triage specification, HP-069 transactional automatic decomposition, HP-071 project-linked tasks/worktrees, HP-072 disabled-by-default auto-promotion, HP-073 bounded auto-decompose/orchestrator configuration, and HP-074 workflow-template fields with their executable fixtures. HP-070 swarm fan-out/verifier/synthesizer remains explicitly deferred until decomposition and single-worker evidence gates pass.
 
 ### Phase 4 — Official Obsidian integration
 
@@ -1048,7 +1060,7 @@ Tasks:
 
 Tasks:
 
-- Build desktop bridge and capability negotiation.
+- **Prerequisite:** build and pass the minimal versioned `prowl-agent bridge --stdio` v1 contract at the exact `internal/bridge/**` and `internal/cli/bridge*.go` paths/gate in the Hermes-port Phase 4 section: NDJSON framing, cancellation, capability negotiation, frame bounds, redaction, shutdown, and compatibility fixtures.
 - Add current-vault and linked-project setup.
 - Add sidebar brief, context/search modal, source relation pane, and concept editor.
 - Integrate MetadataCache links/frontmatter/headings/backlinks and Vault change events.
@@ -1119,7 +1131,7 @@ Tasks:
 - Add cron/webhook automation management with idempotency, delivery, and missed-run policy.
 - Add backend plugin lifecycle and a constrained frontend plugin SDK with authenticated fetch/stream helpers and versioned page/slot manifests.
 - Add remote dashboard mode only with explicit opt-in, TLS/reverse-proxy trust rules, multi-user authorization, CSRF protection, and short-lived stream tickets.
-- Add TUI, ACP/stdio, and desktop boundaries over the same versioned application protocol.
+- Add TUI, broader ACP, and desktop boundaries over the already-required Phase 4 stdio v1 protocol.
 - Add one representative messaging/gateway adapter and pairing contract before broad channel expansion.
 - Add local usage/cost analytics without outbound telemetry.
 - Add import/export/migration for profiles, sessions, skills, tasks, and portable knowledge.
@@ -1231,21 +1243,17 @@ The original first shippable slice was:
 
 Phases 1 and 2 and the secured Phase 3A tracer bullet now prove most of this substrate. The remaining Phase 3A real-data views and acceptance tests must finish before operational expansion.
 
-The next connected slice is defined in the companion Hermes-port plan:
+The next connected slice is defined by exact task IDs in the companion Hermes-port plan:
 
 ```text
-finish real-data workbench
-  → durable operational/event store
-  → one profile + resumable session
-  → executable read-only context toolset
-  → one board + task/run/review state machine
-  → native Prowl worker lane
-  → authenticated SSE replay
-  → live board/run UI
-  → crash/restart/cursor recovery acceptance
+Phase 3A D2 real-data/security acceptance
+  → B0.1–B0.6d principal + immutable profile + resumable read-only session tracer
+  → C0.1–C0.5c one board + native worker + scoped stream + live review tracer
+  → B0/C0 crash/restart/cursor recovery acceptance
+  → Phase 3B/3C breadth only after both gates pass
 ```
 
-It must demonstrate one fact traveling through the whole product: deterministic project evidence → agent session → durable task → live human review → structured cited result → accepted portable knowledge.
+It must demonstrate one fact traveling through the whole product: deterministic project evidence → agent session → durable task → live human review → structured cited result → accepted portable knowledge. FTS, general repair, external lanes, broad attachments/subscriptions, provider breadth, automation breadth, and management UI remain outside this tracer.
 
 ---
 

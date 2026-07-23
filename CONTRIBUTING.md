@@ -20,6 +20,23 @@ bash scripts/onboarding-smoke.sh
 
 Plain `go test ./...` is not a valid project test command: the SQLite driver must be built with the `sqlite_fts5` tag.
 
+For workbench changes, install the exact lockfile and pinned Chromium build, then
+run the unit, type, production-build, real-binary, accessibility, and browser
+checks:
+
+```sh
+cd web
+npm ci
+npx playwright install chromium
+npm audit --audit-level=low
+npm run check
+cd ..
+git diff --exit-code -- web/dist
+```
+
+`web/dist` is committed so ordinary Go builds do not require Node.js. Rebuild it
+with `npm run build`; never edit generated bundle files by hand.
+
 ## Change discipline
 
 1. Add or update a test that demonstrates the behavior or bug.

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "types": ["vitest/globals", "node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true
+  },
+  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]
+}

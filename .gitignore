@@ -4,6 +4,10 @@
 *.db-shm
 *.db-wal
 .prowl/
+/.tmp/
+/web/node_modules/
+/web/test-results/
+/web/playwright-report/
 
 # Local-only planning docs (spec/plan); never pushed.
 /docs/superpowers/

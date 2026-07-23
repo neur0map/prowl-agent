@@ -89,7 +89,20 @@ markers, so re-running setup refreshes only Prowl's block.
 
 There is no server to keep running. Each query re-indexes incrementally first
 (only what changed, in tens of milliseconds), so the agent never reads stale data
-and you never run a watcher by hand.
+and you never run a watcher by hand. The optional human workbench runs only for
+the current terminal session:
+
+```sh
+prowl-agent open                 # choose a free loopback port and open the browser
+prowl-agent open --no-browser    # print the local URL without launching a browser
+prowl-agent open --port 43117    # request a specific loopback port
+```
+
+`open` binds only to `127.0.0.1`. It generates a 256-bit in-memory bearer token,
+passes it in the initial URL fragment, and the frontend immediately removes that
+fragment from browser history. Project APIs require the token and exact loopback
+host, and reject any non-exact browser `Origin`; the token is never stored in
+cookies or local storage. Stop the session with Ctrl-C.
 
 ## What your agent can ask
 

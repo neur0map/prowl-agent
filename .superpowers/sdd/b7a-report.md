@@ -67,3 +67,8 @@ Concerns: none.
 - `cd web && npm run typecheck` passed.
 
 Remediation concerns: none.
+
+### Source preview bound
+
+- RED: `cd web && npm test -- --run src/features/explore/ExplorePage.test.tsx` failed because a source anchor from line 8 through 1000 generated an unbounded `line_end=1000` hash.
+- GREEN: `sourceLink` keeps the original `SourceTarget` reference and clamps only the preview hash end to `line_start + 399`, matching the local `maxSourcePreviewLines = 400` compatibility constant for `internal/workbench.MaxSourcePreviewLines`.

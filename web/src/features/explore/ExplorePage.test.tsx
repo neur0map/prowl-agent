@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/preact'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ExplorePage } from './ExplorePage'
-import type { Explore } from '../../transport/contracts'
+import { sourceLink, type Explore } from '../../transport/contracts'
 
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
 vi.mock('../../transport/api', () => ({ apiFetch }))
@@ -63,6 +63,14 @@ describe('ExplorePage', () => {
     expect(document.activeElement).toBe(link)
     link.click()
     await waitFor(() => expect(window.location.hash).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20'))
+  })
+
+  it('bounds source navigation to the maximum source preview range', () => {
+    const anchor = { path: 'internal/auth/service.go', line_start: 8, line_end: 1_000 }
+    const link = sourceLink(anchor)
+
+    expect(link.target).toBe(anchor)
+    expect(link.href).toBe('#/source?path=internal%2Fauth%2Fservice.go&line_start=8&line_end=407')
   })
 
   it('treats malformed rendered explore data as unavailable', async () => {

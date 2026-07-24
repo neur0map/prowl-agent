@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -81,6 +82,9 @@ func TestLoadContextBoundsAndValidatesConfigInput(t *testing.T) {
 	})
 
 	t.Run("special file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows has no POSIX FIFO contract")
+		}
 		if _, err := exec.LookPath("mkfifo"); err != nil {
 			t.Skip("mkfifo unavailable")
 		}

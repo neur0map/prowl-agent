@@ -15,6 +15,12 @@ $got = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash.ToLowerInvaria
 if ($want -ne $got) { throw 'release checksum mismatch' }
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("prowl-release-smoke-" + [guid]::NewGuid())
+$previousXdgCacheHome = $env:XDG_CACHE_HOME
+$previousXdgConfigHome = $env:XDG_CONFIG_HOME
+$previousXdgStateHome = $env:XDG_STATE_HOME
+$env:XDG_CACHE_HOME = Join-Path $tmp 'cache'
+$env:XDG_CONFIG_HOME = Join-Path $tmp 'config'
+$env:XDG_STATE_HOME = Join-Path $tmp 'state'
 $project = Join-Path $tmp 'project'
 try {
     New-Item -ItemType Directory -Force -Path (Join-Path $project '.cursor') | Out-Null
@@ -50,6 +56,9 @@ try {
         Pop-Location
     }
 } finally {
+    $env:XDG_CACHE_HOME = $previousXdgCacheHome
+    $env:XDG_CONFIG_HOME = $previousXdgConfigHome
+    $env:XDG_STATE_HOME = $previousXdgStateHome
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
 

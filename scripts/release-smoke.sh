@@ -22,6 +22,9 @@ fi
 [ "$want" = "$got" ] || { echo "release checksum mismatch" >&2; exit 1; }
 
 tmp=$(mktemp -d)
+export XDG_CACHE_HOME="$tmp/cache"
+export XDG_CONFIG_HOME="$tmp/config"
+export XDG_STATE_HOME="$tmp/state"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 project="$tmp/project"
 mkdir -p "$project/.cursor"

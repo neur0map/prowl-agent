@@ -81,6 +81,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install SQLite development headers
+        shell: pwsh
+        run: |
+          & C:\vcpkg\vcpkg.exe install sqlite3:x64-windows
+          "CGO_CFLAGS=-IC:\vcpkg\installed\x64-windows\include" >> $env:GITHUB_ENV
+
 
       - name: Test
         shell: pwsh

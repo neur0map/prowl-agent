@@ -14,7 +14,7 @@ func TestHandlerServesShellButKeepsAPIBearerProtected(t *testing.T) {
 		"dist/assets/app-abc123.js": {Data: []byte("console.log('prowl')")},
 	}
 	handler, err := NewHandler(HandlerOptions{
-		API:    APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117"},
+		API:    APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"},
 		Assets: assets,
 	})
 	if err != nil {
@@ -65,9 +65,7 @@ func TestHandlerServesShellButKeepsAPIBearerProtected(t *testing.T) {
 }
 
 func TestHandlerRejectsMissingAssetTree(t *testing.T) {
-	_, err := NewHandler(HandlerOptions{API: APIOptions{
-		Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117",
-	}, Assets: fs.FS(fstest.MapFS{})})
+	_, err := NewHandler(HandlerOptions{API: APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"}, Assets: fs.FS(fstest.MapFS{})})
 	if err == nil {
 		t.Fatal("expected missing dist tree to fail")
 	}

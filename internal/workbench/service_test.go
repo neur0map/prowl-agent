@@ -278,7 +278,7 @@ func TestBriefRejectsMalformedDerivedStoreDataWithoutReflection(t *testing.T) {
 				t.Fatalf("error=%v want invalid derived data", err)
 			}
 
-			handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+			handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -317,7 +317,7 @@ func TestBriefIdentifierValidationRejectsPathAliasesWithoutAPIReflection(t *test
 				if err != nil {
 					t.Fatal(err)
 				}
-				handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+				handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
 				if err != nil {
 					t.Fatal(err)
 				}

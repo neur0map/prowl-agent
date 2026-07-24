@@ -9,13 +9,28 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestAPISecurityRequiresBearerAndRejectsForeignOrigin(t *testing.T) {
-	handler, err := NewAPI(APIOptions{
-		Token:         "test-secret",
-		AllowedOrigin: "http://127.0.0.1:43117",
+func testBootstrap(t *testing.T) *BootstrapAuthority {
+	t.Helper()
+	values := []string{"test-bootstrap-nonce", "test-secret"}
+	authority, nonce, err := newBootstrapAuthority(time.Now, time.Minute, func() (string, error) {
+		value := values[0]
+		values = values[1:]
+		return value, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.consume(nonce); err != nil {
+		t.Fatal(err)
+	}
+	return authority
+}
+
+func TestAPISecurityRequiresBearerAndRejectsForeignOrigin(t *testing.T) {
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +74,7 @@ func TestAPISecurityRequiresBearerAndRejectsForeignOrigin(t *testing.T) {
 }
 
 func TestAPISecurityRejectsCrossSiteFetchAndSetsSecurityHeaders(t *testing.T) {
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117"})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,14 +110,15 @@ func TestAPISecurityRejectsCrossSiteFetchAndSetsSecurityHeaders(t *testing.T) {
 }
 
 func TestAPISecurityRejectsUnsafeConfiguration(t *testing.T) {
+	bootstrap := testBootstrap(t)
 	tests := []APIOptions{
 		{AllowedOrigin: "http://127.0.0.1:43117"},
-		{Token: "secret", AllowedOrigin: "http://localhost:43117"},
-		{Token: "secret", AllowedOrigin: "http://0.0.0.0:43117"},
-		{Token: "secret", AllowedOrigin: "https://127.0.0.1:43117"},
-		{Token: "secret", AllowedOrigin: "http://127.0.0.1:43117/path"},
-		{Token: "secret", AllowedOrigin: "http://127.0.0.1:43117?query=yes"},
-		{Token: "secret", AllowedOrigin: "http://user@127.0.0.1:43117"},
+		{Bootstrap: bootstrap, AllowedOrigin: "http://localhost:43117"},
+		{Bootstrap: bootstrap, AllowedOrigin: "http://0.0.0.0:43117"},
+		{Bootstrap: bootstrap, AllowedOrigin: "https://127.0.0.1:43117"},
+		{Bootstrap: bootstrap, AllowedOrigin: "http://127.0.0.1:43117/path"},
+		{Bootstrap: bootstrap, AllowedOrigin: "http://127.0.0.1:43117?query=yes"},
+		{Bootstrap: bootstrap, AllowedOrigin: "http://user@127.0.0.1:43117"},
 	}
 	for _, options := range tests {
 		if _, err := NewAPI(options); err == nil {
@@ -117,7 +133,7 @@ func TestAPIEnvelopeHealthUsesStableRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +179,7 @@ func TestAPIEnvelopeHealthReportsUnavailableProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +213,7 @@ func TestAPIProjectionErrorsPreserveKnownVersionAndRouteSemantics(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(project.Workspace.Knowledge, "broken.md"), []byte("not valid OKF"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +244,7 @@ func TestAPIEnvelopeBriefSuccessAndStableErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +302,7 @@ func TestAPIEnvelopeBriefSuccessAndStableErrors(t *testing.T) {
 }
 
 func TestAPIEnvelopeGeneratesDistinctRequestIDs(t *testing.T) {
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117"})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +323,7 @@ func TestAPIEnvelopeGeneratesDistinctRequestIDs(t *testing.T) {
 }
 
 func TestAPIAllFailuresUseStableBoundedEnvelope(t *testing.T) {
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117"})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +374,7 @@ func TestAPIAllFailuresUseStableBoundedEnvelope(t *testing.T) {
 
 func TestAPIRequestIDRejectsMalformedAndEntropyFailureStaysUnique(t *testing.T) {
 	generator := func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
-	handler, err := NewAPI(APIOptions{Token: "test-secret", AllowedOrigin: "http://127.0.0.1:43117", RequestIDGenerator: generator})
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", RequestIDGenerator: generator})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ func ListenLoopback(port int) (net.Listener, error) {
 	return net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
 }
 
-// NewBearerToken returns 256 bits of cryptographic entropy encoded for URLs.
+// NewBearerToken returns 256 bits of cryptographic entropy for an in-memory workbench credential.
 func NewBearerToken() (string, error) {
 	value := make([]byte, 32)
 	if _, err := rand.Read(value); err != nil {

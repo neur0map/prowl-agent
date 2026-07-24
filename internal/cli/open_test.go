@@ -3,8 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,13 +27,17 @@ import (
 func TestOpenCommandServesEmbeddedShellWithoutBrowser(t *testing.T) {
 	var launched []string
 	var served bool
+	var handoffURL string
 	dependencies := openDependencies{
 		listen: workbench.ListenLoopback,
-		token:  func() (string, error) { return "ephemeral-test-token", nil },
-		assets: fs.FS(workbenchweb.Assets),
+		assets: workbenchweb.Assets,
 		openURL: func(target string) error {
 			launched = append(launched, target)
 			return nil
+		},
+		writeHandoff: func(target string) (string, error) {
+			handoffURL = target
+			return filepath.Join(t.TempDir(), "bootstrap-url"), nil
 		},
 		serve: func(_ context.Context, listener net.Listener, handler http.Handler) error {
 			served = true
@@ -65,8 +69,22 @@ func TestOpenCommandServesEmbeddedShellWithoutBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Query().Encode() != "" || parsed.Fragment != "token=ephemeral-test-token" {
-		t.Fatalf("unsafe launch URL %q", address)
+	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Query().Encode() != "" || parsed.Fragment != "" {
+		t.Fatalf("redacted launch URL %q", address)
+	}
+	if strings.Contains(output.String(), "nonce=") || handoffURL == "" {
+		t.Fatalf("stdout=%q handoff=%q", output.String(), handoffURL)
+	}
+	handoff, err := url.Parse(handoffURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := url.ParseQuery(handoff.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonce := params.Get("nonce"); len(nonce) != 43 {
+		t.Fatalf("handoff URL=%q does not contain a 256-bit nonce", handoffURL)
 	}
 }
 
@@ -74,7 +92,6 @@ func TestOpenCommandLaunchesBrowserByDefault(t *testing.T) {
 	var launched string
 	command := newOpenCmd(openDependencies{
 		listen: workbench.ListenLoopback,
-		token:  func() (string, error) { return "browser-token", nil },
 		assets: workbenchweb.Assets,
 		openURL: func(target string) error {
 			launched = target
@@ -82,12 +99,103 @@ func TestOpenCommandLaunchesBrowserByDefault(t *testing.T) {
 		},
 		serve: func(context.Context, net.Listener, http.Handler) error { return nil },
 	})
-	command.SetOut(&bytes.Buffer{})
+	var output bytes.Buffer
+	command.SetOut(&output)
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(launched, "/#token=browser-token") {
-		t.Fatalf("browser URL=%q", launched)
+	parsed, err := url.Parse(launched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragment, err := url.ParseQuery(parsed.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonce := fragment.Get("nonce"); len(nonce) != 43 {
+		t.Fatalf("browser URL=%q does not contain a 256-bit nonce", launched)
+	}
+	if strings.Contains(output.String(), "nonce=") {
+		t.Fatalf("automatic launch leaked bootstrap nonce to stdout: %q", output.String())
+	}
+}
+
+func TestOpenCommandRevealURLRequiresInteractiveTerminal(t *testing.T) {
+	command := newOpenCmd(openDependencies{
+		interactive: func() bool { return false },
+		listen: func(int) (net.Listener, error) {
+			t.Fatal("listener opened for a non-interactive reveal")
+			return nil, nil
+		},
+	})
+	var output, errors bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&errors)
+	command.SetArgs([]string{"--no-browser", "--reveal-url"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+		t.Fatalf("error=%v want interactive terminal requirement", err)
+	}
+	if strings.Contains(output.String(), "nonce=") || strings.Contains(errors.String(), "nonce=") {
+		t.Fatalf("non-interactive reveal leaked a nonce: stdout=%q stderr=%q", output.String(), errors.String())
+	}
+}
+
+func TestOpenCommandRevealsURLOnlyToInteractiveTerminal(t *testing.T) {
+	command := newOpenCmd(openDependencies{
+		interactive: func() bool { return true },
+		listen:      workbench.ListenLoopback,
+		assets:      workbenchweb.Assets,
+		openURL:     func(string) error { return nil },
+		writeHandoff: func(string) (string, error) {
+			t.Fatal("interactive reveal wrote a handoff file")
+			return "", nil
+		},
+		serve: func(context.Context, net.Listener, http.Handler) error { return nil },
+	})
+	var output, errors bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&errors)
+	command.SetArgs([]string{"--no-browser", "--reveal-url"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	revealed := strings.TrimSpace(strings.TrimPrefix(errors.String(), "Prowl Workbench bootstrap URL: "))
+	parsed, err := url.Parse(revealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragment, err := url.ParseQuery(parsed.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonce := fragment.Get("nonce"); len(nonce) != 43 {
+		t.Fatalf("revealed URL=%q does not contain a 256-bit nonce", revealed)
+	}
+	if strings.Contains(output.String(), "nonce=") {
+		t.Fatalf("interactive reveal leaked a nonce to stdout: %q", output.String())
+	}
+}
+
+func TestWriteBootstrapHandoffUsesPrivatePermissions(t *testing.T) {
+	target := "http://127.0.0.1:43117/#nonce=" + strings.Repeat("n", 43)
+	path, err := writeBootstrapHandoff(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("handoff mode=%#o want 0600", info.Mode().Perm())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != target+"\n" {
+		t.Fatalf("handoff body=%q want %q", body, target+"\\n")
 	}
 }
 
@@ -100,20 +208,26 @@ func TestOpenCommandInjectsProjectServiceAndClosesOwnedResourcesOnce(t *testing.
 	}
 	listener := &countingListener{Listener: base}
 	var projectCloses atomic.Int32
+	var nonce string
 	dependencies := openDependencies{
 		openProject: func(context.Context) (*application.Project, error) { return project, nil },
 		closeProject: func(project *application.Project) error {
 			projectCloses.Add(1)
 			return project.Close()
 		},
-		listen:  func(int) (net.Listener, error) { return listener, nil },
-		token:   func() (string, error) { return "real-service-token", nil },
+		listen: func(int) (net.Listener, error) { return listener, nil },
+		bootstrap: func() (*workbench.BootstrapAuthority, string, error) {
+			authority, issued, err := workbench.NewBootstrapAuthority()
+			nonce = issued
+			return authority, issued, err
+		},
 		assets:  workbenchweb.Assets,
 		openURL: func(string) error { return nil },
 		serve: func(_ context.Context, owned net.Listener, handler http.Handler) error {
+			bearer := bootstrapBearer(t, handler, owned.Addr().String(), nonce)
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 			request.Host = owned.Addr().String()
-			request.Header.Set("Authorization", "Bearer real-service-token")
+			request.Header.Set("Authorization", "Bearer "+bearer)
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ok"`) {
@@ -146,7 +260,6 @@ func TestOpenCommandStartupFailureDoesNotListen(t *testing.T) {
 			listens.Add(1)
 			return nil, errors.New("unexpected listen")
 		},
-		token:   func() (string, error) { return "unused", nil },
 		assets:  workbenchweb.Assets,
 		openURL: func(string) error { return nil },
 		serve:   func(context.Context, net.Listener, http.Handler) error { return nil },
@@ -169,15 +282,17 @@ func TestOpenCommandClosesProjectWhenLaterSetupFails(t *testing.T) {
 			closes.Add(1)
 			return project.Close()
 		},
-		token: func() (string, error) { return "", errors.New("token failed") },
+		bootstrap: func() (*workbench.BootstrapAuthority, string, error) {
+			return nil, "", errors.New("bootstrap failed")
+		},
 		listen: func(int) (net.Listener, error) {
-			t.Fatal("listen called after token failure")
+			t.Fatal("listen called after bootstrap failure")
 			return nil, nil
 		},
 		assets: workbenchweb.Assets,
 	})
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "token failed") {
-		t.Fatalf("error=%v want token failure", err)
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "bootstrap failed") {
+		t.Fatalf("error=%v want bootstrap failure", err)
 	}
 	if closes.Load() != 1 {
 		t.Fatalf("project closes=%d want 1", closes.Load())
@@ -240,6 +355,29 @@ func TestBrowserLauncherHelper(t *testing.T) {
 		return
 	}
 	os.Exit(0)
+}
+
+func bootstrapBearer(t *testing.T, handler http.Handler, address, nonce string) string {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap", bytes.NewBufferString(`{"nonce":"`+nonce+`"}`))
+	request.Host = address
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://"+address)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%q", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Bearer string `json:"bearer"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Bearer) != 43 {
+		t.Fatalf("bootstrap bearer=%q", payload.Bearer)
+	}
+	return payload.Bearer
 }
 
 type countingListener struct {

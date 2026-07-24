@@ -2,32 +2,65 @@ let bearerToken: string | null = null
 
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/
 
-export function consumeLaunchToken(
-  location: Location = window.location,
-  history: History = window.history,
-): string | null {
-  if (!location.hash.startsWith('#token=')) return bearerToken
-
-  const params = new URLSearchParams(location.hash.slice(1))
-  const token = params.get('token')
+function stripFragment(location: Location, history: History): void {
   history.replaceState(history.state, '', `${location.pathname}${location.search}`)
-  if (params.size !== 1 || token === null || !tokenPattern.test(token)) {
-    bearerToken = null
-    throw new Error('invalid workbench token')
-  }
-  bearerToken = token
-  return token
 }
 
-export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  if (!bearerToken) throw new Error('workbench session is not authenticated')
-  const target = new URL(path, window.location.origin)
-  if (!path.startsWith('/api/v1/') || path.startsWith('//') || target.origin !== window.location.origin || target.hash !== '') {
-    throw new Error('workbench bearer is restricted to the versioned same-origin API')
+function consumeBootstrapNonce(
+  location: Location = window.location,
+  history: History = window.history,
+): string {
+  const fragment = location.hash
+  stripFragment(location, history)
+  if (!fragment.startsWith('#nonce=')) {
+    throw new Error('invalid workbench bootstrap nonce')
   }
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', `Bearer ${bearerToken}`)
-  return fetch(`${target.pathname}${target.search}`, { ...init, headers })
+  const params = new URLSearchParams(fragment.slice(1))
+  const nonce = params.get('nonce')
+  if (params.size !== 1 || nonce === null || !tokenPattern.test(nonce)) {
+    throw new Error('invalid workbench bootstrap nonce')
+  }
+  return nonce
+}
+
+type BootstrapResponse = {
+  bearer: string
+}
+
+function isBootstrapResponse(payload: unknown, nonce: string): payload is BootstrapResponse {
+  return typeof payload === 'object'
+    && payload !== null
+    && 'bearer' in payload
+    && typeof payload.bearer === 'string'
+    && tokenPattern.test(payload.bearer)
+    && payload.bearer !== nonce
+}
+
+export async function bootstrapWorkbenchSession(
+  location: Location = window.location,
+  history: History = window.history,
+): Promise<void> {
+  if (bearerToken !== null) return
+  const nonce = consumeBootstrapNonce(location, history)
+  const response = await fetch('/api/v1/auth/bootstrap', {
+    body: JSON.stringify({ nonce }),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+    redirect: 'error',
+  })
+  if (!response.ok) {
+    throw new Error('workbench bootstrap was denied')
+  }
+  const payload: unknown = await response.json()
+  if (!isBootstrapResponse(payload, nonce)) {
+    throw new Error('invalid workbench bootstrap response')
+  }
+  bearerToken = payload.bearer
+}
+
+export function authenticatedBearer(): string {
+  if (bearerToken === null) throw new Error('workbench session is not authenticated')
+  return bearerToken
 }
 
 export function resetBearerForTests(): void {

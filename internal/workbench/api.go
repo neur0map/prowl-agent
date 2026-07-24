@@ -4,7 +4,6 @@ package workbench
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,11 +21,12 @@ const (
 	MaxRequestIDBytes     = 128
 	MaxErrorResponseBytes = 4096
 	unavailableVersion    = "unavailable"
+	bootstrapRoute        = "/api/v1/auth/bootstrap"
 )
 
 // APIOptions defines the browser security boundary for the local API.
 type APIOptions struct {
-	Token              string
+	Bootstrap          *BootstrapAuthority
 	AllowedOrigin      string
 	Service            *Service
 	RequestIDGenerator func([]byte) (int, error)
@@ -37,8 +37,8 @@ var fallbackRequestID atomic.Uint64
 // NewAPI constructs the versioned workbench API. Network binding is handled by
 // the launcher; this handler independently enforces bearer and origin checks.
 func NewAPI(options APIOptions) (http.Handler, error) {
-	if options.Token == "" {
-		return nil, errors.New("workbench bearer token is required")
+	if options.Bootstrap == nil {
+		return nil, errors.New("workbench bootstrap authority is required")
 	}
 	origin, err := url.Parse(options.AllowedOrigin)
 	if err != nil || origin.Scheme != "http" || origin.Hostname() != "127.0.0.1" || origin.Port() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
@@ -50,6 +50,26 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 
 	routes := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
+		case bootstrapRoute:
+			if request.Method != http.MethodPost {
+				response.Header().Set("Allow", http.MethodPost)
+				writeError(response, request, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed", unavailableVersion)
+				return
+			}
+			var payload struct {
+				Nonce string `json:"nonce"`
+			}
+			decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 512))
+			if err := decoder.Decode(&payload); err != nil {
+				writeError(response, request, http.StatusUnauthorized, "bootstrap_denied", "bootstrap was denied", unavailableVersion)
+				return
+			}
+			bearer, err := options.Bootstrap.consume(payload.Nonce)
+			if err != nil {
+				writeError(response, request, http.StatusUnauthorized, "bootstrap_denied", "bootstrap was denied", unavailableVersion)
+				return
+			}
+			writeBootstrapSuccess(response, request, bearer)
 		case "/api/v1/health":
 			if request.Method != http.MethodGet {
 				response.Header().Set("Allow", http.MethodGet)
@@ -107,6 +127,15 @@ func writeSuccess(response http.ResponseWriter, request *http.Request, resourceV
 		writeErrorWithID(response, requestID, http.StatusInternalServerError, "response_unavailable", "response is unavailable", resourceVersion)
 		return
 	}
+	writeJSONBytes(response, requestID, http.StatusOK, append(encoded, '\n'))
+}
+
+func writeBootstrapSuccess(response http.ResponseWriter, request *http.Request, bearer string) {
+	requestID := responseRequestID(request)
+	payload := struct {
+		Bearer string `json:"bearer"`
+	}{Bearer: bearer}
+	encoded, _ := json.Marshal(payload)
 	writeJSONBytes(response, requestID, http.StatusOK, append(encoded, '\n'))
 }
 
@@ -204,9 +233,16 @@ func securityBoundary(next http.Handler, options APIOptions) http.Handler {
 			writeError(response, request, http.StatusForbidden, "forbidden", "request is forbidden", unavailableVersion)
 			return
 		}
-		provided := request.Header.Get("Authorization")
-		expected := "Bearer " + options.Token
-		if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+		if request.URL.Path == bootstrapRoute {
+			if request.Header.Get("Origin") != options.AllowedOrigin {
+				writeError(response, request, http.StatusForbidden, "forbidden", "request is forbidden", unavailableVersion)
+				return
+			}
+			ctx := context.WithValue(request.Context(), requestIDGeneratorKey{}, options.RequestIDGenerator)
+			next.ServeHTTP(response, request.WithContext(ctx))
+			return
+		}
+		if !options.Bootstrap.authorizes(request.Header.Get("Authorization")) {
 			response.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(response, request, http.StatusUnauthorized, "authentication_required", "authentication is required", unavailableVersion)
 			return

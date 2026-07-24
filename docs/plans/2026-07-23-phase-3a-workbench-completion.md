@@ -292,6 +292,8 @@ go test -race -tags sqlite_fts5 ./internal/knowledge ./internal/workbench -run '
 - Own `POST /api/v1/setup/apply`
 - Own `POST /api/v1/setup/verify`
 
+**Recorded prerequisite expansion:** existing integration mutation primitives live in `internal/cli/inject.go` and `internal/cli/inject_editor.go`. B5 moves their reusable implementation into `internal/setup` and changes the CLI entry points to call it, avoiding a `setup` → `cli` import cycle and a second mutation implementation. B6 remains the sole owner of `internal/workbench/api.go` route composition.
+
 **DTO/mutation ownership:** setup DTOs live in `internal/setup`. `apply` requires plan hash, expected project-config version, explicit approval, idempotency key, pre-write backup/rollback manifest, and post-apply verification. Responses report credential presence only. No setup operation writes before a reviewed plan.
 
 **RED/GREEN command:**

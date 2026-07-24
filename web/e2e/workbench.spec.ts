@@ -1,43 +1,82 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { once } from 'node:events'
+import { tmpdir } from 'node:os'
+import { createInterface } from 'node:readline'
+import { join, resolve } from 'node:path'
 
 const repository = resolve(import.meta.dirname, '..', '..')
-const binaryDir = resolve(repository, '.tmp')
-const binary = resolve(binaryDir, 'prowl-agent-workbench-e2e')
+let temporaryRoot = ''
+let project = ''
+let binary = ''
+let childEnvironment: NodeJS.ProcessEnv
 
 function readLine(process: ChildProcessWithoutNullStreams): Promise<string> {
-  return new Promise((resolveLine, reject) => {
-    let buffer = ''
-    const onData = (chunk: Buffer) => {
-      buffer += chunk.toString('utf8')
-      const newline = buffer.indexOf('\n')
-      if (newline < 0) return
-      process.stdout.off('data', onData)
-      resolveLine(buffer.slice(0, newline))
-    }
-    process.stdout.on('data', onData)
-    process.once('error', reject)
-    process.once('exit', (code) => reject(new Error(`workbench exited before startup (code ${code})`)))
+  const output = createInterface({ input: process.stdout, crlfDelay: Infinity })
+  const controller = new AbortController()
+  let stderr = ''
+  const onStderr = (chunk: Buffer) => {
+    stderr += chunk.toString('utf8')
+  }
+  process.stderr.on('data', onStderr)
+
+  const firstLine = once(output, 'line', { signal: controller.signal }).then(([line]) => {
+    if (typeof line !== 'string') throw new Error('workbench emitted a non-text startup line')
+    return line
+  })
+  const exit = once(process, 'exit', { signal: controller.signal }).then(([code]) => {
+    throw new Error(`workbench exited before startup (code ${code}): ${stderr.trim()}`)
+  })
+
+  return Promise.race([firstLine, exit]).finally(() => {
+    controller.abort()
+    output.close()
+    process.stderr.off('data', onStderr)
   })
 }
 
 test.beforeAll(() => {
-  mkdirSync(binaryDir, { recursive: true })
-  const result = spawnSync('go', ['build', '-tags', 'sqlite_fts5', '-o', binary, './cmd/prowl-agent'], {
+  temporaryRoot = mkdtempSync(join(tmpdir(), 'prowl-workbench-e2e-'))
+  project = join(temporaryRoot, 'project')
+  binary = join(temporaryRoot, 'prowl-agent-workbench-e2e')
+  childEnvironment = {
+    ...process.env,
+    XDG_CACHE_HOME: join(temporaryRoot, 'cache'),
+    XDG_CONFIG_HOME: join(temporaryRoot, 'config'),
+    XDG_STATE_HOME: join(temporaryRoot, 'state'),
+  }
+  mkdirSync(project)
+  writeFileSync(join(project, 'README.md'), '# Workbench test project\n')
+
+  const build = spawnSync('go', ['build', '-tags', 'sqlite_fts5', '-o', binary, './cmd/prowl-agent'], {
     cwd: repository,
     encoding: 'utf8',
   })
-  if (result.status !== 0) throw new Error(`Go build failed:\n${result.stdout}\n${result.stderr}`)
+  if (build.status !== 0) throw new Error(`Go build failed:\n${build.stdout}\n${build.stderr}`)
+
+  // The first initialization writes Prowl's ignored metadata rule after the
+  // index transaction; repeat it so the fixture starts from a current snapshot.
+  for (let pass = 1; pass <= 2; pass += 1) {
+    const init = spawnSync(binary, ['init', '--no-ai', '--no-input'], {
+      cwd: project,
+      encoding: 'utf8',
+      env: childEnvironment,
+    })
+    if (init.status !== 0) throw new Error(`Prowl initialization pass ${pass} failed:\n${init.stdout}\n${init.stderr}`)
+  }
+})
+
+test.afterAll(() => {
+  if (temporaryRoot) rmSync(temporaryRoot, { force: true, recursive: true })
 })
 
 test('compiled workbench is secure, accessible, and usable without network services', async ({ page, request }) => {
   const process = spawn(binary, ['open', '--no-browser', '--port', '0'], {
-    cwd: repository,
+    cwd: project,
     stdio: ['pipe', 'pipe', 'pipe'],
+    env: childEnvironment,
   })
   try {
     const startup = await readLine(process)
@@ -69,7 +108,12 @@ test('compiled workbench is secure, accessible, and usable without network servi
       headers: { Authorization: `Bearer ${token}` },
     })
     expect(health.status()).toBe(200)
-    expect(await health.json()).toEqual({ api_version: 'v1', status: 'ok' })
+    const healthBody = await health.json()
+    expect(healthBody.data).toEqual({ api_version: 'v1', status: 'ok' })
+    expect(healthBody.meta).toMatchObject({
+      request_id: expect.stringMatching(/\S+/),
+      resource_version: expect.stringMatching(/\S+/),
+    })
 
     const accessibility = await new AxeBuilder({ page }).analyze()
     expect(accessibility.violations).toEqual([])

@@ -25,6 +25,90 @@ var alwaysSkipDirs = map[string]bool{
 	".omp": true, ".factory": true,
 }
 
+// sourceCandidate is an accepted regular source file. Bounded walks keep the
+// validated descriptor open so inspection cannot re-open a different target.
+type sourceCandidate struct {
+	path string
+	file *os.File
+}
+
+func (candidate sourceCandidate) close() {
+	if candidate.file != nil {
+		_ = candidate.file.Close()
+	}
+}
+
+func canonicalSourceRoot(root string) (string, error) {
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolute)
+}
+
+func isWithinSourceRoot(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
+func isSymlinkEntry(entry fs.DirEntry) bool {
+	if entry.Type()&fs.ModeSymlink != 0 {
+		return true
+	}
+	info, err := entry.Info()
+	return err == nil && info.Mode()&fs.ModeSymlink != 0
+}
+
+func classifySourceCandidate(root, canonicalRoot, rel string, entry fs.DirEntry) (sourceCandidate, bool, error) {
+	info, err := entry.Info()
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return sourceCandidate{}, false, nil
+		}
+		return sourceCandidate{}, false, err
+	}
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if info.Mode()&fs.ModeSymlink != 0 {
+		path, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			// A dangling or otherwise unresolved link cannot be a source file.
+			return sourceCandidate{}, false, nil
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return sourceCandidate{}, false, err
+		}
+		if !isWithinSourceRoot(canonicalRoot, path) {
+			return sourceCandidate{}, false, nil
+		}
+		info, err = os.Stat(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return sourceCandidate{}, false, nil
+			}
+			return sourceCandidate{}, false, err
+		}
+	}
+	if !info.Mode().IsRegular() {
+		return sourceCandidate{}, false, nil
+	}
+	return sourceCandidate{path: path}, true, nil
+}
+
+func classifyPinnedSourceCandidate(root *os.Root, rel string, entry fs.DirEntry) (sourceCandidate, bool, error) {
+	file, err := boundedio.OpenRegular(root, rel)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, boundedio.ErrNonRegular) || isSymlinkEntry(entry) {
+			return sourceCandidate{}, false, nil
+		}
+		return sourceCandidate{}, false, err
+	}
+	return sourceCandidate{file: file}, true, nil
+}
+
 // walkFilesContext invokes fn for each non-ignored file under root, honoring .gitignore
 // (the root one and every nested one, each scoped to its own directory) and
 // extra ignore globs, and always skipping .prowl/, .git/, node_modules/.
@@ -61,11 +145,33 @@ func walkFilesContext(ctx context.Context, root string, ignore []string, fn func
 	})
 }
 
-// walkFilesCandidateLimitContext uses the same ignore policy as walkFilesContext
-// but reads directory entries in bounded batches so a single huge directory
-// cannot postpone cancellation by forcing filepath.WalkDir to load and sort it.
-// The max+1 candidate is rejected before fn can stat or hash it.
-func walkFilesCandidateLimitContext(ctx context.Context, root *os.Root, ignore []string, maxCandidates int, fn func(rel string, d fs.DirEntry) error) error {
+// walkSourceFilesContext applies the source-candidate contract to the
+// unbounded legacy traversal: only regular files inside the resolved root reach
+// fn.
+func walkSourceFilesContext(ctx context.Context, root string, ignore []string, fn func(rel string, d fs.DirEntry, candidate sourceCandidate) error) error {
+	canonicalRoot, err := canonicalSourceRoot(root)
+	if err != nil {
+		return err
+	}
+	return walkFilesContext(ctx, root, ignore, func(rel string, entry fs.DirEntry) error {
+		candidate, accepted, err := classifySourceCandidate(root, canonicalRoot, rel, entry)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return nil
+		}
+		defer candidate.close()
+		return fn(rel, entry, candidate)
+	})
+}
+
+// walkSourceFilesCandidateLimitContext applies the same source-candidate
+// contract through a pinned root. It reads directory entries in bounded batches
+// so a single huge directory cannot postpone cancellation by forcing
+// filepath.WalkDir to load and sort it. The max+1 accepted candidate is rejected
+// before inspection or hashing.
+func walkSourceFilesCandidateLimitContext(ctx context.Context, root *os.Root, ignore []string, maxCandidates int, fn func(rel string, d fs.DirEntry, candidate sourceCandidate) error) error {
 	rootPatterns, err := loadPinnedGitignore(ctx, root, "")
 	if err != nil {
 		return err
@@ -115,11 +221,21 @@ func walkFilesCandidateLimitContext(ctx context.Context, root *os.Root, ignore [
 				if ignoredBy(gitignores, ignore, rel, false) {
 					continue
 				}
+				candidate, accepted, err := classifyPinnedSourceCandidate(root, rel, entry)
+				if err != nil {
+					return err
+				}
+				if !accepted {
+					continue
+				}
 				candidates++
 				if candidates > maxCandidates {
+					candidate.close()
 					return CandidateLimitError{Limit: maxCandidates}
 				}
-				if err := fn(rel, entry); err != nil {
+				err = fn(rel, entry, candidate)
+				candidate.close()
+				if err != nil {
 					return err
 				}
 			}
@@ -179,7 +295,7 @@ func Walk(root string, ignore []string) ([]string, error) {
 // WalkContext is Walk with cancellation checks during directory traversal.
 func WalkContext(ctx context.Context, root string, ignore []string) ([]string, error) {
 	var out []string
-	err := walkFilesContext(ctx, root, ignore, func(rel string, _ fs.DirEntry) error {
+	err := walkSourceFilesContext(ctx, root, ignore, func(rel string, _ fs.DirEntry, _ sourceCandidate) error {
 		out = append(out, rel)
 		return nil
 	})
@@ -238,33 +354,22 @@ func sourceSnapshotWithOptionsContext(ctx context.Context, root string, opt Opti
 	return sourceSnapshotWithOptionsInspectContext(ctx, root, opt, maxCandidates, snapshotCandidateEntry)
 }
 
-type snapshotCandidateInspector func(context.Context, *os.Root, string, string, fs.DirEntry) (string, error)
+type snapshotCandidateInspector func(context.Context, sourceCandidate, string, fs.DirEntry) (string, error)
 
-func snapshotCandidateEntry(ctx context.Context, pinned *os.Root, root, rel string, d fs.DirEntry) (string, error) {
-	if pinned == nil {
-		info, err := d.Info()
-		if err != nil {
-			return "", err
-		}
-		content, err := fileSignature(ctx, filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("%s\x00%d\x00%d\x00%x", rel, info.Size(), info.ModTime().UnixNano(), content), nil
-	}
-	file, err := boundedio.OpenRegular(pinned, rel)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
+func snapshotCandidateEntry(ctx context.Context, candidate sourceCandidate, rel string, d fs.DirEntry) (string, error) {
 	// Preserve the canonical snapshot contract: DirEntry.Info describes the
 	// directory entry itself (including symlink metadata), while content is
-	// hashed through the pinned, validated target descriptor.
+	// hashed through a validated source target.
 	info, err := d.Info()
 	if err != nil {
 		return "", err
 	}
-	content, err := fileDescriptorSignature(ctx, file)
+	var content uint64
+	if candidate.file == nil {
+		content, err = fileSignature(ctx, candidate.path)
+	} else {
+		content, err = fileDescriptorSignature(ctx, candidate.file)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -275,8 +380,8 @@ func sourceSnapshotWithOptionsInspectContext(ctx context.Context, root string, o
 	var entries []string
 	var paths []string
 	var pinned *os.Root
-	inspectCandidate := func(rel string, d fs.DirEntry) error {
-		entry, err := inspect(ctx, pinned, root, rel, d)
+	inspectCandidate := func(rel string, d fs.DirEntry, candidate sourceCandidate) error {
+		entry, err := inspect(ctx, candidate, rel, d)
 		if err != nil {
 			return err
 		}
@@ -308,10 +413,10 @@ func sourceSnapshotWithOptionsInspectContext(ctx context.Context, root string, o
 			if !os.SameFile(rootInfo, pinnedInfo) {
 				return SourceSnapshot{}, errors.New("source root changed while opening bounded snapshot")
 			}
-			err = walkFilesCandidateLimitContext(ctx, pinned, opt.Ignore, maxCandidates, inspectCandidate)
+			err = walkSourceFilesCandidateLimitContext(ctx, pinned, opt.Ignore, maxCandidates, inspectCandidate)
 		}
 	} else {
-		err = walkFilesContext(ctx, root, opt.Ignore, inspectCandidate)
+		err = walkSourceFilesContext(ctx, root, opt.Ignore, inspectCandidate)
 	}
 	if err != nil {
 		return SourceSnapshot{}, err

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -409,7 +408,7 @@ func TestSourceSnapshotCandidateAfterLimitIsNotInspected(t *testing.T) {
 	}
 
 	inspected := 0
-	inspect := func(_ context.Context, _ *os.Root, _, rel string, _ os.DirEntry) (string, error) {
+	inspect := func(_ context.Context, _ sourceCandidate, rel string, _ os.DirEntry) (string, error) {
 		inspected++
 		if inspected > 2000 {
 			return "", errors.New("candidate 2001 was inspected")
@@ -426,7 +425,7 @@ func TestSourceSnapshotCandidateAfterLimitIsNotInspected(t *testing.T) {
 	}
 }
 
-func TestSourceSnapshotCandidateLimitRejectsFIFOWithoutBlocking(t *testing.T) {
+func TestSourceSnapshotCandidateLimitSkipsFIFOWithoutBlocking(t *testing.T) {
 	if _, err := exec.LookPath("mkfifo"); err != nil {
 		t.Skip("mkfifo unavailable")
 	}
@@ -435,12 +434,18 @@ func TestSourceSnapshotCandidateLimitRejectsFIFOWithoutBlocking(t *testing.T) {
 	if err := exec.Command("mkfifo", fifo).Run(); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "visible.go"), []byte("package fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := SourceSnapshotWithOptionsLimitContext(ctx, root, Options{}, 2000)
-	if !errors.Is(err, boundedio.ErrNonRegular) {
-		t.Fatalf("snapshot error = %v, want non-regular input", err)
+	snapshot, err := SourceSnapshotWithOptionsLimitContext(ctx, root, Options{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snapshot.Paths, []string{"visible.go"}) {
+		t.Fatalf("snapshot paths = %v, want [visible.go]", snapshot.Paths)
 	}
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("FIFO candidate blocked for %v", elapsed)
@@ -466,7 +471,7 @@ func TestSourceSnapshotCandidateLimitPinsRootAcrossRenameReplacement(t *testing.
 	}
 	moved := filepath.Join(parent, "project-moved")
 	swapped := false
-	inspect := func(ctx context.Context, pinned *os.Root, rootPath, rel string, entry os.DirEntry) (string, error) {
+	inspect := func(ctx context.Context, candidate sourceCandidate, rel string, entry os.DirEntry) (string, error) {
 		if !swapped {
 			swapped = true
 			if err := os.Rename(root, moved); err != nil {
@@ -476,7 +481,7 @@ func TestSourceSnapshotCandidateLimitPinsRootAcrossRenameReplacement(t *testing.
 				return "", err
 			}
 		}
-		return snapshotCandidateEntry(ctx, pinned, rootPath, rel, entry)
+		return snapshotCandidateEntry(ctx, candidate, rel, entry)
 	}
 	pinned, err := sourceSnapshotWithOptionsInspectContext(context.Background(), root, Options{}, 2000, inspect)
 	if err != nil {

@@ -1,0 +1,63 @@
+#!/bin/sh
+# Smoke-test a locally built or downloaded release binary without touching its source tree.
+set -eu
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <binary> <binary.sha256>" >&2
+  exit 2
+fi
+
+binary=$(CDPATH='' cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")
+checksum=$(CDPATH='' cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")
+
+[ -x "$binary" ] || { echo "release binary is not executable: $binary" >&2; exit 1; }
+[ -r "$checksum" ] || { echo "release checksum is not readable: $checksum" >&2; exit 1; }
+
+want=$(awk '{print $1}' "$checksum")
+if command -v sha256sum >/dev/null 2>&1; then
+  got=$(sha256sum "$binary" | awk '{print $1}')
+else
+  got=$(shasum -a 256 "$binary" | awk '{print $1}')
+fi
+[ "$want" = "$got" ] || { echo "release checksum mismatch" >&2; exit 1; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+project="$tmp/project"
+mkdir -p "$project/.cursor"
+printf 'package demo\n\nfunc Hello() string { return "hello" }\n' > "$project/main.go"
+printf '# Demo\n' > "$project/README.md"
+
+cd "$project"
+"$binary" init --dry-run --json --integrations cursor,agents > "$tmp/plan.json"
+python3 - "$tmp/plan.json" <<'PY'
+import json, pathlib, sys
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert payload['dry_run'] is True
+assert {action['integration'] for action in payload['plan']['actions']} == {'agents', 'cursor'}
+PY
+test ! -e .prowl
+
+"$binary" init --no-ai --no-input --json --integrations cursor,agents > "$tmp/init.json"
+python3 - "$tmp/init.json" <<'PY'
+import json, pathlib, sys
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert report['indexed']['Indexed'] == 2, report
+assert report['integrations'] == ['agents', 'cursor'], report
+PY
+test -f .cursor/mcp.json
+test -f AGENTS.md
+
+"$binary" overview --format json | python3 -m json.tool >/dev/null
+"$binary" status --json | python3 -m json.tool >/dev/null
+"$binary" update --help >/dev/null
+
+"$binary" init --remove-integrations --no-input --json --integrations cursor,agents > "$tmp/remove.json"
+test ! -e AGENTS.md
+python3 - <<'PY'
+import json, pathlib
+cfg = json.loads(pathlib.Path('.cursor/mcp.json').read_text())
+assert 'prowl-agent' not in cfg.get('mcpServers', {})
+PY
+
+echo "release smoke test passed"

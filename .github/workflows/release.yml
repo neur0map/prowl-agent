@@ -4,14 +4,33 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-unix:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-amd64
+            output: prowl-agent-linux-amd64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+            output: prowl-agent-linux-arm64
+          - runner: macos-13
+            target: darwin-amd64
+            output: prowl-agent-darwin-amd64
+          - runner: macos-14
+            target: darwin-arm64
+            output: prowl-agent-darwin-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -20,54 +39,125 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build (cgo + fts5)
-        env:
-          CGO_ENABLED: "1"
-        run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            ver="${GITHUB_REF_NAME}"
-          else
-            ver="$(git describe --tags --always --dirty 2>/dev/null || echo dev)-${GITHUB_SHA::7}"
-          fi
-          go build -tags sqlite_fts5 -trimpath \
-            -ldflags "-s -w -X main.version=${ver}" \
-            -o prowl-agent-linux-amd64 ./cmd/prowl-agent
-          ./prowl-agent-linux-amd64 --version
-
       - name: Test
         env:
           CGO_ENABLED: "1"
         run: go test -tags sqlite_fts5 ./...
 
-      - name: Checksum
-        run: sha256sum prowl-agent-linux-amd64 > prowl-agent-linux-amd64.sha256
+      - name: Build and smoke
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          OUTPUT: ${{ matrix.output }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)-${GITHUB_SHA::7}"
+          fi
+          go build -tags sqlite_fts5 -trimpath \
+            -ldflags "-s -w -X main.version=${version}" \
+            -o "$OUTPUT" ./cmd/prowl-agent
+          "./$OUTPUT" --version
+          shasum -a 256 "$OUTPUT" > "$OUTPUT.sha256"
+          scripts/release-smoke.sh "$OUTPUT" "$OUTPUT.sha256"
 
-      - name: Publish rolling release
-        if: github.ref == 'refs/heads/main'
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            ${{ matrix.output }}
+            ${{ matrix.output }}.sha256
+
+  build-windows:
+    name: windows-amd64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags sqlite_fts5 ./...
+
+      - name: Build and smoke
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          OUTPUT: prowl-agent-windows-amd64.exe
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $describe = git describe --tags --always --dirty 2>$null
+            if (-not $describe) { $describe = 'dev' }
+            $version = "$describe-$($env:GITHUB_SHA.Substring(0, 7))"
+          }
+          go build -tags sqlite_fts5 -trimpath `
+            -ldflags "-s -w -X main.version=$version" `
+            -o $env:OUTPUT ./cmd/prowl-agent
+          & (Join-Path $PWD $env:OUTPUT) --version
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:OUTPUT).Hash.ToLowerInvariant()
+          "$hash  $($env:OUTPUT)" | Set-Content -LiteralPath "$($env:OUTPUT).sha256" -NoNewline -Encoding ascii
+          & ./scripts/release-smoke.ps1 -Binary $env:OUTPUT -Checksum "$($env:OUTPUT).sha256"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          if-no-files-found: error
+          path: |
+            prowl-agent-windows-amd64.exe
+            prowl-agent-windows-amd64.exe.sha256
+
+  publish-nightly:
+    needs: [build-unix, build-windows]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release
+
+      - name: Publish nightly release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           name: Nightly (latest main)
           prerelease: true
-          files: |
-            prowl-agent-linux-amd64
-            prowl-agent-linux-amd64.sha256
+          make_latest: false
+          files: release/**/*
           body: >
-            Rolling Linux x86_64 build of prowl-agent from the latest `main`
-            (commit ${{ github.sha }}). Built with cgo; needs a recent glibc.
-            Verify with the included `.sha256`.
+            Rolling cross-platform build of prowl-agent from the latest main
+            commit (${{ github.sha }}). Verify every binary with its included
+            SHA-256 file.
+
+  publish-tag:
+    needs: [build-unix, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release
 
       - name: Publish versioned release
-        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           prerelease: false
-          files: |
-            prowl-agent-linux-amd64
-            prowl-agent-linux-amd64.sha256
+          files: release/**/*
           body: >
-            Linux x86_64 build of prowl-agent ${{ github.ref_name }}. Built with
-            cgo; needs a recent glibc. Verify with the included `.sha256`, or
-            install the latest with the one-line installer in the README.
+            Cross-platform build of prowl-agent ${{ github.ref_name }}. Verify
+            every binary with its included SHA-256 file.

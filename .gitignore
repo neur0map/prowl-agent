@@ -11,3 +11,6 @@
 
 # Local-only planning docs (spec/plan); never pushed.
 /docs/superpowers/
+
+# Isolated feature checkouts.
+/.worktrees/

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -143,6 +144,10 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 				return
 			}
 			writeSuccess(response, request, preview.resourceVersion, preview, MaxSourcePreviewResponseBytes)
+		case "/api/v1/context/search":
+			serveContextLens(response, request, options.Service, decodeContextSearchRequest, (*Service).ContextSearch)
+		case "/api/v1/context/get":
+			serveContextLens(response, request, options.Service, decodeContextGetRequest, (*Service).ContextGet)
 		default:
 			if strings.HasPrefix(request.URL.Path, "/api/v1/tours/") {
 				serveGuidedTour(response, request, options.Service)
@@ -180,6 +185,44 @@ func serveGuidedTour(response http.ResponseWriter, request *http.Request, servic
 		return
 	}
 	writeSuccess(response, request, tour.resourceVersion, tour, MaxExploreResponseBytes)
+}
+
+type contextRequestDecoder func(http.ResponseWriter, *http.Request) (contextpacket.Request, error)
+type contextLensOperation func(*Service, context.Context, contextpacket.Request) (ContextLens, error)
+
+func serveContextLens(response http.ResponseWriter, request *http.Request, service *Service, decode contextRequestDecoder, operation contextLensOperation) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		writeError(response, request, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed", unavailableVersion)
+		return
+	}
+	if service == nil {
+		writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "workbench service is unavailable", unavailableVersion)
+		return
+	}
+	contextRequest, err := decode(response, request)
+	if err != nil {
+		writeContextLensError(response, request, err)
+		return
+	}
+	lens, err := operation(service, request.Context(), contextRequest)
+	if err != nil {
+		writeContextLensError(response, request, err)
+		return
+	}
+	writeSuccess(response, request, lens.resourceVersion, lens, MaxContextLensResponseBytes)
+}
+
+func writeContextLensError(response http.ResponseWriter, request *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrContextRequestTooLarge):
+		writeError(response, request, http.StatusRequestEntityTooLarge, "request_too_large", "request exceeds bounds", unavailableVersion)
+	case errors.Is(err, ErrInvalidContextLensRequest):
+		writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", errorResourceVersion(err))
+	default:
+		status, code, message := projectionError(err, "context")
+		writeError(response, request, status, code, message, errorResourceVersion(err))
+	}
 }
 
 func parseSourcePreviewRequest(values url.Values) (SourcePreviewRequest, error) {

@@ -144,7 +144,7 @@ func openContextService(ctx context.Context) (*contextpacket.Service, func(), er
 
 func writeContextPacket(command *cobra.Command, packet contextpacket.Packet, asJSON bool) error {
 	if asJSON {
-		encoded, err := json.MarshalIndent(packet, "", "  ")
+		encoded, err := contextpacket.MarshalCanonicalProjection(packet)
 		if err != nil {
 			return err
 		}

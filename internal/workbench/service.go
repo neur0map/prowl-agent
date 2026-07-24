@@ -82,7 +82,7 @@ type Service struct {
 }
 
 func NewService(project *application.Project) (*Service, error) {
-	if project == nil || project.Workspace == nil || project.Store == nil || project.Query == nil || project.Knowledge == nil || project.Capabilities == nil || project.ReadGuard == nil {
+	if project == nil || project.Workspace == nil || project.Store == nil || project.Query == nil || project.Context == nil || project.Knowledge == nil || project.Capabilities == nil || project.ReadGuard == nil {
 		return nil, errors.New("complete application project is required")
 	}
 	return &Service{project: project}, nil

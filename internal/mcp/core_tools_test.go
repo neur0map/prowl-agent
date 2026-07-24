@@ -1,7 +1,9 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,5 +80,43 @@ func TestCoreToolsAreStructuredAndProposalRemainsReviewOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repository.Root, "decisions", "review.md")); !os.IsNotExist(err) {
 		t.Fatal("MCP proposal accepted canonical knowledge")
+	}
+}
+
+func TestContextLensParityMCP(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(filepath.Join(root, ".prowl", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repository := knowledge.NewRepository(filepath.Join(root, ".prowl", "knowledge"), okfv01.Codec{})
+	if err := repository.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	contextService := &contextpacket.Service{Store: database, Knowledge: repository, Root: root}
+	input := contextSearchIn{Query: "authentication boundary"}
+	raw, err := contextService.Search(contextpacket.Request{Question: input.Query, Mode: contextpacket.ModeCompact, BudgetTokens: 1800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := contextpacket.MarshalCanonicalProjection(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, packet, err := (&handlers{context: contextService}).searchContext(context.Background(), nil, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packet.TraceID != "" || bytes.Contains(encoded, []byte(`"trace_id"`)) || !bytes.Equal(encoded, want) {
+		t.Fatalf("MCP canonical packet differs:\n got: %s\nwant: %s", encoded, want)
 	}
 }

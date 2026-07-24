@@ -15,7 +15,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
-func TestContextCLIEmitsSharedPacket(t *testing.T) {
+func TestContextLensParityCLI(t *testing.T) {
 	root := t.TempDir()
 	_, err := workspace.Create(root)
 	if err != nil {
@@ -43,8 +43,8 @@ func TestContextCLIEmitsSharedPacket(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &packet); err != nil {
 		t.Fatalf("invalid packet JSON %q: %v", output.String(), err)
 	}
-	if len(packet.Items) != 1 || packet.Items[0].Citations[0].Path != filepath.ToSlash("context.go") || packet.TraceID == "" {
-		t.Fatalf("packet = %+v", packet)
+	if len(packet.Items) != 1 || packet.Items[0].Citations[0].Path != filepath.ToSlash("context.go") || packet.TraceID != "" || bytes.Contains(output.Bytes(), []byte(`"trace_id"`)) {
+		t.Fatalf("canonical packet = %+v output=%q", packet, output.String())
 	}
 	updated := "package fixture\n\n// beta newvalue proves the live source was refreshed\nfunc Context() {}\n"
 	if err := os.WriteFile(filepath.Join(root, "context.go"), []byte(updated), 0o644); err != nil {
@@ -76,7 +76,7 @@ func TestContextCLIEmitsSharedPacket(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &runs); err != nil || len(runs) != 2 {
 		t.Fatalf("trace JSON = %q err=%v", output.String(), err)
 	}
-	if runs[0].ID != packet.TraceID || runs[0].QueryHash == "" || bytes.Contains(output.Bytes(), []byte("bounded context")) {
+	if runs[0].ID == "" || runs[0].QueryHash == "" || bytes.Contains(output.Bytes(), []byte("bounded context")) {
 		t.Fatalf("unsafe trace output = %q", output.String())
 	}
 
@@ -85,6 +85,30 @@ func TestContextCLIEmitsSharedPacket(t *testing.T) {
 	command.SetArgs([]string{"bounded context", "--mode", "full", "--budget-tokens", "0"})
 	if err := command.Execute(); err == nil {
 		t.Fatal("unbounded full CLI request accepted")
+	}
+}
+
+func TestContextLensParityCLIEncoding(t *testing.T) {
+	packet := contextpacket.Packet{
+		SchemaVersion: contextpacket.PacketSchemaVersion,
+		Summary:       "Selected durable local evidence.",
+		Items:         []contextpacket.Item{},
+		Omitted:       map[string]int{},
+		Next:          []string{},
+		TraceID:       "volatile-trace-id",
+	}
+	want, err := contextpacket.MarshalCanonicalProjection(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := newContextSearchCmd()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err := writeContextPacket(command, packet, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := bytes.TrimSpace(output.Bytes()); !bytes.Equal(got, want) {
+		t.Fatalf("CLI canonical JSON differs:\n got: %s\nwant: %s", got, want)
 	}
 }
 

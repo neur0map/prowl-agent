@@ -67,7 +67,7 @@ type Packet struct {
 	Budget        Budget         `json:"budget"`
 	Omitted       map[string]int `json:"omitted"`
 	Next          []string       `json:"next"`
-	TraceID       string         `json:"trace_id"`
+	TraceID       string         `json:"trace_id,omitempty"`
 }
 
 // Validate rejects ambiguous or unbounded requests.

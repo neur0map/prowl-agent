@@ -86,6 +86,7 @@ func (h *handlers) searchContext(ctx context.Context, request *sdk.CallToolReque
 	if err == nil && in.Synthesize {
 		packet = synthesizePacket(ctx, request, packet)
 	}
+	packet = contextpacket.CanonicalProjection(packet)
 	return packetResourceLinks(packet), packet, err
 }
 
@@ -151,6 +152,7 @@ func (h *handlers) getContext(_ context.Context, _ *sdk.CallToolRequest, in cont
 		in.BudgetTokens = 1800
 	}
 	packet, err := h.context.Get(contextpacket.Request{IDs: in.IDs, Mode: mode, BudgetTokens: in.BudgetTokens, BudgetBytes: in.BudgetBytes})
+	packet = contextpacket.CanonicalProjection(packet)
 	return packetResourceLinks(packet), packet, err
 }
 

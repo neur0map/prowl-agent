@@ -9,6 +9,4 @@ if (!root) throw new Error('workbench root not found')
 
 void bootstrapWorkbenchSession()
   .then(() => render(<App />, root))
-  .catch(() => {
-    root.textContent = 'Unable to establish a secure workbench session.'
-  })
+  .catch(() => render(<App sessionError />, root))

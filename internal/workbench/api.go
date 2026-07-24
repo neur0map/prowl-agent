@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -104,11 +105,112 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 				return
 			}
 			writeSuccess(response, request, brief.resourceVersion, brief, MaxBriefResponseBytes)
+		case "/api/v1/explore":
+			if request.Method != http.MethodGet {
+				response.Header().Set("Allow", http.MethodGet)
+				writeError(response, request, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed", unavailableVersion)
+				return
+			}
+			if options.Service == nil {
+				writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "workbench service is unavailable", unavailableVersion)
+				return
+			}
+			explore, err := options.Service.Explore(request.Context())
+			if err != nil {
+				status, code, message := projectionError(err, "explore")
+				writeError(response, request, status, code, message, errorResourceVersion(err))
+				return
+			}
+			writeSuccess(response, request, explore.resourceVersion, explore, MaxExploreResponseBytes)
+		case "/api/v1/source":
+			if request.Method != http.MethodGet {
+				response.Header().Set("Allow", http.MethodGet)
+				writeError(response, request, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed", unavailableVersion)
+				return
+			}
+			if options.Service == nil {
+				writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "workbench service is unavailable", unavailableVersion)
+				return
+			}
+			sourceRequest, err := parseSourcePreviewRequest(request.URL.Query())
+			if err != nil {
+				writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
+				return
+			}
+			preview, err := options.Service.SourcePreview(request.Context(), sourceRequest)
+			if err != nil {
+				writeSourcePreviewError(response, request, err)
+				return
+			}
+			writeSuccess(response, request, preview.resourceVersion, preview, MaxSourcePreviewResponseBytes)
 		default:
+			if strings.HasPrefix(request.URL.Path, "/api/v1/tours/") {
+				serveGuidedTour(response, request, options.Service)
+				return
+			}
 			writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
 		}
 	})
 	return securityBoundary(routes, options), nil
+}
+
+func serveGuidedTour(response http.ResponseWriter, request *http.Request, service *Service) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		writeError(response, request, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed", unavailableVersion)
+		return
+	}
+	if service == nil {
+		writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "workbench service is unavailable", unavailableVersion)
+		return
+	}
+	id, err := url.PathUnescape(strings.TrimPrefix(request.URL.EscapedPath(), "/api/v1/tours/"))
+	if err != nil || id == "" {
+		writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
+		return
+	}
+	tour, err := service.GuidedTour(request.Context(), id)
+	if errors.Is(err, ErrTourNotFound) {
+		writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
+		return
+	}
+	if err != nil {
+		status, code, message := projectionError(err, "tour")
+		writeError(response, request, status, code, message, errorResourceVersion(err))
+		return
+	}
+	writeSuccess(response, request, tour.resourceVersion, tour, MaxExploreResponseBytes)
+}
+
+func parseSourcePreviewRequest(values url.Values) (SourcePreviewRequest, error) {
+	pathValues, starts, ends := values["path"], values["line_start"], values["line_end"]
+	if len(pathValues) != 1 || len(starts) != 1 || len(ends) != 1 {
+		return SourcePreviewRequest{}, ErrInvalidSourcePreview
+	}
+	lineStart, err := strconv.Atoi(starts[0])
+	if err != nil {
+		return SourcePreviewRequest{}, ErrInvalidSourcePreview
+	}
+	lineEnd, err := strconv.Atoi(ends[0])
+	if err != nil {
+		return SourcePreviewRequest{}, ErrInvalidSourcePreview
+	}
+	request := SourcePreviewRequest{Path: pathValues[0], LineStart: lineStart, LineEnd: lineEnd}
+	return request, request.validate()
+}
+
+func writeSourcePreviewError(response http.ResponseWriter, request *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrInvalidSourcePreview):
+		writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
+	case errors.Is(err, ErrSourceNotFound):
+		writeError(response, request, http.StatusNotFound, "source_not_found", "source is unavailable", unavailableVersion)
+	case errors.Is(err, ErrSourceTooLarge):
+		writeError(response, request, http.StatusRequestEntityTooLarge, "source_too_large", "source preview exceeds bounds", unavailableVersion)
+	default:
+		status, code, message := projectionError(err, "source")
+		writeError(response, request, status, code, message, errorResourceVersion(err))
+	}
 }
 
 type responseMeta struct {

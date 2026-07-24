@@ -148,7 +148,17 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 			serveContextLens(response, request, options.Service, decodeContextSearchRequest, (*Service).ContextSearch)
 		case "/api/v1/context/get":
 			serveContextLens(response, request, options.Service, decodeContextGetRequest, (*Service).ContextGet)
+		case "/api/v1/impact":
+			serveImpact(response, request, options.Service)
+		case "/api/v1/knowledge":
+			serveKnowledgeList(response, request, options.Service)
+		case "/api/v1/timeline":
+			serveTimeline(response, request, options.Service)
 		default:
+			if strings.HasPrefix(request.URL.Path, "/api/v1/knowledge/") {
+				serveKnowledgeRoute(response, request, options.Service)
+				return
+			}
 			if strings.HasPrefix(request.URL.Path, "/api/v1/tours/") {
 				serveGuidedTour(response, request, options.Service)
 				return

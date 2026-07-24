@@ -3,6 +3,7 @@ package setup
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/gofrs/flock"
 )
 
 const (
@@ -28,8 +32,10 @@ const (
 
 	maxIdempotencyKeyBytes = 128
 	replayPath             = ".prowl/setup-applies.json"
-	transactionPath        = ".prowl/setup-transaction.json"
+	transactionPath        = ".prowl-setup-transaction.json"
+	setupLockPath          = ".prowl-setup.lock"
 	transactionSchema      = 1
+	setupLockTimeout       = 5 * time.Second
 )
 
 var allIntegrations = []string{
@@ -124,7 +130,7 @@ type transactionSnapshot struct {
 
 type transactionDirectory struct {
 	Path    string `json:"path"`
-	Existed bool   `json:"existed"`
+	Created bool   `json:"created"`
 }
 
 type transaction struct {
@@ -190,8 +196,9 @@ func (service *Service) Plan(ctx context.Context, integrations []string) (Plan, 
 	return plan, nil
 }
 
-// Apply validates the supplied review state, durably records a recoverable
-// transaction before the first write, and verifies or rolls it back.
+// Apply validates the supplied review state, serializes project mutations,
+// durably records a recoverable transaction before the first write, and
+// verifies or rolls it back.
 func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return ApplyOutcome{}, err
@@ -202,13 +209,31 @@ func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyO
 	if len(request.IdempotencyKey) == 0 || len(request.IdempotencyKey) > maxIdempotencyKeyBytes {
 		return ApplyOutcome{}, errors.New("invalid setup idempotency key")
 	}
+	initialPlan, err := service.Plan(ctx, request.Integrations)
+	if err != nil {
+		return ApplyOutcome{}, err
+	}
+	if request.ExpectedProjectConfigVersion != initialPlan.ProjectConfigVersion || request.PlanHash != initialPlan.Hash {
+		return ApplyOutcome{}, ErrPlanConflict
+	}
+
 	service.mu.Lock()
 	defer service.mu.Unlock()
-
-	if err := service.recoverInterruptedTransaction(); err != nil {
+	unlock, err := service.lock(ctx)
+	if err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
-	replays, err := service.loadReplays()
+	defer unlock()
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
+		return ApplyOutcome{}, safeError(err)
+	}
+	defer root.Close()
+
+	if err := service.recoverInterruptedTransactionInRoot(root); err != nil {
+		return ApplyOutcome{}, safeError(err)
+	}
+	replays, err := loadReplaysInRoot(root)
 	if err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
@@ -218,15 +243,14 @@ func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyO
 		}
 		return previous.Outcome, nil
 	}
-
-	plan, err := service.Plan(ctx, request.Integrations)
+	plan, err := service.plan(root, ctx, request.Integrations)
 	if err != nil {
 		return ApplyOutcome{}, err
 	}
 	if request.ExpectedProjectConfigVersion != plan.ProjectConfigVersion || request.PlanHash != plan.Hash {
 		return ApplyOutcome{}, ErrPlanConflict
 	}
-	snapshots, directories, err := service.snapshots(plan.Actions, replayPath, transactionPath)
+	snapshots, directories, err := snapshotsInRoot(root, plan.Actions, replayPath)
 	if err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
@@ -238,31 +262,37 @@ func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyO
 		SchemaVersion: transactionSchema,
 		Request:       request,
 		Snapshots:     transactionSnapshots(snapshots),
-		Directories:   transactionDirectories(directories),
+		Directories:   directories,
 	}
-	if err := service.saveTransaction(pending); err != nil {
+	if err := saveTransactionInRoot(root, pending); err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
-	if err := service.applyActions(plan.Actions); err != nil {
-		if rollbackErr := service.rollbackTransaction(pending); rollbackErr != nil {
+	if err := service.applyActionsInRoot(root, plan.Actions, &pending); err != nil {
+		if rollbackErr := service.rollbackTransactionInRoot(root, pending); rollbackErr != nil {
 			return ApplyOutcome{}, safeError(rollbackErr)
 		}
 		return ApplyOutcome{}, safeError(err)
 	}
-	if err := service.Verify(ctx, plan); err != nil {
-		if rollbackErr := service.rollbackTransaction(pending); rollbackErr != nil {
+	if err := service.verifyInRoot(root, ctx, plan); err != nil {
+		if rollbackErr := service.rollbackTransactionInRoot(root, pending); rollbackErr != nil {
 			return ApplyOutcome{}, safeError(rollbackErr)
 		}
 		return ApplyOutcome{}, safeError(err)
 	}
 	replays[request.IdempotencyKey] = replayRecord{Request: request, Outcome: outcome}
-	if err := service.saveReplays(replays); err != nil {
-		if rollbackErr := service.rollbackTransaction(pending); rollbackErr != nil {
+	if err := service.ensureParentDirectories(root, replayPath, &pending); err != nil {
+		if rollbackErr := service.rollbackTransactionInRoot(root, pending); rollbackErr != nil {
 			return ApplyOutcome{}, safeError(rollbackErr)
 		}
 		return ApplyOutcome{}, safeError(err)
 	}
-	if err := service.removeTransaction(); err != nil {
+	if err := saveReplaysInRoot(root, replays); err != nil {
+		if rollbackErr := service.rollbackTransactionInRoot(root, pending); rollbackErr != nil {
+			return ApplyOutcome{}, safeError(rollbackErr)
+		}
+		return ApplyOutcome{}, safeError(err)
+	}
+	if err := removeTransactionInRoot(root); err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
 	return outcome, nil
@@ -273,8 +303,20 @@ func (service *Service) Verify(ctx context.Context, plan Plan) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
+		return safeError(err)
+	}
+	defer root.Close()
+	return service.verifyInRoot(root, ctx, plan)
+}
+
+func (service *Service) verifyInRoot(root *os.Root, ctx context.Context, plan Plan) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, action := range plan.Actions {
-		data, err := service.readFile(action.Path)
+		data, err := readRootFile(root, action.Path)
 		if err != nil || (!strings.Contains(string(data), "prowl-agent") && !strings.Contains(string(data), "prowl_agent")) {
 			return errors.New("setup verification failed")
 		}
@@ -283,7 +325,16 @@ func (service *Service) Verify(ctx context.Context, plan Plan) error {
 }
 
 func (service *Service) projectConfigVersion() (string, error) {
-	data, err := service.readFile(".prowl/config.toml")
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	return projectConfigVersionInRoot(root)
+}
+
+func projectConfigVersionInRoot(root *os.Root) (string, error) {
+	data, err := readRootFile(root, ".prowl/config.toml")
 	if os.IsNotExist(err) {
 		return digest([]byte("absent")), nil
 	}
@@ -291,6 +342,24 @@ func (service *Service) projectConfigVersion() (string, error) {
 		return "", err
 	}
 	return digest(append([]byte("present\x00"), data...)), nil
+}
+
+func (service *Service) plan(root *os.Root, ctx context.Context, integrations []string) (Plan, error) {
+	if err := ctx.Err(); err != nil {
+		return Plan{}, err
+	}
+	normalized, err := NormalizeIntegrations(integrations)
+	if err != nil {
+		return Plan{}, err
+	}
+	version, err := projectConfigVersionInRoot(root)
+	if err != nil {
+		return Plan{}, safeError(err)
+	}
+	actions := actionsFor(normalized)
+	plan := Plan{Integrations: normalized, Actions: actions, ProjectConfigVersion: version}
+	plan.Hash = planHash(plan)
+	return plan, nil
 }
 
 func planHash(plan Plan) string {
@@ -321,30 +390,38 @@ func actionsFor(integrations []string) []Action {
 	return actions
 }
 
-func (service *Service) applyActions(actions []Action) error {
+func (service *Service) applyActionsInRoot(root *os.Root, actions []Action, pending *transaction) error {
 	for _, action := range actions {
-		path, err := service.path(action.Path)
-		if err != nil {
+		if err := service.ensureParentDirectories(root, action.Path, pending); err != nil {
 			return err
 		}
 		switch action.Integration {
 		case IntegrationAgents:
-			err = ensureAgentsBlock(path)
+			if err := ensureAgentsBlock(root, action.Path); err != nil {
+				return err
+			}
 		case IntegrationGeneric, IntegrationCursor, IntegrationOMP, IntegrationFactory:
-			err = mergeMCPConfig(path, "mcpServers")
+			if err := mergeMCPConfig(root, action.Path, "mcpServers"); err != nil {
+				return err
+			}
 		case IntegrationVSCode:
-			err = mergeMCPConfig(path, "servers")
+			if err := mergeMCPConfig(root, action.Path, "servers"); err != nil {
+				return err
+			}
 		case IntegrationOpenCode:
-			err = mergeOpenCode(path)
+			if err := mergeOpenCode(root, action.Path); err != nil {
+				return err
+			}
 		case IntegrationNeovim:
-			err = injectNeovim(path)
+			if err := injectNeovim(root, action.Path); err != nil {
+				return err
+			}
 		case IntegrationHelix:
-			err = injectHelix(path)
+			if err := injectHelix(root, action.Path); err != nil {
+				return err
+			}
 		default:
-			err = errors.New("unknown setup integration")
-		}
-		if err != nil {
-			return err
+			return errors.New("unknown setup integration")
 		}
 	}
 	return nil
@@ -357,12 +434,7 @@ type snapshot struct {
 	existed bool
 }
 
-type directorySnapshot struct {
-	rel     string
-	existed bool
-}
-
-func (service *Service) snapshots(actions []Action, extra ...string) ([]snapshot, []directorySnapshot, error) {
+func snapshotsInRoot(root *os.Root, actions []Action, extra ...string) ([]snapshot, []transactionDirectory, error) {
 	paths := make([]string, 0, len(actions)+len(extra))
 	for _, action := range actions {
 		paths = append(paths, action.Path)
@@ -371,70 +443,35 @@ func (service *Service) snapshots(actions []Action, extra ...string) ([]snapshot
 	seen := make(map[string]struct{}, len(paths))
 	snapshots := make([]snapshot, 0, len(paths))
 	for _, rel := range paths {
-		if _, ok := seen[rel]; ok {
-			continue
-		}
-		seen[rel] = struct{}{}
-		path, err := service.path(rel)
+		clean, err := validateRootPath(root, rel)
 		if err != nil {
 			return nil, nil, err
 		}
-		info, err := os.Stat(path)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		info, err := root.Stat(clean)
 		if os.IsNotExist(err) {
-			snapshots = append(snapshots, snapshot{rel: rel})
+			snapshots = append(snapshots, snapshot{rel: clean})
 			continue
 		}
 		if err != nil {
 			return nil, nil, err
 		}
-		data, err := os.ReadFile(path)
+		data, err := root.ReadFile(clean)
 		if err != nil {
 			return nil, nil, err
 		}
-		snapshots = append(snapshots, snapshot{rel: rel, data: data, mode: info.Mode(), existed: true})
+		snapshots = append(snapshots, snapshot{rel: clean, data: data, mode: info.Mode(), existed: true})
 	}
-	directories, err := service.snapshotDirectories(paths)
-	if err != nil {
-		return nil, nil, err
-	}
-	return snapshots, directories, nil
-}
-
-func (service *Service) snapshotDirectories(paths []string) ([]directorySnapshot, error) {
-	seen := map[string]struct{}{}
-	var snapshots []directorySnapshot
-	for _, rel := range paths {
-		for dir := filepath.Dir(filepath.FromSlash(rel)); dir != "."; dir = filepath.Dir(dir) {
-			directory := filepath.ToSlash(dir)
-			if _, ok := seen[directory]; ok {
-				continue
-			}
-			seen[directory] = struct{}{}
-			path, err := service.path(directory)
-			if err != nil {
-				return nil, err
-			}
-			_, err = os.Stat(path)
-			if err == nil {
-				snapshots = append(snapshots, directorySnapshot{rel: directory, existed: true})
-				continue
-			}
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
-			snapshots = append(snapshots, directorySnapshot{rel: directory})
-		}
-	}
-	sort.Slice(snapshots, func(left, right int) bool {
-		return snapshots[left].rel < snapshots[right].rel
-	})
-	return snapshots, nil
+	return snapshots, transactionDirectories(paths), nil
 }
 
 func manifest(snapshots []snapshot) []RollbackItem {
 	out := make([]RollbackItem, 0, len(snapshots))
 	for _, item := range snapshots {
-		if item.rel == replayPath || item.rel == transactionPath {
+		if item.rel == replayPath {
 			continue
 		}
 		out = append(out, RollbackItem{Path: item.rel, Existed: item.existed})
@@ -452,27 +489,93 @@ func transactionSnapshots(snapshots []snapshot) []transactionSnapshot {
 	return out
 }
 
-func transactionDirectories(snapshots []directorySnapshot) []transactionDirectory {
-	out := make([]transactionDirectory, 0, len(snapshots))
-	for _, item := range snapshots {
-		out = append(out, transactionDirectory{Path: item.rel, Existed: item.existed})
+func transactionDirectories(paths []string) []transactionDirectory {
+	seen := map[string]struct{}{}
+	var directories []transactionDirectory
+	for _, rel := range paths {
+		for dir := filepath.Dir(filepath.FromSlash(rel)); dir != "."; dir = filepath.Dir(dir) {
+			clean := filepath.ToSlash(dir)
+			if _, ok := seen[clean]; ok {
+				continue
+			}
+			seen[clean] = struct{}{}
+			directories = append(directories, transactionDirectory{Path: clean})
+		}
 	}
-	return out
+	sort.Slice(directories, func(left, right int) bool {
+		return directories[left].Path < directories[right].Path
+	})
+	return directories
 }
 
-func (service *Service) restore(snapshots []transactionSnapshot) error {
+func (service *Service) ensureParentDirectories(root *os.Root, rel string, pending *transaction) error {
+	clean, err := validateRootPath(root, rel)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(clean)
+	current := ""
+	for _, component := range strings.Split(filepath.ToSlash(dir), "/") {
+		if component == "." || component == "" {
+			continue
+		}
+		if current == "" {
+			current = component
+		} else {
+			current = filepath.ToSlash(filepath.Join(current, component))
+		}
+		info, err := root.Lstat(current)
+		if err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return errors.New("setup destination must be a directory")
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := root.Mkdir(current, 0o755); err != nil {
+			if !os.IsExist(err) {
+				return err
+			}
+			info, err := root.Lstat(current)
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return errors.New("setup destination must be a directory")
+			}
+			continue
+		}
+		if pending == nil {
+			continue
+		}
+		for index := range pending.Directories {
+			if pending.Directories[index].Path == current {
+				pending.Directories[index].Created = true
+				break
+			}
+		}
+		if err := saveTransactionInRoot(root, *pending); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreInRoot(root *os.Root, snapshots []transactionSnapshot) error {
 	for _, before := range snapshots {
+		clean, err := validateRootPath(root, before.Path)
+		if err != nil {
+			return err
+		}
 		if before.Existed {
-			if err := service.writeAtomic(before.Path, before.Data, os.FileMode(before.Mode).Perm()); err != nil {
+			if err := writeAtomicInRoot(root, clean, before.Data, os.FileMode(before.Mode).Perm()); err != nil {
 				return err
 			}
 			continue
 		}
-		path, err := service.path(before.Path)
-		if err != nil {
-			return err
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := root.Remove(clean); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -480,10 +583,16 @@ func (service *Service) restore(snapshots []transactionSnapshot) error {
 }
 
 func (service *Service) rollbackTransaction(pending transaction) error {
-	if err := service.restore(pending.Snapshots); err != nil {
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
 		return err
 	}
-	if err := service.removeTransaction(); err != nil {
+	defer root.Close()
+	return service.rollbackTransactionInRoot(root, pending)
+}
+
+func (service *Service) rollbackTransactionInRoot(root *os.Root, pending transaction) error {
+	if err := restoreInRoot(root, pending.Snapshots); err != nil {
 		return err
 	}
 	directories := append([]transactionDirectory(nil), pending.Directories...)
@@ -491,40 +600,49 @@ func (service *Service) rollbackTransaction(pending transaction) error {
 		return strings.Count(directories[left].Path, "/") > strings.Count(directories[right].Path, "/")
 	})
 	for _, directory := range directories {
-		if directory.Existed {
+		if !directory.Created {
 			continue
 		}
-		path, err := service.path(directory.Path)
+		clean, err := validateRootPath(root, directory.Path)
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := root.Remove(clean); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
-	return nil
+	return removeTransactionInRoot(root)
 }
 
-func (service *Service) recoverInterruptedTransaction() error {
-	pending, found, err := service.loadTransaction()
+func (service *Service) recoverInterruptedTransactionInRoot(root *os.Root) error {
+	pending, found, err := loadTransactionInRoot(root)
 	if err != nil || !found {
 		return err
 	}
-	replays, err := service.loadReplays()
+	replays, err := loadReplaysInRoot(root)
 	if err != nil {
 		return err
 	}
 	if replay, ok := replays[pending.Request.IdempotencyKey]; ok && sameRequest(replay.Request, pending.Request) && replay.Outcome.Verified {
-		return service.removeTransaction()
+		return removeTransactionInRoot(root)
 	}
-	if err := service.rollbackTransaction(pending); err != nil {
+	if err := service.rollbackTransactionInRoot(root, pending); err != nil {
 		return err
 	}
 	return ErrRecoveryRequired
 }
 
 func (service *Service) loadTransaction() (transaction, bool, error) {
-	data, err := service.readFile(transactionPath)
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
+		return transaction{}, false, err
+	}
+	defer root.Close()
+	return loadTransactionInRoot(root)
+}
+
+func loadTransactionInRoot(root *os.Root) (transaction, bool, error) {
+	data, err := readRootFile(root, transactionPath)
 	if os.IsNotExist(err) {
 		return transaction{}, false, nil
 	}
@@ -542,26 +660,35 @@ func (service *Service) loadTransaction() (transaction, bool, error) {
 }
 
 func (service *Service) saveTransaction(pending transaction) error {
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return saveTransactionInRoot(root, pending)
+}
+
+func saveTransactionInRoot(root *os.Root, pending transaction) error {
 	data, err := json.Marshal(pending)
 	if err != nil {
 		return err
 	}
-	return service.writeAtomic(transactionPath, append(data, '\n'), 0o600)
+	return writeAtomicInRoot(root, transactionPath, append(data, '\n'), 0o600)
 }
 
-func (service *Service) removeTransaction() error {
-	path, err := service.path(transactionPath)
+func removeTransactionInRoot(root *os.Root) error {
+	clean, err := validateRootPath(root, transactionPath)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := root.Remove(clean); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func (service *Service) loadReplays() (map[string]replayRecord, error) {
-	data, err := service.readFile(replayPath)
+func loadReplaysInRoot(root *os.Root) (map[string]replayRecord, error) {
+	data, err := readRootFile(root, replayPath)
 	if os.IsNotExist(err) {
 		return map[string]replayRecord{}, nil
 	}
@@ -575,30 +702,50 @@ func (service *Service) loadReplays() (map[string]replayRecord, error) {
 	return out, nil
 }
 
-func (service *Service) saveReplays(replays map[string]replayRecord) error {
+func saveReplaysInRoot(root *os.Root, replays map[string]replayRecord) error {
 	data, err := json.Marshal(replays)
 	if err != nil {
 		return err
 	}
-	return service.writeAtomic(replayPath, append(data, '\n'), 0o600)
+	return writeAtomicInRoot(root, replayPath, append(data, '\n'), 0o600)
 }
 
-func (service *Service) path(rel string) (string, error) {
+func (service *Service) lock(ctx context.Context) (func(), error) {
+	path := filepath.Join(service.root, setupLockPath)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("setup lock must not be a symbolic link")
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	lock := flock.New(path)
+	locked, err := lock.TryLockContext(ctx, setupLockTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		return nil, errors.New("setup apply is already in progress")
+	}
+	return func() { _ = lock.Unlock() }, nil
+}
+
+func validateRootPath(root *os.Root, rel string) (string, error) {
 	if !safeRelativePath(rel) {
 		return "", errors.New("invalid setup action path")
 	}
-	clean := filepath.Clean(filepath.FromSlash(rel))
-	target := filepath.Join(service.root, clean)
-	relative, err := filepath.Rel(service.root, target)
-	if err != nil || !safeRelativePath(filepath.ToSlash(relative)) {
-		return "", errors.New("invalid setup action path")
-	}
-	current := service.root
-	for _, component := range strings.Split(filepath.ToSlash(relative), "/") {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	current := ""
+	for _, component := range strings.Split(clean, "/") {
+		if component == "." || component == "" {
+			continue
+		}
+		if current == "" {
+			current = component
+		} else {
+			current = filepath.ToSlash(filepath.Join(current, component))
+		}
+		info, err := root.Lstat(current)
 		if os.IsNotExist(err) {
-			return target, nil
+			break
 		}
 		if err != nil {
 			return "", err
@@ -607,62 +754,60 @@ func (service *Service) path(rel string) (string, error) {
 			return "", errors.New("setup destination must not be a symbolic link")
 		}
 	}
-	return target, nil
+	return clean, nil
 }
 
-func (service *Service) readFile(rel string) ([]byte, error) {
-	path, err := service.path(rel)
+func readRootFile(root *os.Root, rel string) ([]byte, error) {
+	clean, err := validateRootPath(root, rel)
 	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(path)
+	return root.ReadFile(clean)
 }
 
-func (service *Service) writeAtomic(rel string, data []byte, mode os.FileMode) error {
-	path, err := service.path(rel)
+func writeAtomicInRoot(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+	clean, err := validateRootPath(root, rel)
 	if err != nil {
 		return err
 	}
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	dir := filepath.Dir(clean)
+	var random [12]byte
+	if _, err := cryptorand.Read(random[:]); err != nil {
 		return err
 	}
-	if _, err := service.path(rel); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(directory, ".prowl-write-*")
+	tmp := filepath.ToSlash(filepath.Join(dir, ".prowl-write-"+hex.EncodeToString(random[:])))
+	file, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
+	defer root.Remove(tmp)
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	if _, err := file.Write(data); err != nil {
+		file.Close()
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+	if err := file.Sync(); err != nil {
+		file.Close()
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	if err := file.Close(); err != nil {
 		return err
 	}
-	if _, err := service.path(rel); err != nil {
+	if _, err := validateRootPath(root, clean); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := root.Rename(tmp, clean); err != nil {
 		return err
 	}
-	dir, err := os.Open(directory)
+	directory, err := root.Open(dir)
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
-	return syncSetupDirectory(dir)
+	defer directory.Close()
+	return syncSetupDirectory(directory)
 }
 
 func DetectIntegrations(root string) []string {
@@ -743,24 +888,25 @@ func (service *Service) removeIntegrations(integrations []string) error {
 	if err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(service.root)
+	if err != nil {
+		return safeError(err)
+	}
+	defer root.Close()
 	for _, action := range actionsFor(integrations) {
-		path, err := service.path(action.Path)
-		if err != nil {
-			return safeError(err)
-		}
 		switch action.Integration {
 		case IntegrationAgents:
-			err = removeAgentsBlock(path)
+			err = removeAgentsBlock(root, action.Path)
 		case IntegrationGeneric, IntegrationCursor, IntegrationOMP, IntegrationFactory:
-			err = removeMCPConfig(path, "mcpServers")
+			err = removeMCPConfig(root, action.Path, "mcpServers")
 		case IntegrationVSCode:
-			err = removeMCPConfig(path, "servers")
+			err = removeMCPConfig(root, action.Path, "servers")
 		case IntegrationOpenCode:
-			err = removeOpenCode(path)
+			err = removeOpenCode(root, action.Path)
 		case IntegrationNeovim:
-			err = removeOwnedFile(path, nvimConfig)
+			err = removeOwnedFile(root, action.Path, nvimConfig)
 		case IntegrationHelix:
-			err = removeOwnedFile(path, helixConfig())
+			err = removeOwnedFile(root, action.Path, helixConfig())
 		}
 		if err != nil {
 			return safeError(err)
@@ -832,12 +978,9 @@ type mcpServer struct {
 	Args    []string `json:"args"`
 }
 
-func mergeMCPConfig(path, key string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
+func mergeMCPConfig(root *os.Root, rel, key string) error {
 	doc := map[string]any{}
-	if data, err := os.ReadFile(path); err == nil {
+	if data, err := readRootFile(root, rel); err == nil {
 		if err := json.Unmarshal(data, &doc); err != nil {
 			return errors.New("invalid existing setup JSON")
 		}
@@ -850,12 +993,12 @@ func mergeMCPConfig(path, key string) error {
 	}
 	servers["prowl-agent"] = mcpServer{Type: "stdio", Command: "prowl-agent", Args: []string{"serve"}}
 	doc[key] = servers
-	return writeJSON(path, doc)
+	return writeJSON(root, rel, doc)
 }
 
-func mergeOpenCode(path string) error {
+func mergeOpenCode(root *os.Root, rel string) error {
 	doc := map[string]any{}
-	if data, err := os.ReadFile(path); err == nil {
+	if data, err := readRootFile(root, rel); err == nil {
 		if err := json.Unmarshal(data, &doc); err != nil {
 			return errors.New("invalid existing setup JSON")
 		}
@@ -871,11 +1014,11 @@ func mergeOpenCode(path string) error {
 	}
 	mcp["prowl-agent"] = map[string]any{"type": "local", "command": []string{"prowl-agent", "serve"}, "enabled": true}
 	doc["mcp"] = mcp
-	return writeJSON(path, doc)
+	return writeJSON(root, rel, doc)
 }
 
-func ensureAgentsBlock(path string) error {
-	data, err := os.ReadFile(path)
+func ensureAgentsBlock(root *os.Root, rel string) error {
+	data, err := readRootFile(root, rel)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -891,7 +1034,7 @@ func ensureAgentsBlock(path string) error {
 		if updated == content {
 			return nil
 		}
-		return os.WriteFile(path, []byte(updated), 0o644)
+		return writeRootFile(root, rel, []byte(updated), 0o644)
 	}
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
@@ -899,16 +1042,25 @@ func ensureAgentsBlock(path string) error {
 	if content != "" {
 		content += "\n"
 	}
-	return os.WriteFile(path, []byte(content+agentsBlock+"\n"), 0o644)
+	return writeRootFile(root, rel, []byte(content+agentsBlock+"\n"), 0o644)
 }
 
-// EnsureAgentsBlock updates only Prowl's marked block in AGENTS.md.
+// EnsureAgentsBlock updates only Prowl's marked block in an explicit file.
 func EnsureAgentsBlock(path string) error {
-	return ensureAgentsBlock(path)
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(filepath.Dir(absolute))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return ensureAgentsBlock(root, filepath.Base(absolute))
 }
 
-func removeMCPConfig(path, key string) error {
-	data, err := os.ReadFile(path)
+func removeMCPConfig(root *os.Root, rel, key string) error {
+	data, err := readRootFile(root, rel)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -928,10 +1080,11 @@ func removeMCPConfig(path, key string) error {
 	}
 	delete(servers, "prowl-agent")
 	doc[key] = servers
-	return writeJSON(path, doc)
+	return writeJSON(root, rel, doc)
 }
-func removeOpenCode(path string) error {
-	data, err := os.ReadFile(path)
+
+func removeOpenCode(root *os.Root, rel string) error {
+	data, err := readRootFile(root, rel)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -948,17 +1101,33 @@ func removeOpenCode(path string) error {
 	}
 	delete(mcp, "prowl-agent")
 	doc["mcp"] = mcp
-	return writeJSON(path, doc)
+	return writeJSON(root, rel, doc)
 }
-func writeJSON(path string, doc map[string]any) error {
+
+func writeJSON(root *os.Root, rel string, doc map[string]any) error {
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	return writeRootFile(root, rel, append(out, '\n'), 0o644)
 }
-func removeAgentsBlock(path string) error {
-	data, err := os.ReadFile(path)
+
+func writeRootFile(root *os.Root, rel string, data []byte, fallback os.FileMode) error {
+	clean, err := validateRootPath(root, rel)
+	if err != nil {
+		return err
+	}
+	mode := fallback
+	if info, err := root.Stat(clean); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return writeAtomicInRoot(root, clean, data, mode)
+}
+
+func removeAgentsBlock(root *os.Root, rel string) error {
+	data, err := readRootFile(root, rel)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -976,12 +1145,17 @@ func removeAgentsBlock(path string) error {
 	}
 	updated := strings.TrimSpace(content[:start] + content[start+offset+len(agentsEndMarker):])
 	if updated == "" {
-		return os.Remove(path)
+		clean, err := validateRootPath(root, rel)
+		if err != nil {
+			return err
+		}
+		return root.Remove(clean)
 	}
-	return os.WriteFile(path, []byte(updated+"\n"), 0o644)
+	return writeRootFile(root, rel, []byte(updated+"\n"), 0o644)
 }
-func removeOwnedFile(path, expected string) error {
-	data, err := os.ReadFile(path)
+
+func removeOwnedFile(root *os.Root, rel, expected string) error {
+	data, err := readRootFile(root, rel)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -991,7 +1165,11 @@ func removeOwnedFile(path, expected string) error {
 	if string(data) != expected {
 		return errors.New("refusing to remove modified setup file")
 	}
-	return os.Remove(path)
+	clean, err := validateRootPath(root, rel)
+	if err != nil {
+		return err
+	}
+	return root.Remove(clean)
 }
 
 const nvimConfig = `-- prowl-agent language server (Neovim 0.11+).
@@ -1017,23 +1195,21 @@ func helixConfig() string {
 	}
 	return b.String()
 }
-func injectNeovim(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(nvimConfig), 0o644)
+func injectNeovim(root *os.Root, rel string) error {
+	return writeRootFile(root, rel, []byte(nvimConfig), 0o644)
 }
 
-func injectHelix(path string) error {
-	if _, err := os.Stat(path); err == nil {
+func injectHelix(root *os.Root, rel string) error {
+	clean, err := validateRootPath(root, rel)
+	if err != nil {
+		return err
+	}
+	if _, err := root.Stat(clean); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(helixConfig()), 0o644)
+	return writeRootFile(root, clean, []byte(helixConfig()), 0o644)
 }
 
 func safeRelativePath(value string) bool {

@@ -337,7 +337,7 @@ func validatedCapabilities(values []capability.Summary) ([]capability.Summary, e
 }
 
 func sanitizeProjectionError(err error) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, store.ErrGenerationIncomplete) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, store.ErrGenerationIncomplete) || errors.Is(err, knowledge.ErrInvalidDecisionRequest) || errors.Is(err, knowledge.ErrProposalVersionConflict) || errors.Is(err, knowledge.ErrIdempotencyConflict) || errors.Is(err, knowledge.ErrDecisionInProgress) {
 		return err
 	}
 	return ErrInvalidDerivedData

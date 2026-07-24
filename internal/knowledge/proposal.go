@@ -15,15 +15,16 @@ import (
 
 // Proposal is a reviewable candidate durable-knowledge change.
 type Proposal struct {
-	ID            string `json:"id"`
-	Operation     string `json:"operation"`
-	TargetPath    string `json:"target_path"`
-	CandidatePath string `json:"candidate_path"`
-	BaseHash      string `json:"base_hash,omitempty"`
-	Status        string `json:"status"`
-	Author        string `json:"author,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	ReviewedAt    string `json:"reviewed_at,omitempty"`
+	ID            string         `json:"id"`
+	Operation     string         `json:"operation"`
+	TargetPath    string         `json:"target_path"`
+	CandidatePath string         `json:"candidate_path"`
+	BaseHash      string         `json:"base_hash,omitempty"`
+	Status        string         `json:"status"`
+	Author        string         `json:"author,omitempty"`
+	CreatedAt     string         `json:"created_at"`
+	ReviewedAt    string         `json:"reviewed_at,omitempty"`
+	Decision      *DecisionAudit `json:"decision,omitempty"`
 }
 
 // ReviewInbox manages filesystem proposals separately from accepted knowledge.
@@ -145,6 +146,10 @@ func (inbox *ReviewInbox) Diff(id string) (string, error) {
 
 // Accept applies a proposal and rolls canonical files back if any later step fails.
 func (inbox *ReviewInbox) Accept(id string, now time.Time) (*Proposal, error) {
+	return inbox.accept(id, now, nil)
+}
+
+func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAudit) (*Proposal, error) {
 	proposal, err := inbox.load(id)
 	if err != nil {
 		return nil, err
@@ -203,6 +208,7 @@ func (inbox *ReviewInbox) Accept(id string, now time.Time) (*Proposal, error) {
 	}
 	proposal.Status = "accepted"
 	proposal.ReviewedAt = now.UTC().Format(time.RFC3339)
+	proposal.Decision = decision
 	if err := inbox.writeProposal(proposal); err != nil {
 		return nil, rollback(err)
 	}
@@ -211,6 +217,10 @@ func (inbox *ReviewInbox) Accept(id string, now time.Time) (*Proposal, error) {
 
 // Reject records review without touching canonical knowledge.
 func (inbox *ReviewInbox) Reject(id string, now time.Time) (*Proposal, error) {
+	return inbox.reject(id, now, nil)
+}
+
+func (inbox *ReviewInbox) reject(id string, now time.Time, decision *DecisionAudit) (*Proposal, error) {
 	proposal, err := inbox.load(id)
 	if err != nil {
 		return nil, err
@@ -220,6 +230,7 @@ func (inbox *ReviewInbox) Reject(id string, now time.Time) (*Proposal, error) {
 	}
 	proposal.Status = "rejected"
 	proposal.ReviewedAt = now.UTC().Format(time.RFC3339)
+	proposal.Decision = decision
 	if err := inbox.writeProposal(proposal); err != nil {
 		return nil, err
 	}

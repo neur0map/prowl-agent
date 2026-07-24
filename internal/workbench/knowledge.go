@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/url"
 	pathpkg "path"
@@ -100,6 +101,7 @@ type KnowledgeBacklink struct {
 type KnowledgeProposalDetail struct {
 	Proposal knowledge.Proposal `json:"proposal"`
 	Diff     string             `json:"diff"`
+	Version  string             `json:"version"`
 
 	resourceVersion string
 }
@@ -214,28 +216,21 @@ func (service *Service) KnowledgeProposal(ctx context.Context, id string) (Knowl
 		return KnowledgeProposalDetail{}, versionedProjectionError(version, err)
 	}
 	inbox := knowledge.NewReviewInbox(service.project.Workspace.Proposals, service.project.Knowledge)
-	proposals, err := inbox.List()
-	if err != nil {
-		return fail(err)
-	}
-	var proposal *knowledge.Proposal
-	for index := range proposals {
-		if proposals[index].ID == id {
-			proposal = &proposals[index]
-			break
-		}
-	}
-	if proposal == nil {
+	state, err := inbox.Describe(id)
+	if errors.Is(err, fs.ErrNotExist) {
 		return KnowledgeProposalDetail{}, ErrKnowledgeNotFound
 	}
-	diff, err := inbox.Diff(id)
 	if err != nil {
 		return fail(err)
 	}
-	if len(diff) > MaxKnowledgeProposalDiffBytes || !utf8.ValidString(diff) {
+	proposal, err := safeKnowledgeProposal(state.Proposal, service.workspaceRoots())
+	if err != nil {
+		return fail(err)
+	}
+	if len(state.Diff) > MaxKnowledgeProposalDiffBytes || !utf8.ValidString(state.Diff) {
 		return KnowledgeProposalDetail{}, ErrKnowledgeTooLarge
 	}
-	detail := KnowledgeProposalDetail{Proposal: *proposal, Diff: diff, resourceVersion: version}
+	detail := KnowledgeProposalDetail{Proposal: proposal, Diff: state.Diff, Version: state.Version, resourceVersion: version}
 	encoded, err := json.Marshal(detail)
 	if err != nil || len(encoded) > MaxKnowledgeDetailResponseBytes {
 		return fail(ErrKnowledgeTooLarge)
@@ -552,27 +547,48 @@ func serveKnowledgeRoute(response http.ResponseWriter, request *http.Request, se
 		writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
 		return
 	}
-	proposal := false
-	if strings.HasPrefix(escaped, "proposals/") {
-		proposal = true
-		escaped = strings.TrimPrefix(escaped, "proposals/")
+	if !strings.HasPrefix(escaped, "proposals/") {
+		id, err := url.PathUnescape(escaped)
+		if err != nil || id == "" {
+			writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
+			return
+		}
+		serveKnowledgeDetail(response, request, service, id)
+		return
 	}
-	id, err := url.PathUnescape(escaped)
+	escaped = strings.TrimPrefix(escaped, "proposals/")
+	escapedID, action, mutation := strings.Cut(escaped, "/")
+	id, err := url.PathUnescape(escapedID)
 	if err != nil || id == "" {
 		writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
 		return
 	}
-	if proposal {
+	if !mutation {
 		serveKnowledgeProposal(response, request, service, id)
 		return
 	}
-	serveKnowledgeDetail(response, request, service, id)
+	switch action {
+	case "accept":
+		serveKnowledgeProposalDecision(response, request, service, id, knowledge.DecisionAccept)
+	case "reject":
+		serveKnowledgeProposalDecision(response, request, service, id, knowledge.DecisionReject)
+	default:
+		writeError(response, request, http.StatusNotFound, "not_found", "API route was not found", unavailableVersion)
+	}
 }
 
 func writeKnowledgeError(response http.ResponseWriter, request *http.Request, err error) {
 	switch {
-	case errors.Is(err, ErrInvalidKnowledgeRequest):
+	case errors.Is(err, ErrKnowledgeConfirmationRequired):
+		writeError(response, request, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required", errorResourceVersion(err))
+	case errors.Is(err, ErrInvalidKnowledgeRequest), errors.Is(err, knowledge.ErrInvalidDecisionRequest):
 		writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", errorResourceVersion(err))
+	case errors.Is(err, ErrKnowledgeRequestTooLarge):
+		writeError(response, request, http.StatusRequestEntityTooLarge, "request_too_large", "request exceeds bounds", errorResourceVersion(err))
+	case errors.Is(err, knowledge.ErrProposalVersionConflict), errors.Is(err, knowledge.ErrIdempotencyConflict):
+		writeError(response, request, http.StatusConflict, "proposal_version_conflict", "proposal version no longer matches", errorResourceVersion(err))
+	case errors.Is(err, knowledge.ErrDecisionInProgress):
+		writeError(response, request, http.StatusConflict, "decision_in_progress", "proposal decision is in progress", errorResourceVersion(err))
 	case errors.Is(err, ErrKnowledgeNotFound):
 		writeError(response, request, http.StatusNotFound, "knowledge_not_found", "knowledge is unavailable", unavailableVersion)
 	case errors.Is(err, ErrKnowledgeTooLarge):

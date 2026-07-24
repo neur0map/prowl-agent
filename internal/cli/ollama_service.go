@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/prowl-agent/prowl-agent/internal/assist"
@@ -240,7 +239,7 @@ func spawnOllama(root string) error {
 	}
 	cmd := exec.Command(ollamaPath(), "serve")
 	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	configureDetachedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = logf.Close()
 		return err

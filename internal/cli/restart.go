@@ -2,11 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -68,45 +65,6 @@ func matchProwlServer(args []string, cwd, scope string) bool {
 		return true
 	}
 	return cwd == scope || strings.HasPrefix(cwd, scope+"/")
-}
-
-// findProwlServers returns the PIDs of prowl-agent serve/lsp processes matching
-// scope (see matchProwlServer), skipping this process. Linux-only (reads /proc).
-func findProwlServers(scope string) []int {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil
-	}
-	self := os.Getpid()
-	var pids []int
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid == self {
-			continue
-		}
-		raw, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
-		if err != nil {
-			continue
-		}
-		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
-		cwd, _ := os.Readlink("/proc/" + e.Name() + "/cwd")
-		if matchProwlServer(args, cwd, scope) {
-			pids = append(pids, pid)
-		}
-	}
-	return pids
-}
-
-// stopServers SIGTERMs the given PIDs, returning how many were signaled, so the
-// launching agent or editor respawns the current binary on next use.
-func stopServers(pids []int) int {
-	n := 0
-	for _, pid := range pids {
-		if syscall.Kill(pid, syscall.SIGTERM) == nil {
-			n++
-		}
-	}
-	return n
 }
 
 // stopWorkspaceServers stops the serve/lsp processes rooted at root.

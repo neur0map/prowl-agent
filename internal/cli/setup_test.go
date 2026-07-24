@@ -114,6 +114,26 @@ func TestApplySetupPlanRollsBackWhenExistingConfigIsInvalid(t *testing.T) {
 	}
 }
 
+func TestApplySetupPlanRejectsStaleConfiguration(t *testing.T) {
+	root := t.TempDir()
+	plan, err := BuildSetupPlan(root, []string{IntegrationAgents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".prowl", "config.toml"), []byte("changed = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySetupPlan(plan); err == nil {
+		t.Fatal("stale setup plan succeeded")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("stale setup plan wrote integration: %v", statErr)
+	}
+}
+
 func TestParseIntegrationSelection(t *testing.T) {
 	got, err := ParseIntegrationSelection("cursor, agents, cursor", nil)
 	if err != nil {
@@ -144,6 +164,13 @@ func TestInitDryRunJSONDoesNotWrite(t *testing.T) {
 	}
 	if report["dry_run"] != true {
 		t.Fatalf("dry_run report = %#v", report)
+	}
+	plan, ok := report["plan"].(map[string]any)
+	if !ok || plan["root"] != root {
+		t.Fatalf("plan root = %#v, want %q", report["plan"], root)
+	}
+	if _, found := plan["Root"]; found {
+		t.Fatalf("plan exposed incompatible Root key: %#v", plan)
 	}
 	for _, path := range []string{".prowl", ".cursor", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(root, path)); !os.IsNotExist(err) {

@@ -2,9 +2,10 @@ package setup
 
 import (
 	"context"
-	"reflect"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -129,6 +130,113 @@ func TestSetupRollbackPreservesFilesAfterMutationFailure(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(statErr) {
 		t.Fatalf("created file survived failed apply: %v", statErr)
+	}
+}
+
+func TestSetupApplyRejectsSymlinkedDestinationWithoutWrites(t *testing.T) {
+	root := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.md")
+	original := []byte("do not modify\n")
+	if err := os.WriteFile(victim, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationAgents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Apply(context.Background(), ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "symlink",
+	})
+	if err == nil {
+		t.Fatal("symlinked destination apply succeeded")
+	}
+	if got, readErr := os.ReadFile(victim); readErr != nil || string(got) != string(original) {
+		t.Fatalf("symlink target changed: %q, %v", got, readErr)
+	}
+}
+
+func TestSetupRollbackRemovesTransactionCreatedDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte("{ invalid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationCursor, IntegrationGeneric})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Apply(context.Background(), ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "directory-rollback",
+	})
+	if err == nil {
+		t.Fatal("invalid configuration apply succeeded")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".cursor")); !os.IsNotExist(statErr) {
+		t.Fatalf("transaction-created integration directory survived rollback: %v", statErr)
+	}
+}
+
+func TestSetupApplyRecoversInterruptedTransaction(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationAgents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "interrupted",
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(agentsBlock+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transaction := map[string]any{
+		"schema_version": 1,
+		"request":        request,
+		"snapshots": []map[string]any{{
+			"path": "AGENTS.md", "data": "", "mode": 0, "existed": false,
+		}},
+		"directories": []map[string]any{{
+			"path": ".prowl", "existed": false,
+		}},
+	}
+	data, err := json.Marshal(transaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".prowl", "setup-transaction.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Apply(context.Background(), request); err == nil {
+		t.Fatal("interrupted transaction was applied instead of recovered")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("interrupted integration was not restored: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".prowl", "setup-transaction.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("recovered transaction journal remained: %v", statErr)
 	}
 }
 

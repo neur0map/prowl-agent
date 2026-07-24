@@ -20,14 +20,13 @@ const (
 
 var allIntegrations = setup.AllIntegrations()
 
-
 // SetupAction remains the CLI's compatibility spelling for setup.Action.
 type SetupAction = setup.Action
 
 // SetupPlan carries the CLI-local project root while the domain plan remains
 // path-safe and root-free for workbench use.
 type SetupPlan struct {
-	Root string
+	Root string `json:"root"`
 	setup.Plan
 }
 
@@ -56,7 +55,12 @@ func ApplySetupPlan(plan SetupPlan) error {
 	if err != nil {
 		return err
 	}
-	return service.ApplyPlan(context.Background(), plan.Plan)
+	_, err = service.Apply(context.Background(), setup.ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion,
+		Approved:                     true, IdempotencyKey: "cli:" + plan.Hash,
+	})
+	return err
 }
 
 func VerifySetupPlan(plan SetupPlan) error {

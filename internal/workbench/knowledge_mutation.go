@@ -123,6 +123,9 @@ func safeKnowledgeDecisionAudit(audit knowledge.DecisionAudit, proposal knowledg
 	if audit.Action == knowledge.DecisionAccept && proposal.Status != "accepted" || audit.Action == knowledge.DecisionReject && proposal.Status != "rejected" {
 		return knowledge.DecisionAudit{}, ErrInvalidDerivedData
 	}
+	if len(audit.Rollback.Paths) != 3 || audit.Rollback.Paths[0] != proposal.TargetPath || audit.Rollback.Paths[1] != "index.md" || audit.Rollback.Paths[2] != "log.md" {
+		return knowledge.DecisionAudit{}, ErrInvalidDerivedData
+	}
 	if _, err := time.Parse(time.RFC3339Nano, audit.DecidedAt); err != nil {
 		return knowledge.DecisionAudit{}, ErrInvalidDerivedData
 	}

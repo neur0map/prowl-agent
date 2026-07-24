@@ -3,6 +3,7 @@ package workbench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -139,6 +140,52 @@ func TestKnowledgeProposalDetailAcceptsSharedLocalPrincipalAudit(t *testing.T) {
 	}
 	if detail.Proposal.Decision == nil || detail.Proposal.Decision.PrincipalID != knowledge.LocalPrincipalID {
 		t.Fatalf("proposal decision=%+v", detail.Proposal.Decision)
+	}
+}
+
+func TestKnowledgeProposalRejectsPersistedAuditWithTruncatedRollbackPlan(t *testing.T) {
+	project := openWorkbenchProject(t, nil)
+	if err := project.Knowledge.Init(); err != nil {
+		t.Fatal(err)
+	}
+	candidatePath := filepath.Join(t.TempDir(), "candidate.md")
+	if err := os.WriteFile(candidatePath, []byte("---\ntype: Decision\ntitle: Truncated rollback\n---\nAccepted by the CLI.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inbox := knowledge.NewReviewInbox(project.Workspace.Proposals, project.Knowledge)
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/truncated-rollback.md", "cli", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Decide(context.Background(), knowledge.DecisionRequest{
+		ProposalID: proposal.ID, Action: knowledge.DecisionAccept, ExpectedVersion: state.Version,
+		IdempotencyKey: "truncated-rollback-audit", PrincipalID: knowledge.LocalPrincipalID,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	state, err = inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Proposal.Decision.Rollback.Paths = state.Proposal.Decision.Rollback.Paths[:2]
+	data, err := json.Marshal(state.Proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project.Workspace.Proposals, proposal.ID, "proposal.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := service.KnowledgeProposal(context.Background(), proposal.ID)
+	if !errors.Is(err, ErrInvalidDerivedData) || detail != (KnowledgeProposalDetail{}) {
+		t.Fatalf("detail=%+v err=%v", detail, err)
 	}
 }
 

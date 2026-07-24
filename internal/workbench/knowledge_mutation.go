@@ -64,7 +64,7 @@ func (service *Service) DecideKnowledgeProposal(ctx context.Context, id string, 
 		Action:          action,
 		ExpectedVersion: input.ExpectedVersion,
 		IdempotencyKey:  input.IdempotencyKey,
-		PrincipalID:     knowledge.LocalPrincipalID,
+		PrincipalID:     service.localPrincipalID(),
 	}, time.Now().UTC())
 	if errors.Is(err, fs.ErrNotExist) {
 		return KnowledgeProposalDecision{}, ErrKnowledgeNotFound

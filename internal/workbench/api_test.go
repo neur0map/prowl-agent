@@ -372,6 +372,110 @@ func TestAPIAllFailuresUseStableBoundedEnvelope(t *testing.T) {
 	}
 }
 
+func TestRouteInventoryRegistersSetupSubtree(t *testing.T) {
+	project := openWorkbenchProject(t, nil)
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		method, path, body string
+		want               int
+	}{
+		{method: http.MethodGet, path: "/api/v1/setup/detect", want: http.StatusOK},
+		{method: http.MethodPost, path: "/api/v1/setup/plan", body: `{"integrations":["agents"]}`, want: http.StatusOK},
+		{method: http.MethodPost, path: "/api/v1/setup/apply", body: `{}`, want: http.StatusBadRequest},
+		{method: http.MethodPost, path: "/api/v1/setup/verify", body: `{"integrations":[]}`, want: http.StatusOK},
+	}
+	for _, test := range tests {
+		request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+		request.Host = "127.0.0.1:43117"
+		request.Header.Set("Authorization", "Bearer test-secret")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != test.want {
+			t.Fatalf("%s %s status=%d body=%q want=%d", test.method, test.path, response.Code, response.Body.String(), test.want)
+		}
+	}
+}
+
+func TestRouteInventory(t *testing.T) {
+	want := []string{
+		"POST /api/v1/auth/bootstrap",
+		"GET /api/v1/health",
+		"GET /api/v1/brief",
+		"GET /api/v1/explore",
+		"GET /api/v1/tours/{tour_id}",
+		"GET /api/v1/source",
+		"POST /api/v1/context/search",
+		"POST /api/v1/context/get",
+		"POST /api/v1/impact",
+		"GET /api/v1/knowledge",
+		"GET /api/v1/knowledge/{id}",
+		"GET /api/v1/knowledge/proposals/{id}",
+		"POST /api/v1/knowledge/proposals/{id}/accept",
+		"POST /api/v1/knowledge/proposals/{id}/reject",
+		"GET /api/v1/timeline",
+		"GET /api/v1/setup/detect",
+		"POST /api/v1/setup/plan",
+		"POST /api/v1/setup/apply",
+		"POST /api/v1/setup/verify",
+	}
+	got := make([]string, 0, len(routeInventory()))
+	for _, route := range routeInventory() {
+		got = append(got, route.Method+" "+route.Path)
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("route inventory:\n got %s\nwant %s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestRequestBoundsRejectSetupBodies(t *testing.T) {
+	project := openWorkbenchProject(t, nil)
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"integrations":["` + strings.Repeat("x", MaxSetupRequestBytes) + `"]}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/plan", strings.NewReader(body))
+	request.Host = "127.0.0.1:43117"
+	request.Header.Set("Authorization", "Bearer test-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized setup status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
+func TestMutationAuthRequiresConfirmedSetupRequest(t *testing.T) {
+	project := openWorkbenchProject(t, nil)
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"integrations":[],"plan_hash":"plan","expected_project_config_version":"version","approved":false,"idempotency_key":"key"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/apply", strings.NewReader(body))
+	request.Host = "127.0.0.1:43117"
+	request.Header.Set("Authorization", "Bearer test-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"approval_required"`) {
+		t.Fatalf("unconfirmed setup mutation status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
 func TestAPIRequestIDRejectsMalformedAndEntropyFailureStaysUnique(t *testing.T) {
 	generator := func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
 	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", RequestIDGenerator: generator})

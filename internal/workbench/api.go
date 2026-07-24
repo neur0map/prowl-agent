@@ -36,6 +36,52 @@ type APIOptions struct {
 
 var fallbackRequestID atomic.Uint64
 
+type apiRoute struct {
+	Method string
+	Path   string
+}
+
+var declaredAPIRoutes = []apiRoute{
+	{Method: http.MethodPost, Path: bootstrapRoute},
+	{Method: http.MethodGet, Path: "/api/v1/health"},
+	{Method: http.MethodGet, Path: "/api/v1/brief"},
+	{Method: http.MethodGet, Path: "/api/v1/explore"},
+	{Method: http.MethodGet, Path: "/api/v1/tours/{tour_id}"},
+	{Method: http.MethodGet, Path: "/api/v1/source"},
+	{Method: http.MethodPost, Path: "/api/v1/context/search"},
+	{Method: http.MethodPost, Path: "/api/v1/context/get"},
+	{Method: http.MethodPost, Path: "/api/v1/impact"},
+	{Method: http.MethodGet, Path: "/api/v1/knowledge"},
+	{Method: http.MethodGet, Path: "/api/v1/knowledge/{id}"},
+	{Method: http.MethodGet, Path: "/api/v1/knowledge/proposals/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/knowledge/proposals/{id}/accept"},
+	{Method: http.MethodPost, Path: "/api/v1/knowledge/proposals/{id}/reject"},
+	{Method: http.MethodGet, Path: "/api/v1/timeline"},
+	{Method: http.MethodGet, Path: "/api/v1/setup/detect"},
+	{Method: http.MethodPost, Path: "/api/v1/setup/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/setup/apply"},
+	{Method: http.MethodPost, Path: "/api/v1/setup/verify"},
+}
+
+func routeInventory() []apiRoute {
+	return append([]apiRoute(nil), declaredAPIRoutes...)
+}
+
+func validateRouteInventory(routes []apiRoute) error {
+	seen := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		if route.Method != http.MethodGet && route.Method != http.MethodPost || !strings.HasPrefix(route.Path, "/api/v1/") {
+			return errors.New("invalid workbench route declaration")
+		}
+		key := route.Method + "\x00" + route.Path
+		if _, exists := seen[key]; exists {
+			return errors.New("duplicate workbench route declaration")
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
+}
+
 // NewAPI constructs the versioned workbench API. Network binding is handled by
 // the launcher; this handler independently enforces bearer and origin checks.
 func NewAPI(options APIOptions) (http.Handler, error) {
@@ -48,6 +94,14 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 	}
 	if options.RequestIDGenerator == nil {
 		options.RequestIDGenerator = rand.Read
+	}
+	if err := validateRouteInventory(routeInventory()); err != nil {
+		return nil, err
+	}
+
+	setupRoutes := serveSetupRoute(nil)
+	if options.Service != nil {
+		setupRoutes = serveSetupRoute(options.Service.setup)
 	}
 
 	routes := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -154,6 +208,9 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 			serveKnowledgeList(response, request, options.Service)
 		case "/api/v1/timeline":
 			serveTimeline(response, request, options.Service)
+		case "/api/v1/setup/detect", "/api/v1/setup/plan", "/api/v1/setup/apply", "/api/v1/setup/verify":
+			setupRoutes.ServeHTTP(response, request)
+			return
 		default:
 			if strings.HasPrefix(request.URL.Path, "/api/v1/knowledge/") {
 				serveKnowledgeRoute(response, request, options.Service)

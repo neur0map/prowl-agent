@@ -15,9 +15,20 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
+
+func TestPrincipalDerivation(t *testing.T) {
+	service, err := NewService(openWorkbenchProject(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := service.localPrincipalID(); got != knowledge.LocalPrincipalID {
+		t.Fatalf("principal=%q want=%q", got, knowledge.LocalPrincipalID)
+	}
+}
 
 func TestBriefBuildsBoundedProjectSummary(t *testing.T) {
 	project := openWorkbenchProject(t, map[string]string{

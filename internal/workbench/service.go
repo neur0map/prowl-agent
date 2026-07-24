@@ -17,6 +17,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/capability"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/query"
+	"github.com/prowl-agent/prowl-agent/internal/setup"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -78,6 +79,7 @@ type Health struct {
 // Service projects the application-owned graph without constructing alternate stores.
 type Service struct {
 	project       *application.Project
+	setup         *setup.Service
 	afterOverview func() // deterministic package test seam; invoked under ReadGuard
 }
 
@@ -85,7 +87,17 @@ func NewService(project *application.Project) (*Service, error) {
 	if project == nil || project.Workspace == nil || project.Store == nil || project.Query == nil || project.Context == nil || project.Knowledge == nil || project.Capabilities == nil || project.ReadGuard == nil {
 		return nil, errors.New("complete application project is required")
 	}
-	return &Service{project: project}, nil
+	setupService, err := setup.NewService(project.Workspace.Root)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{project: project, setup: setupService}, nil
+}
+
+// localPrincipalID is the only workbench actor identity. Browser payloads
+// never supply an authoritative principal.
+func (service *Service) localPrincipalID() string {
+	return knowledge.LocalPrincipalID
 }
 
 func (service *Service) Health(ctx context.Context) (Health, error) {

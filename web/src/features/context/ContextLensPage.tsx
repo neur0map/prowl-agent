@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks'
+import { useRef, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
 
 import { apiFetch } from '../../transport/api'
@@ -28,16 +28,18 @@ export async function searchContext(request: ContextSearchRequest): Promise<Cont
 export function ContextLensPage({ search = searchContext }: { search?: ContextSearchClient }) {
   const [question, setQuestion] = useState('')
   const [state, setState] = useState<ContextState>({ kind: 'empty' })
+  const requestID = useRef(0)
 
   function submit(event: JSX.TargetedEvent<HTMLFormElement, SubmitEvent>) {
     event.preventDefault()
     const trimmed = question.trim()
     if (trimmed === '') return
 
+    const currentRequestID = ++requestID.current
     setState({ kind: 'loading' })
     void search({ question: trimmed }).then(
-      (context) => setState({ kind: 'ready', context }),
-      () => setState({ kind: 'error' }),
+      (context) => { if (requestID.current === currentRequestID) setState({ kind: 'ready', context }) },
+      () => { if (requestID.current === currentRequestID) setState({ kind: 'error' }) },
     )
   }
 
@@ -86,10 +88,65 @@ function ContextResult({ context }: { context: ContextLens }) {
 }
 
 function isContextEnvelope(value: unknown): value is APIEnvelope<ContextLens> {
-  if (!isRecord(value) || !isRecord(value.data)) return false
-  return typeof value.data.summary === 'string'
-    && Array.isArray(value.data.items)
-    && isRecord(value.data.budget)
+  if (!isRecord(value) || !isRecord(value.data) || !isRecord(value.meta)) return false
+  const { data } = value
+  return typeof data.schema_version === 'string'
+    && (data.question === undefined || typeof data.question === 'string')
+    && typeof data.summary === 'string'
+    && Array.isArray(data.items)
+    && data.items.every(isContextItem)
+    && isContextBudget(data.budget)
+    && isNumberRecord(data.omitted)
+    && Array.isArray(data.next)
+    && data.next.every((item) => typeof item === 'string')
+    && (data.trace_id === undefined || typeof data.trace_id === 'string')
+}
+
+function isContextItem(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.kind === 'string'
+    && typeof value.title === 'string'
+    && (value.summary === undefined || typeof value.summary === 'string')
+    && (value.content === undefined || typeof value.content === 'string')
+    && isStringArray(value.why_selected)
+    && typeof value.freshness === 'string'
+    && isFiniteNumber(value.confidence)
+    && isStringArray(value.audience)
+    && Array.isArray(value.citations)
+    && value.citations.every(isCitation)
+    && typeof value.detail_resource === 'string'
+    && isFiniteNumber(value.estimated_tokens)
+}
+
+function isCitation(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.uri === 'string'
+    && (value.path === undefined || typeof value.path === 'string')
+    && (value.line_start === undefined || isFiniteNumber(value.line_start))
+    && (value.line_end === undefined || isFiniteNumber(value.line_end))
+    && (value.content_hash === undefined || typeof value.content_hash === 'string')
+}
+
+function isContextBudget(value: unknown): boolean {
+  return isRecord(value)
+    && (value.requested_tokens === undefined || isFiniteNumber(value.requested_tokens))
+    && (value.requested_bytes === undefined || isFiniteNumber(value.requested_bytes))
+    && isFiniteNumber(value.estimated_tokens)
+    && isFiniteNumber(value.estimated_bytes)
+    && isFiniteNumber(value.exact_bytes)
+}
+
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isNumberRecord(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every(isFiniteNumber)
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

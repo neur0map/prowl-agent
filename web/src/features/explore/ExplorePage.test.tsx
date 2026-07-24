@@ -1,11 +1,15 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/preact'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ExplorePage } from './ExplorePage'
 import type { Explore } from '../../transport/contracts'
 
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../../transport/api', () => ({ apiFetch }))
+
 afterEach(() => {
   cleanup()
+  apiFetch.mockReset()
   window.history.replaceState(null, '', '/')
 })
 
@@ -52,12 +56,31 @@ describe('ExplorePage', () => {
     expect(screen.getByText('Main service')).toBeTruthy()
     expect(screen.getByText('HTTP server')).toBeTruthy()
     const link = screen.getByRole('link', { name: 'cmd/server/main.go lines 8–20' })
-    expect(link.getAttribute('href')).toBe('#source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20')
+    expect(link.getAttribute('href')).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20')
 
     expect(link.tagName).toBe('A')
     link.focus()
     expect(document.activeElement).toBe(link)
     link.click()
-    await waitFor(() => expect(window.location.hash).toBe('#source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20'))
+    await waitFor(() => expect(window.location.hash).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20'))
+  })
+
+  it('treats malformed rendered explore data as unavailable', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({
+      data: { ...populatedExplore, sections: [{ ...populatedExplore.sections[0], facts: 'not-an-array' }] },
+      meta: {},
+    })))
+
+    render(<ExplorePage />)
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Project exploration unavailable. Refresh to retry.')
+  })
+
+  it('requires the API envelope metadata', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: populatedExplore, meta: null })))
+
+    render(<ExplorePage />)
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Project exploration unavailable. Refresh to retry.')
   })
 })

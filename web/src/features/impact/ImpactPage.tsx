@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks'
+import { useRef, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
 
 import { apiFetch } from '../../transport/api'
@@ -28,16 +28,18 @@ export async function loadImpact(path: string): Promise<Impact> {
 export function ImpactPage({ load = loadImpact }: { load?: ImpactLoader }) {
   const [path, setPath] = useState('')
   const [state, setState] = useState<ImpactState>({ kind: 'empty' })
+  const requestID = useRef(0)
 
   function submit(event: JSX.TargetedEvent<HTMLFormElement, SubmitEvent>) {
     event.preventDefault()
     const trimmed = path.trim()
     if (trimmed === '') return
 
+    const currentRequestID = ++requestID.current
     setState({ kind: 'loading' })
     void load(trimmed).then(
-      (impact) => setState({ kind: 'ready', impact }),
-      () => setState({ kind: 'error' }),
+      (impact) => { if (requestID.current === currentRequestID) setState({ kind: 'ready', impact }) },
+      () => { if (requestID.current === currentRequestID) setState({ kind: 'error' }) },
     )
   }
 
@@ -75,13 +77,115 @@ function ImpactEvidence({ impact }: { impact: Impact }) {
 }
 
 function isImpactEnvelope(value: unknown): value is APIEnvelope<Impact> {
-  if (!isRecord(value) || !isRecord(value.data)) return false
-  return typeof value.data.path === 'string'
-    && isRecord(value.data.blast)
-    && isRecord(value.data.relations)
-    && isRecord(value.data.tests)
-    && isRecord(value.data.entrypoints)
-    && Array.isArray(value.data.knowledge)
+  if (!isRecord(value) || !isRecord(value.data) || !isRecord(value.meta)) return false
+  const { data } = value
+  return typeof data.path === 'string'
+    && isBlastSummary(data.blast)
+    && isRelations(data.relations)
+    && isTestsResult(data.tests)
+    && isEntrypointSet(data.entrypoints)
+    && Array.isArray(data.knowledge)
+    && data.knowledge.every(isKnowledgeEvidence)
+}
+
+function isBlastSummary(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.file === 'string'
+    && isFiniteNumber(value.total)
+    && isFiniteNumber(value.direct)
+    && Array.isArray(value.by_subsystem)
+    && value.by_subsystem.every((entry) => isRecord(entry) && typeof entry.subsystem === 'string' && isFiniteNumber(entry.count))
+    && isStringArray(value.direct_files)
+}
+
+function isRelations(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.file === 'string'
+    && typeof value.exists === 'boolean'
+    && Array.isArray(value.symbols)
+    && value.symbols.every(isSymbol)
+    && Array.isArray(value.includes)
+    && value.includes.every(isRelationEdge)
+    && Array.isArray(value.included_by)
+    && value.included_by.every(isRelationEdge)
+}
+
+function isSymbol(value: unknown): boolean {
+  return isRecord(value)
+    && isFiniteNumber(value.id)
+    && typeof value.name === 'string'
+    && typeof value.kind === 'string'
+    && typeof value.signature === 'string'
+    && typeof value.file === 'string'
+    && isFiniteNumber(value.line)
+    && isFiniteNumber(value.end_line)
+}
+
+function isRelationEdge(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.file === 'string'
+    && typeof value.kind === 'string'
+    && isFiniteNumber(value.line)
+    && typeof value.raw === 'string'
+    && typeof value.resolved === 'boolean'
+}
+
+function isTestsResult(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.file === 'string'
+    && (value.tests === undefined || isStringArray(value.tests))
+    && (value.runners === undefined || (Array.isArray(value.runners) && value.runners.every(isRunner)))
+    && (value.limited === undefined || typeof value.limited === 'boolean')
+    && typeof value.note === 'string'
+}
+
+function isRunner(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.src_type === 'string'
+    && isFiniteNumber(value.src_id)
+    && (value.dst_type === undefined || typeof value.dst_type === 'string')
+    && (value.dst_id === undefined || isFiniteNumber(value.dst_id))
+    && typeof value.kind === 'string'
+    && typeof value.file === 'string'
+    && isFiniteNumber(value.line)
+    && typeof value.resolved === 'boolean'
+    && (value.raw === undefined || typeof value.raw === 'string')
+}
+
+function isEntrypointSet(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.file === 'string'
+    && isFiniteNumber(value.count)
+    && isStringArray(value.entrypoints)
+}
+
+function isKnowledgeEvidence(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.title === 'string'
+    && typeof value.type === 'string'
+    && typeof value.status === 'string'
+    && isSourceAnchor(value.anchor)
+}
+
+function isSourceAnchor(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.path === 'string'
+    && typeof value.line_start === 'number'
+    && Number.isInteger(value.line_start)
+    && value.line_start > 0
+    && typeof value.line_end === 'number'
+    && Number.isInteger(value.line_end)
+    && value.line_end >= value.line_start
+    && (value.content_hash === undefined || typeof value.content_hash === 'string')
+}
+
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

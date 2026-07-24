@@ -72,12 +72,41 @@ export function ExplorePage({ load = loadExplore }: { load?: ExploreLoader }) {
 }
 
 function isExploreEnvelope(value: unknown): value is APIEnvelope<Explore> {
-  if (!isRecord(value) || !isRecord(value.data)) return false
+  if (!isRecord(value) || !isRecord(value.data) || !isRecord(value.meta)) return false
   const { data } = value
   return isRecord(data.workspace)
     && typeof data.workspace.name === 'string'
     && Array.isArray(data.sections)
+    && data.sections.every(isExploreSection)
     && Array.isArray(data.tours)
+    && data.tours.every((tour) => isRecord(tour)
+      && typeof tour.id === 'string'
+      && typeof tour.title === 'string'
+      && Number.isInteger(tour.steps))
+}
+
+function isExploreSection(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.title === 'string'
+    && typeof value.description === 'string'
+    && Array.isArray(value.facts)
+    && value.facts.every((fact) => isRecord(fact)
+      && typeof fact.id === 'string'
+      && typeof fact.label === 'string'
+      && typeof fact.detail === 'string'
+      && (fact.anchor === undefined || isSourceTarget(fact.anchor)))
+}
+
+function isSourceTarget(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.path === 'string'
+    && typeof value.line_start === 'number'
+    && Number.isInteger(value.line_start)
+    && value.line_start > 0
+    && typeof value.line_end === 'number'
+    && Number.isInteger(value.line_end)
+    && value.line_end >= value.line_start
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

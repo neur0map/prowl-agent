@@ -1,10 +1,16 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ImpactPage } from './ImpactPage'
 import type { Impact } from '../../transport/contracts'
 
-afterEach(cleanup)
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../../transport/api', () => ({ apiFetch }))
+
+afterEach(() => {
+  cleanup()
+  apiFetch.mockReset()
+})
 
 const populatedImpact: Impact = {
   path: 'internal/auth/service.go',
@@ -71,11 +77,59 @@ describe('ImpactPage', () => {
     expect(screen.getByText('3 transitive dependents')).toBeTruthy()
     expect(screen.getByText('internal/auth/service_test.go')).toBeTruthy()
     const link = screen.getByRole('link', { name: 'docs/auth.md lines 4–9' })
-    expect(link.getAttribute('href')).toBe('#source?path=docs%2Fauth.md&line_start=4&line_end=9')
+    expect(link.getAttribute('href')).toBe('#/source?path=docs%2Fauth.md&line_start=4&line_end=9')
+  })
+
+  it('ignores impact evidence superseded by a later path submission', async () => {
+    const first = deferredPromise<Impact>()
+    const newerImpact = { ...populatedImpact, path: 'internal/auth/handler.go' }
+    let calls = 0
+    render(<ImpactPage load={() => ++calls === 1 ? first.promise : Promise.resolve(newerImpact)} />)
+
+    submitPath('internal/auth/service.go')
+    await Promise.resolve()
+    submitPath('internal/auth/handler.go')
+    expect(await screen.findByRole('heading', { name: 'Impact: internal/auth/handler.go' })).toBeTruthy()
+
+    first.resolve(populatedImpact)
+    await screen.findByRole('heading', { name: 'Impact: internal/auth/handler.go' })
+    expect(screen.queryByRole('heading', { name: 'Impact: internal/auth/service.go' })).toBeNull()
+  })
+
+  it('treats malformed rendered impact data as unavailable', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({
+      data: { ...populatedImpact, knowledge: [{ ...populatedImpact.knowledge[0], anchor: 'not-an-anchor' }] },
+      meta: {},
+    })))
+
+    render(<ImpactPage />)
+    submitPath('internal/auth/service.go')
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Impact evidence unavailable. Try another source path.')
+  })
+
+  it('requires impact envelope metadata', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: populatedImpact, meta: null })))
+
+    render(<ImpactPage />)
+    submitPath('internal/auth/service.go')
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Impact evidence unavailable. Try another source path.')
   })
 })
 
 function submitPath(path: string) {
   fireEvent.input(screen.getByLabelText('Source path'), { target: { value: path } })
   fireEvent.submit(screen.getByRole('form', { name: 'Inspect source impact' }))
+}
+
+function deferredPromise<T>() {
+  let resolve: (value: T) => void = () => {}
+  const thenable: PromiseLike<T> = {
+    then(onfulfilled) {
+      resolve = (value) => { void onfulfilled?.(value) }
+      return Promise.race<never>([])
+    },
+  }
+  return { promise: Promise.resolve(thenable), resolve: (value: T) => resolve(value) }
 }

@@ -2,10 +2,15 @@
 package config
 
 import (
+	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 )
 
 // AI holds the optional semantic-assist settings (wired in M2).
@@ -48,6 +53,8 @@ type Rules struct {
 const (
 	configName = "config.toml"
 	rulesName  = "rules.toml"
+	// MaxConfigBytes bounds deadline-sensitive workbench configuration reads.
+	MaxConfigBytes int64 = 1 << 20
 )
 
 // Default returns the starting configuration for a new workspace.
@@ -143,6 +150,34 @@ func Load(dir string) (Config, error) {
 		return c, nil
 	}
 	_, err := toml.DecodeFile(p, &c)
+	return c, err
+}
+
+// LoadContext reads a regular config.toml through one pinned directory root.
+// It is used by bounded workbench startup; ordinary Load behavior is unchanged.
+func LoadContext(ctx context.Context, dir string) (Config, error) {
+	c := Default()
+	if err := ctx.Err(); err != nil {
+		return c, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return c, err
+	}
+	defer root.Close()
+	file, err := boundedio.OpenRegular(root, configName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	defer file.Close()
+	data, err := boundedio.ReadAllContext(ctx, file, MaxConfigBytes)
+	if err != nil {
+		return c, err
+	}
+	_, err = toml.Decode(string(data), &c)
 	return c, err
 }
 

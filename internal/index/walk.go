@@ -4,6 +4,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/cespare/xxhash/v2"
+
+	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 )
 
 // alwaysSkipDirs are never walked.
@@ -56,6 +59,79 @@ func walkFilesContext(ctx context.Context, root string, ignore []string, fn func
 		}
 		return fn(rel, d)
 	})
+}
+
+// walkFilesCandidateLimitContext uses the same ignore policy as walkFilesContext
+// but reads directory entries in bounded batches so a single huge directory
+// cannot postpone cancellation by forcing filepath.WalkDir to load and sort it.
+// The max+1 candidate is rejected before fn can stat or hash it.
+func walkFilesCandidateLimitContext(ctx context.Context, root *os.Root, ignore []string, maxCandidates int, fn func(rel string, d fs.DirEntry) error) error {
+	rootPatterns, err := loadPinnedGitignore(ctx, root, "")
+	if err != nil {
+		return err
+	}
+	gitignores := map[string][]string{"": rootPatterns}
+	candidates := 0
+	var walkDirectory func(string) error
+	walkDirectory = func(relativeDirectory string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		directoryName := relativeDirectory
+		if directoryName == "" {
+			directoryName = "."
+		}
+		handle, err := boundedio.OpenDirectory(root, directoryName)
+		if err != nil {
+			return err
+		}
+		defer handle.Close()
+		for {
+			entries, readErr := handle.ReadDir(128)
+			for _, entry := range entries {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				rel := entry.Name()
+				if relativeDirectory != "" {
+					rel = relativeDirectory + "/" + rel
+				}
+				if entry.IsDir() {
+					if alwaysSkipDirs[entry.Name()] || ignoredBy(gitignores, ignore, rel, true) {
+						continue
+					}
+					patterns, err := loadPinnedGitignore(ctx, root, rel)
+					if err != nil {
+						return err
+					}
+					if len(patterns) > 0 {
+						gitignores[rel] = patterns
+					}
+					if err := walkDirectory(rel); err != nil {
+						return err
+					}
+					continue
+				}
+				if ignoredBy(gitignores, ignore, rel, false) {
+					continue
+				}
+				candidates++
+				if candidates > maxCandidates {
+					return CandidateLimitError{Limit: maxCandidates}
+				}
+				if err := fn(rel, entry); err != nil {
+					return err
+				}
+			}
+			if readErr == io.EOF {
+				return nil
+			}
+			if readErr != nil {
+				return readErr
+			}
+		}
+	}
+	return walkDirectory("")
 }
 
 // ignoredBy reports whether rel is ignored, composing the root and every
@@ -139,23 +215,104 @@ type SourceSnapshot struct {
 	Paths     []string
 }
 
+// CandidateLimitError reports that a bounded source snapshot encountered more
+// non-ignored file candidates than its configured limit.
+type CandidateLimitError struct {
+	Limit int
+}
+
+func (e CandidateLimitError) Error() string {
+	return fmt.Sprintf("source snapshot candidate limit exceeded: %d", e.Limit)
+}
+
 // SourceSnapshotWithOptionsContext constructs a content-aware source snapshot.
 func SourceSnapshotWithOptionsContext(ctx context.Context, root string, opt Options) (SourceSnapshot, error) {
-	var entries []string
-	var paths []string
-	err := walkFilesContext(ctx, root, opt.Ignore, func(rel string, d fs.DirEntry) error {
+	return sourceSnapshotWithOptionsContext(ctx, root, opt, noCandidateLimit)
+}
+
+// noCandidateLimit is reserved for the unbounded legacy API. The exported
+// bounded API rejects nonpositive limits.
+const noCandidateLimit = 0
+
+func sourceSnapshotWithOptionsContext(ctx context.Context, root string, opt Options, maxCandidates int) (SourceSnapshot, error) {
+	return sourceSnapshotWithOptionsInspectContext(ctx, root, opt, maxCandidates, snapshotCandidateEntry)
+}
+
+type snapshotCandidateInspector func(context.Context, *os.Root, string, string, fs.DirEntry) (string, error)
+
+func snapshotCandidateEntry(ctx context.Context, pinned *os.Root, root, rel string, d fs.DirEntry) (string, error) {
+	if pinned == nil {
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return "", err
 		}
 		content, err := fileSignature(ctx, filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s\x00%d\x00%d\x00%x", rel, info.Size(), info.ModTime().UnixNano(), content), nil
+	}
+	file, err := boundedio.OpenRegular(pinned, rel)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	// Preserve the canonical snapshot contract: DirEntry.Info describes the
+	// directory entry itself (including symlink metadata), while content is
+	// hashed through the pinned, validated target descriptor.
+	info, err := d.Info()
+	if err != nil {
+		return "", err
+	}
+	content, err := fileDescriptorSignature(ctx, file)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s\x00%d\x00%d\x00%x", rel, info.Size(), info.ModTime().UnixNano(), content), nil
+}
+
+func sourceSnapshotWithOptionsInspectContext(ctx context.Context, root string, opt Options, maxCandidates int, inspect snapshotCandidateInspector) (SourceSnapshot, error) {
+	var entries []string
+	var paths []string
+	var pinned *os.Root
+	inspectCandidate := func(rel string, d fs.DirEntry) error {
+		entry, err := inspect(ctx, pinned, root, rel, d)
+		if err != nil {
 			return err
 		}
-		entries = append(entries, fmt.Sprintf("%s\x00%d\x00%d\x00%x", rel, info.Size(), info.ModTime().UnixNano(), content))
+		entries = append(entries, entry)
 		paths = append(paths, rel)
 		return nil
-	})
+	}
+	var err error
+	if maxCandidates > 0 {
+		if err := ctx.Err(); err != nil {
+			return SourceSnapshot{}, err
+		}
+		var rootInfo fs.FileInfo
+		rootInfo, err = os.Lstat(root)
+		if err != nil {
+			return SourceSnapshot{}, err
+		}
+		if rootInfo.IsDir() {
+			pinned, err = os.OpenRoot(root)
+			if err != nil {
+				return SourceSnapshot{}, err
+			}
+			defer pinned.Close()
+			var pinnedInfo fs.FileInfo
+			pinnedInfo, err = pinned.Stat(".")
+			if err != nil {
+				return SourceSnapshot{}, err
+			}
+			if !os.SameFile(rootInfo, pinnedInfo) {
+				return SourceSnapshot{}, errors.New("source root changed while opening bounded snapshot")
+			}
+			err = walkFilesCandidateLimitContext(ctx, pinned, opt.Ignore, maxCandidates, inspectCandidate)
+		}
+	} else {
+		err = walkFilesContext(ctx, root, opt.Ignore, inspectCandidate)
+	}
 	if err != nil {
 		return SourceSnapshot{}, err
 	}
@@ -184,12 +341,25 @@ func SourceSnapshotWithOptionsContext(ctx context.Context, root string, opt Opti
 	return SourceSnapshot{Signature: h.Sum64(), Paths: paths}, nil
 }
 
+// SourceSnapshotWithOptionsLimitContext constructs a content-aware source
+// snapshot while allowing at most maxCandidates non-ignored files.
+func SourceSnapshotWithOptionsLimitContext(ctx context.Context, root string, opt Options, maxCandidates int) (SourceSnapshot, error) {
+	if maxCandidates <= 0 {
+		return SourceSnapshot{}, fmt.Errorf("maxCandidates must be positive: %d", maxCandidates)
+	}
+	return sourceSnapshotWithOptionsContext(ctx, root, opt, maxCandidates)
+}
+
 func fileSignature(ctx context.Context, path string) (uint64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer file.Close()
+	return fileDescriptorSignature(ctx, file)
+}
+
+func fileDescriptorSignature(ctx context.Context, file *os.File) (uint64, error) {
 	h := xxhash.New()
 	buffer := make([]byte, 128*1024)
 	for {
@@ -209,11 +379,37 @@ func fileSignature(ctx context.Context, path string) (uint64, error) {
 	}
 }
 
+const maxGitignoreBytes int64 = 1 << 20
+
+func loadPinnedGitignore(ctx context.Context, root *os.Root, relativeDirectory string) ([]string, error) {
+	name := ".gitignore"
+	if relativeDirectory != "" {
+		name = relativeDirectory + "/.gitignore"
+	}
+	file, err := boundedio.OpenRegular(root, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := boundedio.ReadAllContext(ctx, file, maxGitignoreBytes)
+	if err != nil {
+		return nil, err
+	}
+	return parseGitignore(data), nil
+}
+
 func loadGitignore(root string) []string {
 	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 	if err != nil {
 		return nil
 	}
+	return parseGitignore(data)
+}
+
+func parseGitignore(data []byte) []string {
 	var pats []string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)

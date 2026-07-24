@@ -2,9 +2,11 @@ package application
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/prowl-agent/prowl-agent/internal/assist"
+	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -64,6 +67,175 @@ func TestOpenProjectReturnsMalformedConfigError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "load project config") {
 		t.Fatalf("error = %q, want configuration context", err)
+	}
+}
+
+func TestStartupFreshnessOpensCurrentProjectWithoutRefreshing(t *testing.T) {
+	root := newProjectFixture(t, config.Default())
+	seed, err := OpenProject(context.Background(), root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer project.Close()
+	if project.InitialRefresh != (RefreshResult{}) {
+		t.Fatalf("bounded startup unexpectedly refreshed: %+v", project.InitialRefresh)
+	}
+}
+
+func TestStartupFreshnessOpensCurrentProjectWithInRootSourceSymlink(t *testing.T) {
+	root := newProjectFixture(t, config.Default())
+	if err := os.Symlink("sample.go", filepath.Join(root, "alias.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	seed, err := OpenProject(context.Background(), root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
+	if err != nil {
+		t.Fatalf("fresh canonical generation refused: %v", err)
+	}
+	defer project.Close()
+}
+
+func TestStartupFreshnessRequiresRefreshWithoutPublishingOrReturningProject(t *testing.T) {
+	root := newProjectFixture(t, config.Default())
+	seed, err := OpenProject(context.Background(), root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeSource(t, root, "package sample\n\nfunc StaleAtStartup() {}\n")
+
+	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
+	if project != nil || !errors.Is(err, ErrStartupRefreshRequired) {
+		t.Fatalf("project=%+v error=%v want startup refresh required", project, err)
+	}
+}
+
+func TestStartupFreshnessCandidateAndDeadlineBoundsReturnTypedError(t *testing.T) {
+	t.Run("candidate cap", func(t *testing.T) {
+		root := newProjectFixture(t, config.Default())
+		if err := os.WriteFile(filepath.Join(root, "second.go"), []byte("package sample\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 1})
+		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) {
+			t.Fatalf("project=%+v error=%v want startup refresh required", project, err)
+		}
+	})
+
+	t.Run("single deadline", func(t *testing.T) {
+		root := newProjectFixture(t, config.Default())
+		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Nanosecond, CandidatePaths: 2000})
+		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("project=%+v error=%v want typed deadline", project, err)
+		}
+	})
+
+	t.Run("contended generation probe", func(t *testing.T) {
+		root := newProjectFixture(t, config.Default())
+		seed, err := OpenProject(context.Background(), root, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lockPath := filepath.Join(seed.Workspace.Path, "index-refresh.lock")
+		if err := seed.Close(); err != nil {
+			t.Fatal(err)
+		}
+		lock := flock.New(lockPath)
+		if err := lock.Lock(); err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Unlock()
+		started := time.Now()
+		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: 30 * time.Millisecond, CandidatePaths: 2000})
+		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("project=%+v error=%v want typed lock deadline", project, err)
+		}
+		if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+			t.Fatalf("bounded startup took %v", elapsed)
+		}
+	})
+
+	t.Run("contended store assembly", func(t *testing.T) {
+		root := newProjectFixture(t, config.Default())
+		seed, err := OpenProject(context.Background(), root, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dbPath := seed.Workspace.DB
+		if err := seed.Close(); err != nil {
+			t.Fatal(err)
+		}
+		locker, err := sql.Open("sqlite3", "file:"+dbPath+"?_busy_timeout=5000")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer locker.Close()
+		if _, err := locker.Exec(`PRAGMA locking_mode=EXCLUSIVE`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := locker.Exec(`BEGIN EXCLUSIVE`); err != nil {
+			t.Fatal(err)
+		}
+		defer locker.Exec(`ROLLBACK`)
+		started := time.Now()
+		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: 40 * time.Millisecond, CandidatePaths: 2000})
+		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("project=%+v error=%v want typed store deadline", project, err)
+		}
+		if elapsed := time.Since(started); elapsed > 300*time.Millisecond {
+			t.Fatalf("bounded store startup took %v", elapsed)
+		}
+	})
+}
+
+func TestStartupFreshnessFIFOConfigReturnsWithinDefaultDeadline(t *testing.T) {
+	if _, err := exec.LookPath("mkfifo"); err != nil {
+		t.Skip("mkfifo unavailable")
+	}
+	root := newProjectFixture(t, config.Default())
+	configPath := filepath.Join(root, ".prowl", "config.toml")
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("mkfifo", configPath).Run(); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, DefaultStartupLimits())
+	if project != nil || !errors.Is(err, boundedio.ErrNonRegular) {
+		t.Fatalf("project=%+v error=%v want non-regular config refusal", project, err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("FIFO config escaped startup bound: %v", elapsed)
+	}
+}
+
+func TestStartupFreshnessMalformedConfigIsNotRefreshRequired(t *testing.T) {
+	root := newProjectFixture(t, config.Default())
+	configPath := filepath.Join(root, workspace.Dir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("languages = [\"go\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
+	if project != nil || err == nil || errors.Is(err, ErrStartupRefreshRequired) || !strings.Contains(err.Error(), "load project config") {
+		t.Fatalf("project=%+v error=%v want malformed config", project, err)
 	}
 }
 

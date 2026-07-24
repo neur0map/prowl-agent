@@ -2,9 +2,13 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -233,42 +237,139 @@ type Overview struct {
 	Hotspots        []store.FanRow      `json:"hotspots"`
 }
 
-// Overview assembles a high-level map of the project from the graph.
+// OverviewLimits hard-bounds every row-producing input to OverviewContext.
+type OverviewLimits struct {
+	Files, Symbols, Edges, Resources, Chunks int
+	DependencyEdges, ResourceLinks           int
+	Palette, Keybinds, Hotspots              int
+	Languages, Roles                         int
+	Docs, Entrypoints, Clusters              int
+	StringBytes                              int
+}
+
+// DefaultOverviewLimits returns fresh limits preserving Overview's compact output
+// while preventing callers from mutating process-global defaults.
+func DefaultOverviewLimits() OverviewLimits {
+	return OverviewLimits{
+		Files: 10000, Symbols: 100000, Edges: 250000, Resources: 100000, Chunks: 100000,
+		DependencyEdges: 50000, ResourceLinks: 10000,
+		Palette: 16, Keybinds: 10000, Hotspots: 5,
+		Languages: 64, Roles: 64, Docs: 8, Entrypoints: 20, Clusters: 8,
+		StringBytes: 4096,
+	}
+}
+
+// BoundedWorkError reports that a derived projection exceeded a hard limit.
+type BoundedWorkError struct {
+	Component string
+	Limit     int
+}
+
+func (err *BoundedWorkError) Error() string {
+	return fmt.Sprintf("overview %s exceeds limit %d", err.Component, err.Limit)
+}
+
+// Overview is the compatibility wrapper for the bounded context-aware path.
 func (q *Querier) Overview() (Overview, error) {
-	release, err := q.beginRead(context.Background())
+	return q.OverviewContext(context.Background(), DefaultOverviewLimits())
+}
+
+// OverviewContext assembles a bounded high-level map and passes ctx to every SQL read.
+func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (Overview, error) {
+	if err := validateOverviewLimits(limits); err != nil {
+		return Overview{}, err
+	}
+	release, err := q.beginRead(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
 	defer release()
 	var o Overview
-	c, err := q.s.Counts()
+	c, err := q.s.CountsContext(ctx, store.OverviewCountLimits{
+		Files: limits.Files + 1, Symbols: limits.Symbols + 1, Edges: limits.Edges + 1,
+		Resources: limits.Resources + 1, Chunks: limits.Chunks + 1, Languages: limits.Languages + 1,
+	})
 	if err != nil {
+		return o, err
+	}
+	if len(c.Langs) > limits.Languages {
+		return o, bounded("languages", limits.Languages)
+	}
+	for _, aggregate := range []struct {
+		component string
+		count     int
+		limit     int
+	}{
+		{"files", c.Files, limits.Files}, {"symbols", c.Symbols, limits.Symbols}, {"edges", c.Edges, limits.Edges},
+		{"resources", c.Resources, limits.Resources}, {"chunks", c.Chunks, limits.Chunks},
+	} {
+		if aggregate.count > aggregate.limit {
+			return o, bounded(aggregate.component, aggregate.limit)
+		}
+	}
+	if err := validateIdentifierMap(c.Langs, limits.StringBytes, "language identifiers"); err != nil {
 		return o, err
 	}
 	o.Counts = c
 
-	files, err := q.s.AllFiles()
+	files, err := q.s.AllFilesContext(ctx, limits.Files+1)
 	if err != nil {
+		return o, err
+	}
+	if len(files) > limits.Files {
+		return o, bounded("files", limits.Files)
+	}
+	if q.afterOverviewRead != nil {
+		q.afterOverviewRead()
+	}
+	if err := ctx.Err(); err != nil {
 		return o, err
 	}
 	o.Roles = map[string]int{}
 	for _, f := range files {
+		if err := validateOverviewPath(f.RelPath, limits.StringBytes); err != nil {
+			return o, err
+		}
+		if err := validateOverviewIdentifier(f.Lang, limits.StringBytes, "language identifiers", false); err != nil {
+			return o, err
+		}
+		if err := validateOverviewIdentifier(f.Role, limits.StringBytes, "role identifiers", true); err != nil {
+			return o, err
+		}
 		role := f.Role
 		if role == "" {
 			role = "other"
 		}
 		o.Roles[role]++
+		if len(o.Roles) > limits.Roles {
+			return o, bounded("roles", limits.Roles)
+		}
 	}
 	o.Docs = guideDocs(files)
+	if len(o.Docs) > limits.Docs {
+		o.Docs = o.Docs[:limits.Docs]
+	}
 
 	// Entrypoints: files that depend on others but nothing depends on them.
-	dep, err := q.s.FileDepEdges()
+	dep, err := q.s.FileDepEdgesContext(ctx, limits.DependencyEdges+1)
 	if err != nil {
 		return o, err
+	}
+	if len(dep) > limits.DependencyEdges {
+		return o, bounded("dependency_edges", limits.DependencyEdges)
 	}
 	hasIncoming := map[string]bool{}
 	hasOutgoing := map[string]bool{}
 	for _, e := range dep {
+		if err := validateOverviewPath(e.SrcFile, limits.StringBytes); err != nil {
+			return o, err
+		}
+		if err := validateOverviewPath(e.DstFile, limits.StringBytes); err != nil {
+			return o, err
+		}
+		if err := validateOverviewStrings(limits.StringBytes, e.Kind); err != nil {
+			return o, err
+		}
 		hasOutgoing[e.SrcFile] = true
 		hasIncoming[e.DstFile] = true
 	}
@@ -289,37 +390,168 @@ func (q *Querier) Overview() (Overview, error) {
 		}
 		return a < b
 	})
-	const entrypointSample = 20
-	if len(o.Entrypoints) > entrypointSample {
-		o.Entrypoints = o.Entrypoints[:entrypointSample]
+	if len(o.Entrypoints) > limits.Entrypoints {
+		o.Entrypoints = o.Entrypoints[:limits.Entrypoints]
 	}
 
-	clusters, err := q.Clusters()
+	links, err := q.s.ResourceFileLinksContext(ctx, limits.ResourceLinks+1)
 	if err != nil {
 		return o, err
 	}
-	if len(clusters) > 8 {
-		clusters = clusters[:8]
+	if len(links) > limits.ResourceLinks {
+		return o, bounded("resource_links", limits.ResourceLinks)
+	}
+	uf := newUnionFind()
+	langOf := make(map[string]string, len(files))
+	for _, file := range files {
+		uf.add(file.RelPath)
+		langOf[file.RelPath] = file.Lang
+	}
+	for _, edge := range dep {
+		uf.union(edge.SrcFile, edge.DstFile)
+	}
+	for _, edge := range links {
+		if err := validateOverviewPath(edge.SrcFile, limits.StringBytes); err != nil {
+			return o, err
+		}
+		if err := validateOverviewPath(edge.DstFile, limits.StringBytes); err != nil {
+			return o, err
+		}
+		uf.union(edge.SrcFile, edge.DstFile)
+	}
+	var clusters []Cluster
+	for _, members := range uf.groups() {
+		if len(members) < 2 {
+			continue
+		}
+		sort.Strings(members)
+		clusters = append(clusters, Cluster{Label: clusterLabel(members), Lang: dominantLang(members, langOf), Files: members})
+	}
+	clusters = splitBlobCluster(clusters, langOf)
+	sortClusters(clusters)
+	if len(clusters) > limits.Clusters {
+		clusters = clusters[:limits.Clusters]
 	}
 	o.Clusters = make([]ClusterSummary, len(clusters))
 	for i, c := range clusters {
 		o.Clusters[i] = ClusterSummary{Label: c.Label, Lang: c.Lang, Files: len(c.Files)}
 	}
 
-	o.Palette, err = q.s.ColorPalette()
+	// Palette and hotspots are bounded output samples. Their GROUP BY input work
+	// is also bounded: CountsContext has already proved total resources and edges
+	// do not exceed their hard aggregate caps.
+	o.Palette, err = q.s.ColorPaletteContext(ctx, limits.Palette)
 	if err != nil {
 		return o, err
 	}
-	kb, err := q.s.SymbolsByKind("keybind")
+
+	for _, row := range o.Palette {
+		if err := validateOverviewIdentifier(row.Kind, limits.StringBytes, "resource kind identifiers", false); err != nil {
+			return o, err
+		}
+		if err := validateOverviewStrings(limits.StringBytes, row.Name, row.Value); err != nil {
+			return o, err
+		}
+		if err := validateOverviewPath(row.File, limits.StringBytes); err != nil {
+			return o, err
+		}
+	}
+	kb, err := q.s.SymbolsByKindContext(ctx, "keybind", limits.Keybinds+1)
 	if err != nil {
 		return o, err
+	}
+	if len(kb) > limits.Keybinds {
+		return o, bounded("keybinds", limits.Keybinds)
 	}
 	o.Keybinds = len(kb)
-	o.Hotspots, err = q.s.FanIn(5)
+	o.Hotspots, err = q.s.FanInContext(ctx, limits.Hotspots)
 	if err != nil {
+		return o, err
+	}
+
+	for _, row := range o.Hotspots {
+		if err := validateOverviewPath(row.File, limits.StringBytes); err != nil {
+			return o, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return o, err
 	}
 	return o, nil
+}
+
+func bounded(component string, limit int) error {
+	return &BoundedWorkError{Component: component, Limit: limit}
+}
+
+func validateOverviewLimits(limits OverviewLimits) error {
+	values := []struct {
+		name  string
+		value int
+		max   int
+	}{
+		{"files", limits.Files, 10000}, {"symbols", limits.Symbols, 100000},
+		{"edges", limits.Edges, 250000}, {"resources", limits.Resources, 100000},
+		{"chunks", limits.Chunks, 100000}, {"dependency edges", limits.DependencyEdges, 50000},
+		{"resource links", limits.ResourceLinks, 10000}, {"palette", limits.Palette, 16},
+		{"keybinds", limits.Keybinds, 10000}, {"hotspots", limits.Hotspots, 5},
+		{"languages", limits.Languages, 64}, {"roles", limits.Roles, 64},
+		{"docs", limits.Docs, 8}, {"entrypoints", limits.Entrypoints, 20},
+		{"clusters", limits.Clusters, 8}, {"string bytes", limits.StringBytes, 4096},
+	}
+	for _, item := range values {
+		if item.value <= 0 {
+			return fmt.Errorf("overview %s limit must be positive", item.name)
+		}
+		if item.value > item.max {
+			return fmt.Errorf("overview %s limit exceeds supported maximum %d", item.name, item.max)
+		}
+	}
+	return nil
+}
+
+func validateOverviewStrings(max int, values ...string) error {
+	for _, value := range values {
+		if !utf8.ValidString(value) || len(value) > max || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			return bounded("strings", max)
+		}
+	}
+	return nil
+}
+
+func validateOverviewIdentifier(value string, max int, component string, allowEmpty bool) error {
+	if value == "" && allowEmpty {
+		return nil
+	}
+	if err := validateOverviewStrings(max, value); err != nil || value == "" || value == "." || value == ".." ||
+		strings.ContainsAny(value, `/\`) || filepath.IsAbs(value) || path.IsAbs(value) ||
+		(len(value) >= 2 && value[1] == ':' && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z'))) {
+		return bounded(component, max)
+	}
+	return nil
+}
+
+func validateOverviewPath(value string, max int) error {
+	if err := validateOverviewStrings(max, value); err != nil || value == "" || strings.Contains(value, "\\") || filepath.IsAbs(value) || path.IsAbs(value) {
+		return bounded("paths", max)
+	}
+	if len(value) >= 2 && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) && value[1] == ':' {
+		return bounded("paths", max)
+	}
+	clean := path.Clean(value)
+	if clean != value || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return bounded("paths", max)
+	}
+	return nil
+}
+
+func validateIdentifierMap(values map[string]int, max int, component string) error {
+	for value := range values {
+		if err := validateOverviewIdentifier(value, max, component, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // unionFind is a small string-keyed disjoint-set.

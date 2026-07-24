@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 //go:embed schema.sql
@@ -167,6 +167,114 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// OpenContext opens and migrates a store while honoring a startup deadline.
+// Open retains its existing behavior and five-second busy timeout.
+func OpenContext(ctx context.Context, path string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	_, statErr := os.Stat(path)
+	existed := statErr == nil
+	busyMillis := int64(5000)
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline).Milliseconds()
+		if remaining < 1 {
+			remaining = 1
+		}
+		if remaining < busyMillis {
+			busyMillis = remaining
+		}
+	}
+	dsn := "file:" + path + "?_journal_mode=WAL&_foreign_keys=on&_recursive_triggers=on&_busy_timeout=" + strconv.FormatInt(busyMillis, 10)
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*Store, error) {
+		return nil, errors.Join(boundedStoreOpenError(ctx, err), db.Close())
+	}
+	current, err := currentSchemaVersionContext(ctx, db)
+	if err != nil {
+		return fail(err)
+	}
+	if current > SchemaVersion {
+		return fail(fmt.Errorf("database schema version %d is newer than supported version %d", current, SchemaVersion))
+	}
+	if existed && current < SchemaVersion {
+		if _, err := backupDatabaseContext(ctx, db, path, current); err != nil {
+			return fail(fmt.Errorf("backup schema v%d database: %w", current, err))
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fail(err)
+	}
+	rollback := func(err error) (*Store, error) {
+		return nil, errors.Join(boundedStoreOpenError(ctx, err), tx.Rollback(), db.Close())
+	}
+	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+		return rollback(fmt.Errorf("apply schema: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE symbols ADD COLUMN complexity INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return rollback(fmt.Errorf("migrate symbols complexity: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion); err != nil {
+		return rollback(fmt.Errorf("set schema_version: %w", err))
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(fmt.Errorf("commit schema migration: %w", err))
+	}
+	return &Store{db: db}, nil
+}
+
+func boundedStoreOpenError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return errors.Join(ctxErr, err)
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) && (sqliteErr.Code == sqlite3.ErrBusy || sqliteErr.Code == sqlite3.ErrLocked) {
+			return errors.Join(context.DeadlineExceeded, err)
+		}
+	}
+	return err
+}
+
+func currentSchemaVersionContext(ctx context.Context, db *sql.DB) (int, error) {
+	var exists int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='meta'`).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if exists == 0 {
+		return 0, nil
+	}
+	var value string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='schema_version'`).Scan(&value); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	version, _ := strconv.Atoi(value)
+	return version, nil
+}
+
+func backupDatabaseContext(ctx context.Context, db *sql.DB, path string, version int) (string, error) {
+	base := fmt.Sprintf("%s.bak-v%d", path, version)
+	backup := base
+	if _, err := os.Stat(backup); err == nil {
+		backup = fmt.Sprintf("%s-%d", base, time.Now().UTC().UnixNano())
+	}
+	quoted := strings.ReplaceAll(backup, "'", "''")
+	if _, err := db.ExecContext(ctx, `VACUUM INTO '`+quoted+`'`); err != nil {
+		return "", err
+	}
+	return backup, nil
+}
+
 func currentSchemaVersion(db *sql.DB) int {
 	var exists int
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='meta'`).Scan(&exists); err != nil || exists == 0 {
@@ -241,6 +349,14 @@ func (s *Store) Close() error { return s.db.Close() }
 // SetMeta upserts a key/value into the meta table.
 func (s *Store) SetMeta(key, value string) error {
 	_, err := s.sql().Exec(
+		`INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		key, value)
+	return err
+}
+
+// SetMetaContext is SetMeta with cancellation support.
+func (s *Store) SetMetaContext(ctx context.Context, key, value string) error {
+	_, err := s.sql().ExecContext(ctx,
 		`INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 		key, value)
 	return err

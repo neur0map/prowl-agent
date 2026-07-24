@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,205 @@ func indexed(t *testing.T) *Querier {
 		t.Fatal(err)
 	}
 	return New(s)
+}
+
+func TestOverviewContextEnforcesSQLRowBounds(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	for _, name := range []string{"a.go", "b.go"} {
+		if _, err := s.UpsertFile(store.File{RelPath: name, Lang: "go", Role: "source", Hash: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limits := DefaultOverviewLimits()
+	limits.Files = 2
+	if got, err := New(s).OverviewContext(context.Background(), limits); err != nil {
+		t.Fatalf("exact limit: %v", err)
+	} else if got.Counts.Files != 2 {
+		t.Fatalf("files=%d want 2", got.Counts.Files)
+	}
+	if _, err := s.UpsertFile(store.File{RelPath: "c.go", Lang: "go", Role: "source", Hash: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(s).OverviewContext(context.Background(), limits)
+	var bounded *BoundedWorkError
+	if !errors.As(err, &bounded) || bounded.Component != "files" || bounded.Limit != 2 {
+		t.Fatalf("max+1 error=%v bounded=%+v", err, bounded)
+	}
+}
+
+func TestOverviewContextRejectsAggregateRowsAtMaxPlusOne(t *testing.T) {
+	tests := []struct {
+		name      string
+		component string
+		setLimit  func(*OverviewLimits, int)
+		graph     func(int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk)
+	}{
+		{name: "symbols", component: "symbols", setLimit: func(l *OverviewLimits, n int) { l.Symbols = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
+			x := make([]store.Symbol, n)
+			for i := range x {
+				x[i] = store.Symbol{Name: fmt.Sprintf("s%d", i), Kind: "function", StartLine: i + 1, EndLine: i + 1}
+			}
+			return x, nil, nil, nil
+		}},
+		{name: "edges", component: "edges", setLimit: func(l *OverviewLimits, n int) { l.Edges = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
+			x := make([]store.RawEdge, n)
+			for i := range x {
+				x[i] = store.RawEdge{Kind: "calls", Raw: fmt.Sprintf("missing%d", i), Line: i + 1}
+			}
+			return nil, nil, x, nil
+		}},
+		{name: "resources", component: "resources", setLimit: func(l *OverviewLimits, n int) { l.Resources = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
+			x := make([]store.Resource, n)
+			for i := range x {
+				x[i] = store.Resource{Kind: "font", Name: fmt.Sprintf("r%d", i), Value: "valid", Line: i + 1}
+			}
+			return nil, x, nil, nil
+		}},
+		{name: "chunks", component: "chunks", setLimit: func(l *OverviewLimits, n int) { l.Chunks = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
+			x := make([]store.Chunk, n)
+			for i := range x {
+				x[i] = store.Chunk{StartLine: i + 1, EndLine: i + 1, Text: fmt.Sprintf("chunk %d", i)}
+			}
+			return nil, nil, nil, x
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Close() })
+			fileID, err := s.UpsertFile(store.File{RelPath: "safe.go", Lang: "go", Role: "source", Hash: "safe"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			limits := DefaultOverviewLimits()
+			test.setLimit(&limits, 2)
+			syms, resources, edges, chunks := test.graph(2)
+			if err := s.ReplaceFileGraph(fileID, syms, resources, edges, chunks); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := New(s).OverviewContext(context.Background(), limits); err != nil {
+				t.Fatalf("exact limit: %v", err)
+			}
+			syms, resources, edges, chunks = test.graph(3)
+			if err := s.ReplaceFileGraph(fileID, syms, resources, edges, chunks); err != nil {
+				t.Fatal(err)
+			}
+			_, err = New(s).OverviewContext(context.Background(), limits)
+			var bounded *BoundedWorkError
+			if !errors.As(err, &bounded) || bounded.Component != test.component || bounded.Limit != 2 {
+				t.Fatalf("max+1 error=%v bounded=%+v", err, bounded)
+			}
+		})
+	}
+}
+
+func TestOverviewContextRejectsOverflowingSentinelLimitsBeforeSQL(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*OverviewLimits)
+	}{
+		{name: "files", set: func(l *OverviewLimits) { l.Files = math.MaxInt }},
+		{name: "symbols", set: func(l *OverviewLimits) { l.Symbols = math.MaxInt }},
+		{name: "edges", set: func(l *OverviewLimits) { l.Edges = math.MaxInt }},
+		{name: "resources", set: func(l *OverviewLimits) { l.Resources = math.MaxInt }},
+		{name: "chunks", set: func(l *OverviewLimits) { l.Chunks = math.MaxInt }},
+		{name: "dependency edges", set: func(l *OverviewLimits) { l.DependencyEdges = math.MaxInt }},
+		{name: "resource links", set: func(l *OverviewLimits) { l.ResourceLinks = math.MaxInt }},
+		{name: "keybinds", set: func(l *OverviewLimits) { l.Keybinds = math.MaxInt }},
+		{name: "languages", set: func(l *OverviewLimits) { l.Languages = math.MaxInt }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			limits := DefaultOverviewLimits()
+			test.set(&limits)
+			if _, err := (&Querier{}).OverviewContext(context.Background(), limits); err == nil || !strings.Contains(err.Error(), "supported maximum") {
+				t.Fatalf("error=%v want supported-maximum rejection", err)
+			}
+		})
+	}
+}
+
+func TestOverviewContextRejectsPathLikeRoleAndLanguageIdentifiers(t *testing.T) {
+	for _, field := range []string{"role", "language"} {
+		for _, hostile := range []string{"/etc/passwd", "../secret", `C:\secret`, ".", "safe/../workspace"} {
+			t.Run(field+"/"+strings.ReplaceAll(hostile, "/", "_"), func(t *testing.T) {
+				s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = s.Close() })
+				file := store.File{RelPath: "safe.go", Lang: "go", Role: "source", Hash: "safe"}
+				if field == "role" {
+					file.Role = hostile
+				} else {
+					file.Lang = hostile
+				}
+				if _, err := s.UpsertFile(file); err != nil {
+					t.Fatal(err)
+				}
+				_, err = New(s).OverviewContext(context.Background(), DefaultOverviewLimits())
+				var bounded *BoundedWorkError
+				if !errors.As(err, &bounded) || bounded.Component != field+" identifiers" {
+					t.Fatalf("error=%v bounded=%+v", err, bounded)
+				}
+			})
+		}
+	}
+}
+
+func TestOverviewContextAllowsNonPathMetadataValues(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	fileID, err := s.UpsertFile(store.File{RelPath: "safe.css", Lang: "C++", Role: "test fixture", Hash: "safe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(fileID, nil, []store.Resource{{Kind: "color", Name: "accent/main", Value: "url(../assets/bg.png)", Line: 1}}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(s).OverviewContext(context.Background(), DefaultOverviewLimits()); err != nil {
+		t.Fatalf("valid metadata rejected: %v", err)
+	}
+}
+
+func TestOverviewContextCancellationStopsProjection(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if _, err := s.UpsertFile(store.File{RelPath: "a.go", Lang: "go", Hash: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	q := New(s)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	q.afterOverviewRead = func() {
+		close(started)
+		<-release
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := q.OverviewContext(ctx, DefaultOverviewLimits())
+		done <- err
+	}()
+	<-started
+	cancel()
+	close(release)
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v want canceled", err)
+	}
 }
 
 func TestFindSymbolCallersCallees(t *testing.T) {

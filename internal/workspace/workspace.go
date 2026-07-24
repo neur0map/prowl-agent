@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -44,6 +45,30 @@ func Create(root string) (*Workspace, error) {
 		return nil, err
 	}
 	return w, nil
+}
+
+// ResolveContext bounds workspace discovery even when an underlying filesystem
+// metadata operation cannot itself observe context cancellation. Resolve retains
+// its synchronous compatibility behavior.
+func ResolveContext(ctx context.Context, start string) (*Workspace, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type result struct {
+		workspace *Workspace
+		err       error
+	}
+	resolved := make(chan result, 1)
+	go func() {
+		workspace, err := Resolve(start)
+		resolved <- result{workspace: workspace, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-resolved:
+		return result.workspace, result.err
+	}
 }
 
 // Resolve walks up from start to find an existing .prowl/ workspace.

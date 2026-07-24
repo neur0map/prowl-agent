@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +34,15 @@ func TestCreateResolve(t *testing.T) {
 	}
 	if _, err := Resolve(t.TempDir()); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestResolveContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	workspace, err := ResolveContext(ctx, t.TempDir())
+	if workspace != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("workspace=%+v error=%v want context canceled", workspace, err)
 	}
 }
 

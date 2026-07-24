@@ -11,21 +11,25 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/workbench"
 	workbenchweb "github.com/prowl-agent/prowl-agent/web"
 )
 
 type openDependencies struct {
-	listen  func(int) (net.Listener, error)
-	token   func() (string, error)
-	assets  fs.FS
-	openURL func(string) error
-	serve   func(context.Context, net.Listener, http.Handler) error
+	listen       func(int) (net.Listener, error)
+	token        func() (string, error)
+	assets       fs.FS
+	openURL      func(string) error
+	serve        func(context.Context, net.Listener, http.Handler) error
+	openProject  func(context.Context) (*application.Project, error)
+	closeProject func(*application.Project) error
 }
 
 func defaultOpenDependencies() openDependencies {
@@ -35,6 +39,10 @@ func defaultOpenDependencies() openDependencies {
 		assets:  workbenchweb.Assets,
 		openURL: openBrowserURL,
 		serve:   serveWorkbenchHTTP,
+		openProject: func(ctx context.Context) (*application.Project, error) {
+			return application.OpenWorkbenchProject(ctx, ".", application.Options{}, application.DefaultStartupLimits())
+		},
+		closeProject: func(project *application.Project) error { return project.Close() },
 	}
 }
 
@@ -45,19 +53,36 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 		Use:   "open",
 		Short: "Open the local Prowl Workbench",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			listener, err := dependencies.listen(port)
-			if err != nil {
-				return err
+		RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
+			var service *workbench.Service
+			if dependencies.openProject != nil {
+				project, err := dependencies.openProject(cmd.Context())
+				if err != nil {
+					return err
+				}
+				closeProject := dependencies.closeProject
+				if closeProject == nil {
+					closeProject = func(project *application.Project) error { return project.Close() }
+				}
+				defer func() { runErr = errors.Join(runErr, closeProject(project)) }()
+				service, err = workbench.NewService(project)
+				if err != nil {
+					return err
+				}
 			}
-			defer listener.Close()
 			token, err := dependencies.token()
 			if err != nil {
 				return err
 			}
+			listener, err := dependencies.listen(port)
+			if err != nil {
+				return err
+			}
+			listener = &closeOnceListener{Listener: listener}
+			defer func() { runErr = errors.Join(runErr, listener.Close()) }()
 			origin := "http://" + listener.Addr().String()
 			handler, err := workbench.NewHandler(workbench.HandlerOptions{
-				API:    workbench.APIOptions{Token: token, AllowedOrigin: origin},
+				API:    workbench.APIOptions{Token: token, AllowedOrigin: origin, Service: service},
 				Assets: dependencies.assets,
 			})
 			if err != nil {
@@ -78,6 +103,17 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 	command.Flags().IntVar(&port, "port", 0, "loopback port (0 chooses an available port)")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "print the URL without opening a browser")
 	return command
+}
+
+type closeOnceListener struct {
+	net.Listener
+	once sync.Once
+	err  error
+}
+
+func (listener *closeOnceListener) Close() error {
+	listener.once.Do(func() { listener.err = listener.Listener.Close() })
+	return listener.err
 }
 
 func openBrowserURL(target string) error {

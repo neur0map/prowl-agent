@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -262,6 +265,241 @@ func TestSignatureDetectsSameSizeSameMTimeReplacement(t *testing.T) {
 	}
 	if before == after {
 		t.Fatal("same-size same-mtime content replacement did not change signature")
+	}
+}
+
+func TestSourceSnapshotCandidateLimitAllowsExactLimit(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 2000; i++ {
+		path := filepath.Join(root, fmt.Sprintf("file-%04d.go", i))
+		if err := os.WriteFile(path, []byte("package fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshot, err := SourceSnapshotWithOptionsLimitContext(context.Background(), root, Options{}, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Paths) != 2000 {
+		t.Fatalf("snapshot paths = %d, want 2000", len(snapshot.Paths))
+	}
+}
+
+func TestSourceSnapshotCandidateLimitRejectsCandidateAfterLimit(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 2001; i++ {
+		path := filepath.Join(root, fmt.Sprintf("file-%04d.go", i))
+		if err := os.WriteFile(path, []byte("package fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := SourceSnapshotWithOptionsLimitContext(context.Background(), root, Options{}, 2000)
+	var limitErr CandidateLimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("snapshot error = %v, want CandidateLimitError", err)
+	}
+	if limitErr.Limit != 2000 {
+		t.Fatalf("candidate limit = %d, want 2000", limitErr.Limit)
+	}
+}
+
+func TestSourceSnapshotCandidateLimitRejectsNonpositiveLimit(t *testing.T) {
+	root := t.TempDir()
+	for _, limit := range []int{0, -1} {
+		if _, err := SourceSnapshotWithOptionsLimitContext(context.Background(), root, Options{}, limit); err == nil {
+			t.Fatalf("limit %d: got nil error", limit)
+		}
+	}
+}
+
+func TestSourceSnapshotCandidateLimitMatchesCanonicalRootSymlinkBehavior(t *testing.T) {
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	canonical, err := SourceSnapshotWithOptionsContext(context.Background(), link, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := SourceSnapshotWithOptionsLimitContext(context.Background(), link, Options{}, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Signature != bounded.Signature || !reflect.DeepEqual(canonical.Paths, bounded.Paths) {
+		t.Fatalf("bounded snapshot %+v differs from canonical %+v", bounded, canonical)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := SourceSnapshotWithOptionsLimitContext(canceled, link, Options{}, 2000); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled symlink-root snapshot error = %v", err)
+	}
+}
+
+func TestSourceSnapshotCandidateLimitMatchesCanonicalInRootSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "real.go"), []byte("package fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.go", filepath.Join(root, "alias.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	canonical, err := SourceSnapshotWithOptionsContext(context.Background(), root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := SourceSnapshotWithOptionsLimitContext(context.Background(), root, Options{}, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Signature != bounded.Signature || !reflect.DeepEqual(canonical.Paths, bounded.Paths) {
+		t.Fatalf("bounded snapshot %+v differs from canonical %+v", bounded, canonical)
+	}
+}
+
+func TestSourceSnapshotCandidateLimitDoesNotCountIgnoredFilesOrDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored-root.go\nignored-dir/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".gitignore"), []byte("ignored-nested.go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1998; i++ {
+		path := filepath.Join(root, fmt.Sprintf("visible-%04d.go", i))
+		if err := os.WriteFile(path, []byte("package fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{"ignored-root.go", "nested/ignored-nested.go", "ignored-dir/ignored.go"} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("ignored\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshot, err := SourceSnapshotWithOptionsLimitContext(context.Background(), root, Options{}, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Paths) != 2000 {
+		t.Fatalf("snapshot paths = %d, want 2000", len(snapshot.Paths))
+	}
+}
+
+func TestSourceSnapshotCandidateAfterLimitIsNotInspected(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 2001; i++ {
+		path := filepath.Join(root, fmt.Sprintf("file-%04d.go", i))
+		if err := os.WriteFile(path, []byte("package fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	inspected := 0
+	inspect := func(_ context.Context, _ *os.Root, _, rel string, _ os.DirEntry) (string, error) {
+		inspected++
+		if inspected > 2000 {
+			return "", errors.New("candidate 2001 was inspected")
+		}
+		return rel, nil
+	}
+	_, err := sourceSnapshotWithOptionsInspectContext(context.Background(), root, Options{}, 2000, inspect)
+	var limitErr CandidateLimitError
+	if !errors.As(err, &limitErr) {
+		t.Fatalf("snapshot error = %v, want CandidateLimitError", err)
+	}
+	if inspected != 2000 {
+		t.Fatalf("inspected candidates = %d, want 2000", inspected)
+	}
+}
+
+func TestSourceSnapshotCandidateLimitRejectsFIFOWithoutBlocking(t *testing.T) {
+	if _, err := exec.LookPath("mkfifo"); err != nil {
+		t.Skip("mkfifo unavailable")
+	}
+	root := t.TempDir()
+	fifo := filepath.Join(root, "blocked.go")
+	if err := exec.Command("mkfifo", fifo).Run(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := SourceSnapshotWithOptionsLimitContext(ctx, root, Options{}, 2000)
+	if !errors.Is(err, boundedio.ErrNonRegular) {
+		t.Fatalf("snapshot error = %v, want non-regular input", err)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("FIFO candidate blocked for %v", elapsed)
+	}
+}
+
+func TestSourceSnapshotCandidateLimitPinsRootAcrossRenameReplacement(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "project")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("ORIGINAL-SENTINEL\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := SourceSnapshotWithOptionsLimitContext(context.Background(), root, Options{}, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "a.go"), []byte("OUTSIDE-SENTINEL\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(parent, "project-moved")
+	swapped := false
+	inspect := func(ctx context.Context, pinned *os.Root, rootPath, rel string, entry os.DirEntry) (string, error) {
+		if !swapped {
+			swapped = true
+			if err := os.Rename(root, moved); err != nil {
+				return "", err
+			}
+			if err := os.Symlink(outside, root); err != nil {
+				return "", err
+			}
+		}
+		return snapshotCandidateEntry(ctx, pinned, rootPath, rel, entry)
+	}
+	pinned, err := sourceSnapshotWithOptionsInspectContext(context.Background(), root, Options{}, 2000, inspect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned.Signature != baseline.Signature || !reflect.DeepEqual(pinned.Paths, baseline.Paths) {
+		t.Fatalf("replacement-root snapshot %+v differs from original %+v", pinned, baseline)
+	}
+}
+
+func TestSourceSnapshotCandidateLimitCancelsDuringTraversal(t *testing.T) {
+	base := t.TempDir()
+	root := base
+	for i := 0; i < 20; i++ {
+		root = filepath.Join(root, "empty")
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx := newCancelAfterChecks(8)
+	if _, err := SourceSnapshotWithOptionsLimitContext(ctx, base, Options{}, 2000); !errors.Is(err, context.Canceled) {
+		t.Fatalf("snapshot error = %v, want context.Canceled", err)
 	}
 }
 

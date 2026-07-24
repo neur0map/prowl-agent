@@ -2,21 +2,29 @@ package knowledge
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 )
 
 const (
 	indexStart = "<!-- prowl:index:start -->"
 	indexEnd   = "<!-- prowl:index:end -->"
+	// MaxListDocuments and MaxListEntries are finite compatibility bounds used by List.
+	MaxListDocuments = 10000
+	MaxListEntries   = 100000
 )
 
 // Codec is implemented by a versioned interchange codec such as OKF v0.1.
@@ -59,41 +67,163 @@ func (r *Repository) Init() error {
 	return nil
 }
 
-// List parses all concept Markdown files, excluding reserved index and log files.
+// ListLimits bounds both parsed documents and all entries visited by a list walk.
+type ListLimits struct {
+	Documents int
+	Entries   int
+}
+
+// DocumentLimitError reports that a bounded repository walk found limit+1 documents.
+type DocumentLimitError struct{ Limit int }
+
+func (err *DocumentLimitError) Error() string {
+	return fmt.Sprintf("knowledge documents exceed limit %d", err.Limit)
+}
+
+// EntryLimitError reports that a bounded repository walk visited limit+1 entries.
+type EntryLimitError struct{ Limit int }
+
+func (err *EntryLimitError) Error() string {
+	return fmt.Sprintf("knowledge entries exceed limit %d", err.Limit)
+}
+
+// List parses concept Markdown files using finite compatibility bounds.
 func (repository *Repository) List() ([]*Document, error) {
-	if _, err := os.Stat(repository.Root); os.IsNotExist(err) {
-		return []*Document{}, nil
-	} else if err != nil {
+	return repository.ListContextBounded(context.Background(), ListLimits{
+		Documents: MaxListDocuments,
+		Entries:   MaxListEntries,
+	})
+}
+
+// ListContext preserves the document-bounded API and applies a finite entry bound.
+func (repository *Repository) ListContext(ctx context.Context, maxDocuments int) ([]*Document, error) {
+	return repository.ListContextBounded(ctx, ListLimits{
+		Documents: maxDocuments,
+		Entries:   MaxListEntries,
+	})
+}
+
+// ListContextBounded parses documents from one pinned root using deterministic walk order.
+func (repository *Repository) ListContextBounded(ctx context.Context, limits ListLimits) ([]*Document, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var docs []*Document
-	err := filepath.WalkDir(repository.Root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
-			return nil
-		}
-		base := strings.ToLower(entry.Name())
-		if base == "index.md" || base == "log.md" {
-			return nil
-		}
-		rel, err := filepath.Rel(repository.Root, path)
-		if err != nil {
-			return err
-		}
-		doc, err := repository.Read(filepath.ToSlash(rel))
-		if err != nil {
-			return err
-		}
-		docs = append(docs, doc)
-		return nil
-	})
-	if os.IsNotExist(err) {
-		return nil, nil
+	maxInt := int(^uint(0) >> 1)
+	if limits.Documents <= 0 || limits.Documents == maxInt {
+		return nil, &DocumentLimitError{Limit: limits.Documents}
 	}
+	if limits.Entries <= 0 || limits.Entries == maxInt {
+		return nil, &EntryLimitError{Limit: limits.Entries}
+	}
+
+	root, err := os.OpenRoot(repository.Root)
+	if os.IsNotExist(err) {
+		return []*Document{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	var docs []*Document
+	entries := 1 // the pinned root itself
+	if entries > limits.Entries {
+		return nil, &EntryLimitError{Limit: limits.Entries}
+	}
+	var walkDirectory func(string) error
+	walkDirectory = func(directory string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		handle, err := root.Open(filepath.FromSlash(directory))
+		if err != nil {
+			return err
+		}
+		remaining := limits.Entries - entries
+		children, readErr := handle.ReadDir(remaining + 1)
+		closeErr := handle.Close()
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(children) > remaining {
+			return &EntryLimitError{Limit: limits.Entries}
+		}
+		entries += len(children)
+		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
+		for _, entry := range children {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			childPath := entry.Name()
+			if directory != "." {
+				childPath = path.Join(directory, childPath)
+			}
+			if entry.IsDir() {
+				if err := walkDirectory(childPath); err != nil {
+					return err
+				}
+				continue
+			}
+			if !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+				continue
+			}
+			base := strings.ToLower(entry.Name())
+			if base == "index.md" || base == "log.md" {
+				continue
+			}
+			if len(docs) >= limits.Documents {
+				return &DocumentLimitError{Limit: limits.Documents}
+			}
+			doc, err := repository.readDocumentContext(ctx, root, childPath)
+			if err != nil {
+				return err
+			}
+			docs = append(docs, doc)
+		}
+		return nil
+	}
+	err = walkDirectory(".")
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
+	if err == nil {
+		err = ctx.Err()
+	}
 	return docs, err
+}
+
+func (repository *Repository) readDocumentContext(ctx context.Context, root *os.Root, path string) (*Document, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := boundedio.OpenRegular(root, filepath.FromSlash(path))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	data, readErr := boundedio.ReadAllContext(ctx, file, MaxDocumentBytes)
+	if errors.Is(readErr, boundedio.ErrTooLarge) {
+		readErr = fmt.Errorf("knowledge file exceeds %d bytes: %s", MaxDocumentBytes, path)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	doc, parseErr := repository.Codec.Parse(path, data)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return doc, parseErr
 }
 
 // Read parses a bundle-relative document after enforcing path containment.

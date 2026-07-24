@@ -32,7 +32,7 @@ func TestHandlerServesShellButKeepsAPIBearerProtected(t *testing.T) {
 		{name: "shell", path: "/", want: http.StatusOK, cache: "no-store", mediaType: "text/html; charset=utf-8"},
 		{name: "hashed asset", path: "/assets/app-abc123.js", want: http.StatusOK, cache: "public, max-age=31536000, immutable", mediaType: "text/javascript; charset=utf-8"},
 		{name: "protected api", path: "/api/v1/health", want: http.StatusUnauthorized},
-		{name: "authorized api", path: "/api/v1/health", bearer: true, want: http.StatusOK, cache: "no-store", mediaType: "application/json"},
+		{name: "authorized api without service", path: "/api/v1/health", bearer: true, want: http.StatusServiceUnavailable, cache: "no-store", mediaType: "application/json"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

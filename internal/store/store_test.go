@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -39,6 +41,58 @@ func TestOpenMigrate(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	s2.Close()
+}
+
+func TestOpenContextHonorsCancellationAndBusyDeadline(t *testing.T) {
+	t.Run("already canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		path := filepath.Join(t.TempDir(), "canceled.db")
+		opened, err := OpenContext(ctx, path)
+		if opened != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("store=%+v error=%v", opened, err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("canceled open created database: %v", err)
+		}
+	})
+
+	t.Run("exclusive lock", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "locked.db")
+		initial, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := initial.Close(); err != nil {
+			t.Fatal(err)
+		}
+		locker, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=5000")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer locker.Close()
+		if _, err := locker.Exec(`PRAGMA locking_mode=EXCLUSIVE`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := locker.Exec(`BEGIN EXCLUSIVE`); err != nil {
+			t.Fatal(err)
+		}
+		defer locker.Exec(`ROLLBACK`)
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		opened, err := OpenContext(ctx, path)
+		if opened != nil {
+			opened.Close()
+			t.Fatal("locked OpenContext unexpectedly succeeded")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("error=%v want deadline exceeded", err)
+		}
+		if elapsed := time.Since(started); elapsed > 300*time.Millisecond {
+			t.Fatalf("locked OpenContext took %v", elapsed)
+		}
+	})
 }
 
 func TestOpenBacksUpAndMigratesVersionOne(t *testing.T) {

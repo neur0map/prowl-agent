@@ -20,6 +20,8 @@ type Querier struct {
 	readGuard        store.ReadGuard
 	// afterFirstRead is a package-private deterministic concurrency test seam.
 	afterFirstRead func()
+	// afterOverviewRead is a package-private deterministic cancellation seam.
+	afterOverviewRead func()
 }
 
 // New wraps a store for structural (FTS-only) queries.

@@ -22,9 +22,9 @@
 
 ## Ownership and integration rules
 
-1. `internal/application/**` and migrations of CLI/MCP construction are owned only by A1.
+1. `internal/application/**` and migrations of CLI/MCP construction are initially owned by A1. A3 receives the serialized bounded-startup handoff in `project.go`/`project_test.go`; C2 later receives the sole durable-job startup handoff. No other task edits those seams.
 2. `internal/workbench/api.go` is the route-composition seam. A2 owns it through Milestone A; B6 owns the consolidated read/mutation routes; C3 owns event/job routes; C5 owns export. Those tasks are serialized.
-3. `web/src/transport/auth.ts` is owned only by A4 for nonce-to-bearer bootstrap. `web/src/transport/api.ts` is owned by A4, then extended only by C4 after B tasks expose stable DTOs.
+3. `web/src/transport/auth.ts` and the async bootstrap call in `web/src/main.tsx` are owned only by A4 for nonce-to-bearer bootstrap. `web/src/transport/api.ts` is owned by A4, then extended only by C4 after B tasks expose stable DTOs.
 4. `web/src/app/App.tsx` and `web/src/styles.css` are shared-shell seams. A4, B7, C4, and D1 edit them sequentially. Feature tasks otherwise stay under their named feature directory.
 5. `web/e2e/workbench.spec.ts`, fixture orchestration, and `web/dist/**` are integration outputs owned only by A5, C5, D1, and D2 at their serialized checkpoints. Feature workers do not rebuild or commit `web/dist`.
 6. `internal/events/**` is created and owned by C1. Phase 3B/3C must extend its stable interfaces rather than introduce another event package. `internal/jobs/**` is created and owned by C2.
@@ -75,15 +75,19 @@ go test -race -tags sqlite_fts5 ./internal/application ./internal/store ./intern
 - Create `internal/workbench/service_test.go`
 - Modify `internal/workbench/api.go`
 - Modify `internal/workbench/api_test.go`
+- Modify `internal/workbench/handler_test.go` only to assert fail-closed behavior before A3 injects the real service
+- Modify `internal/query/overview.go`, `internal/query/query.go`, and `internal/query/query_test.go` only to add a context-aware, hard row-bounded Overview projection and deterministic cancellation seam while preserving the existing `Overview()` API
+- Create `internal/store/overview_reads.go` for SQL-level context/row-limited read variants used only by bounded Overview
+- Modify `internal/knowledge/repository.go` and `internal/knowledge/repository_test.go` only to add a context-aware `List` variant with hard document and total-entry caps plus one pinned rooted handle, while preserving `List()` and `ListContext(ctx, maxDocuments)`
 - Own `GET /api/v1/health`
 - Own `GET /api/v1/brief`
 
-**Contract:** typed bounded Brief from real overview, knowledge health, workspace identity, freshness, and capabilities. General endpoints use `data`, `meta.request_id`, and `meta.resource_version`; errors use stable `error.code` and `error.message`. Context packet routes later return canonical `prowl.context/v1` data, not this envelope.
+**Contract:** typed bounded Brief from real overview, knowledge health, workspace identity, freshness, and capabilities. Bounds apply to database/filesystem input work, aggregate SQL scans, and the complete HTTP envelope, not only post-hoc DTO truncation; request cancellation reaches SQL and knowledge traversal. Knowledge listing caps every visited filesystem entry and pins one rooted directory handle across enumeration and reads so a root rename/symlink swap cannot change containment. The complete Brief projection holds the project read guard so one response cannot mix generations. Every derived-store string is validated before output and malformed absolute/traversing/path-bearing metadata fails closed without reflection. General endpoints use `data`, `meta.request_id`, and `meta.resource_version`; `resource_version` is the canonical resource data version (the published project signature for health/Brief), not the API schema label. Pre-resource/security errors use a stable `unavailable` resource version; failures after a version is known preserve it. All API errors, including Host/Origin/fetch-site/authentication/router failures, use stable bounded JSON `error.code` and `error.message` envelopes. A missing real service fails closed. Context packet routes later return canonical `prowl.context/v1` data, not this envelope.
 
 **Focused command:**
 
 ```sh
-go test -race -tags sqlite_fts5 ./internal/workbench -run 'Test(Brief|APIEnvelope|APISecurity)' -count=1
+go test -race -tags sqlite_fts5 ./internal/workbench ./internal/query ./internal/store ./internal/knowledge -run 'Test(Brief|API|Projection|MalformedResourceVersion|IdentifierValidation|SuccessWriter|ErrorWriter|Overview|RepositoryList|RepositoryRootSwap)' -count=1
 ```
 
 **Expected:** unauthorized/hostile requests fail; success, empty, malformed-store, cancellation, path-redaction, ordering, and response-bound tests pass.
@@ -97,13 +101,20 @@ go test -race -tags sqlite_fts5 ./internal/workbench -run 'Test(Brief|APIEnvelop
 - Modify `internal/cli/open.go`
 - Modify `internal/cli/open_test.go`
 - Modify `internal/application/project.go` only through A1 owner handoff
+- Modify `internal/application/project_test.go` only for bounded workbench startup coverage
+- Create `internal/boundedio/{boundedio.go,open_unix.go,open_other.go}` for rooted, descriptor-validated, nonblocking deadline-sensitive reads
+- Modify `internal/config/{config.go,config_test.go}` only to add bounded context-aware config loading while preserving `Load`
+- Modify `internal/index/walk.go` and `internal/index/index_test.go` only to add a context-cancellable candidate-path cap that reuses the canonical ignore/walk rules
+- Modify `internal/store/{store.go,store_test.go}` only to add context-aware bounded store assembly while preserving `Open`
+- Modify `internal/workspace/{workspace.go,workspace_test.go}` only to bound workbench workspace discovery while preserving synchronous `Resolve`
+- Modify `internal/knowledge/{repository.go,repository_test.go}` to ensure the context-aware A2 projection path cannot block while opening special files
 
-**Contract:** resolve configuration and complete the bounded freshness probe before listen. If the hard bound is exceeded, listen with `initializing` state and enqueue the C2 refresh job once C2 exists; until then return a typed `startup_refresh_required` error rather than perform unbounded pre-listen work. Close project/listener exactly once and preserve launcher reaping and graceful shutdown.
+**Contract:** resolve configuration and complete one freshness probe under a single 250 ms deadline and a hard 2,000-candidate-path cap before listen. Workspace discovery returns on deadline even when a metadata syscall stalls. Deadline-sensitive configuration, ignore, source, and context-aware knowledge inputs are opened nonblocking through pinned roots, descriptor-validated as regular files, and read with context checks; special files cannot strand startup or workbench requests. Workbench store assembly uses context-aware schema/migration operations and clamps SQLite busy wait to the remaining startup deadline. The bounded source signature remains canonically identical for unchanged ordinary files and in-root file symlinks while content reads stay confined to the accepted root. The path cap aborts canonical traversal before stat, read, or hashing of candidate 2,001; it does not duplicate ignore rules or reopen the accepted root by mutable pathname. If either bound is exceeded, listen with `initializing` state and enqueue the C2 refresh job once C2 exists; until then return a typed `startup_refresh_required` error without listening or continuing unbounded work. Ordinary config/store/index and CLI/MCP/LSP `OpenProject` behavior remains synchronously fresh. Close project/listener exactly once and preserve launcher reaping and graceful shutdown.
 
 **Focused command:**
 
 ```sh
-go test -race -tags sqlite_fts5 ./internal/cli ./internal/application -run 'Test(OpenCommand|StartupFreshness|OpenProjectClose)' -count=1
+go test -race -tags sqlite_fts5 ./internal/cli ./internal/application ./internal/config ./internal/index ./internal/store ./internal/workspace ./internal/knowledge -run 'Test(OpenCommand|StartupFreshness|OpenProjectClose|LoadContext|OpenContext|ResolveContext|RepositoryListContextBoundedRejectsFIFO|.*Candidate)' -count=1
 ```
 
 **Expected:** malformed setup never listens; a synthetic slow/large fixture returns within the configured bound; all cleanup assertions pass.
@@ -118,15 +129,17 @@ go test -race -tags sqlite_fts5 ./internal/cli ./internal/application -run 'Test
 - Create `internal/workbench/bootstrap_test.go`
 - Modify `internal/workbench/api.go`
 - Modify `internal/workbench/api_test.go`
+- Modify `internal/workbench/handler_test.go` to remove static-token construction; A4 permits no legacy bearer fallback
 - Modify `internal/cli/open.go`
 - Modify `internal/cli/open_test.go`
 - Modify `web/src/transport/auth.ts`
 - Modify `web/src/transport/auth.test.ts`
+- Modify `web/src/main.tsx` only to await the fragment-to-bearer bootstrap before rendering authenticated UI
 - Create `web/src/transport/api.ts`
 - Create `web/src/transport/api.test.ts`
 - Own `POST /api/v1/auth/bootstrap`; all other `/api/v1/*` require the minted bearer
 
-**Contract:** generate separate 256-bit nonce and bearer values. The nonce has a 60-second TTL, is atomically single-use, and is accepted only from the exact same-origin bootstrap request. Its successful exchange invalidates it before returning a bearer. The frontend removes the fragment before exchange, keeps the resulting bearer only in module memory, and never attaches authorization outside same-origin `/api/v1/`. Automatic launch does not print the fragment. `--no-browser` defaults to a permission-`0600` one-time bootstrap file and supports explicit interactive reveal only when stderr/stdin are TTYs; CI/non-TTY stdout is always redacted. Document that the browser launcher necessarily receives the nonce URL as one process argument and that the short TTL/single use bounds that exposure.
+**Contract:** generate separate 256-bit nonce and bearer values. The nonce has a 60-second TTL, is atomically single-use, and is accepted only from the exact same-origin bootstrap request. Its successful exchange invalidates it before returning a bearer. The frontend removes the fragment before any asynchronous exchange step, keeps the resulting bearer only in module memory, and never attaches authorization outside a normalized same-origin `/api/v1/` path; authorization-bearing fetches reject redirects. Automatic launch does not print the fragment. `--no-browser` defaults to a permission-`0600` one-time bootstrap file and supports explicit interactive reveal only when stderr/stdin are TTYs; CI/non-TTY stdout is always redacted. Document that the browser launcher necessarily receives the nonce URL as one process argument and that the short TTL/single use bounds that exposure.
 
 **Focused commands:**
 

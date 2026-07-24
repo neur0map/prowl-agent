@@ -32,7 +32,7 @@ const (
 	replayPath             = ".prowl/setup-applies.json"
 	transactionPath        = ".prowl-setup-transaction.json"
 	legacyTransactionPath  = ".prowl/setup-transaction.json"
-	setupLockPath          = ".prowl/setup.lock"
+	setupLockPath          = ".prowl-setup.lock"
 	transactionSchema      = 1
 	setupLockTimeout       = 5 * time.Second
 )
@@ -128,8 +128,9 @@ type transactionSnapshot struct {
 }
 
 type transactionDirectory struct {
-	Path    string `json:"path"`
-	Created bool   `json:"created"`
+	Path          string `json:"path"`
+	Created       bool   `json:"created"`
+	LegacyExisted *bool  `json:"existed,omitempty"`
 }
 
 type transaction struct {
@@ -618,14 +619,13 @@ func (service *Service) rollbackTransactionInRoot(root *os.Root, pending transac
 	if err := restoreInRoot(root, pending.Snapshots, journalPathFor(pending)); err != nil {
 		return err
 	}
+	journalDirectory := filepath.ToSlash(filepath.Dir(journalPathFor(pending)))
 	directories := append([]transactionDirectory(nil), pending.Directories...)
 	sort.Slice(directories, func(left, right int) bool {
 		return strings.Count(directories[left].Path, "/") > strings.Count(directories[right].Path, "/")
 	})
 	for _, directory := range directories {
-		// The process lock lives in .prowl. It is project-owned, ignored state
-		// rather than an integration destination, and must outlive this rollback.
-		if !directory.Created || directory.Path == ".prowl" {
+		if !directory.Created || directory.Path == journalDirectory {
 			continue
 		}
 		clean, err := validateRootPath(root, directory.Path)
@@ -683,6 +683,13 @@ func loadTransactionInRoot(root *os.Root) (transaction, bool, error) {
 			return transaction{}, false, errors.New("invalid setup transaction")
 		}
 		pending.journalPath = path
+		if path == legacyTransactionPath {
+			for index := range pending.Directories {
+				if pending.Directories[index].LegacyExisted != nil {
+					pending.Directories[index].Created = !*pending.Directories[index].LegacyExisted
+				}
+			}
+		}
 		return pending, true, nil
 	}
 	return transaction{}, false, nil

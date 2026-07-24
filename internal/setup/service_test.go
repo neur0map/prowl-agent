@@ -290,18 +290,26 @@ func TestSetupApplyRecoversLegacyInterruptedTransaction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(agentsBlock+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".cursor", "mcp.json"), []byte(`{"mcpServers":{"prowl-agent":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	legacy := map[string]any{
 		"schema_version": 1,
 		"request":        request,
-		"snapshots": []map[string]any{{
-			"path": "AGENTS.md", "data": "", "mode": 0, "existed": false,
-		}},
-		"directories": []map[string]any{{
-			"path": ".prowl", "existed": false,
-		}},
+		"snapshots": []map[string]any{
+			{"path": "AGENTS.md", "data": "", "mode": 0, "existed": false},
+			{"path": ".cursor/mcp.json", "data": "", "mode": 0, "existed": false},
+		},
+		"directories": []map[string]any{
+			{"path": ".prowl", "existed": false},
+			{"path": ".cursor", "existed": false},
+		},
 	}
 	data, err := json.Marshal(legacy)
 	if err != nil {
@@ -316,6 +324,9 @@ func TestSetupApplyRecoversLegacyInterruptedTransaction(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(statErr) {
 		t.Fatalf("legacy interrupted integration was not restored: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".cursor")); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy transaction-created directory remained: %v", statErr)
 	}
 	if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
 		t.Fatalf("legacy transaction journal remained: %v", statErr)
@@ -353,10 +364,7 @@ func TestSetupApplyDoesNotRecoverLiveLockedTransaction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".prowl-setup-transaction.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	lock := flock.New(filepath.Join(root, ".prowl", "setup.lock"))
+	lock := flock.New(filepath.Join(root, ".prowl-setup.lock"))
 	if err := lock.Lock(); err != nil {
 		t.Fatal(err)
 	}

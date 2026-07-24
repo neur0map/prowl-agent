@@ -20,6 +20,10 @@ const (
 	decisionAuditSchemaVersion = "prowl.knowledge-decision/v1"
 	maxDecisionFieldBytes      = 128
 	decisionLockTimeout        = 5 * time.Second
+
+	// LocalPrincipalID is the closed server-derived principal used by local
+	// knowledge mutation boundaries.
+	LocalPrincipalID = "local-operator"
 )
 
 var (

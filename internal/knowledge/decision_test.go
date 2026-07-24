@@ -116,6 +116,119 @@ func TestDecisionRecoversCanonicalAcceptBeforeProposalCommit(t *testing.T) {
 	}
 }
 
+func TestDecisionPreservesExternallyChangedDerivedFile(t *testing.T) {
+	root := t.TempDir()
+	repository := NewRepository(filepath.Join(root, "knowledge"), atomicTestCodec{})
+	if err := repository.Init(); err != nil {
+		t.Fatal(err)
+	}
+	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
+	candidatePath := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidatePath, []byte("---\ntype: Note\ntitle: Conflict\n---\nCandidate body.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/conflict.md", "tester", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const externalIndex = "# Knowledge\n\nmanual index change\n"
+	inbox.afterCanonicalWrite = func() error {
+		return repository.writeBundleFile("index.md", []byte(externalIndex), 0o644)
+	}
+	_, err = inbox.Decide(context.Background(), DecisionRequest{
+		ProposalID: proposal.ID, Action: DecisionAccept, ExpectedVersion: state.Version,
+		IdempotencyKey: "derived-file-conflict", PrincipalID: "local-operator",
+	}, time.Now())
+	if !errors.Is(err, ErrProposalVersionConflict) {
+		t.Fatalf("decision error=%v", err)
+	}
+	index, err := repository.ReadBundleFile("index.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) != externalIndex {
+		t.Fatalf("external index overwritten: %q", index)
+	}
+	if _, err := repository.ReadBundleFile(proposal.TargetPath); !os.IsNotExist(err) {
+		t.Fatalf("canonical target remains after conflict: %v", err)
+	}
+	stored, err := inbox.load(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "proposed" || stored.Decision != nil {
+		t.Fatalf("proposal committed after conflict: %+v", stored)
+	}
+}
+
+func TestDecisionRecoveryPreservesChangedCandidateAndRollsBack(t *testing.T) {
+	root := t.TempDir()
+	repository := NewRepository(filepath.Join(root, "knowledge"), atomicTestCodec{})
+	if err := repository.Init(); err != nil {
+		t.Fatal(err)
+	}
+	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
+	candidatePath := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidatePath, []byte("---\ntype: Note\ntitle: Recovery\n---\nOriginal candidate.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/recovery-conflict.md", "tester", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := DecisionRequest{
+		ProposalID: proposal.ID, Action: DecisionAccept, ExpectedVersion: state.Version,
+		IdempotencyKey: "candidate-conflict", PrincipalID: "local-operator",
+	}
+	interrupted := errors.New("simulated process interruption")
+	inbox.afterCanonicalWrites = func() { panic(interrupted) }
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != interrupted {
+				t.Fatalf("interruption=%v", recovered)
+			}
+		}()
+		_, _ = inbox.Decide(context.Background(), request, time.Now())
+	}()
+	const changedCandidate = "---\ntype: Note\ntitle: Recovery\n---\nExternally changed candidate.\n"
+	if err := os.WriteFile(filepath.Join(inbox.Root, filepath.FromSlash(proposal.CandidatePath)), []byte(changedCandidate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewReviewInbox(inbox.Root, repository)
+	_, err = restarted.Decide(context.Background(), request, time.Now())
+	if !errors.Is(err, ErrProposalVersionConflict) {
+		t.Fatalf("recovery error=%v", err)
+	}
+	candidate, err := os.ReadFile(filepath.Join(inbox.Root, filepath.FromSlash(proposal.CandidatePath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(candidate) != changedCandidate {
+		t.Fatalf("candidate overwritten during recovery: %q", candidate)
+	}
+	if _, err := repository.ReadBundleFile(proposal.TargetPath); !os.IsNotExist(err) {
+		t.Fatalf("canonical target remains after candidate conflict: %v", err)
+	}
+	stored, err := restarted.load(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "proposed" || stored.Decision != nil {
+		t.Fatalf("proposal committed after candidate conflict: %+v", stored)
+	}
+	if _, err := os.Stat(filepath.Join(inbox.Root, proposal.ID, decisionTransactionFile)); !os.IsNotExist(err) {
+		t.Fatalf("recovery transaction remains: %v", err)
+	}
+}
+
 
 func TestDecideSerializesConflictingAcceptAndReject(t *testing.T) {
 	root := t.TempDir()

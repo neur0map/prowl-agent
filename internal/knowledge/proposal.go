@@ -189,16 +189,21 @@ func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAud
 		return nil, err
 	}
 	rollback := func(cause error) error {
-		if rollbackErr := restoreBundleSnapshots(inbox.Repository, volatileSnapshots(transaction.Snapshots)); rollbackErr != nil {
+		external, rollbackErr := restoreDecisionTransactionSnapshots(inbox.Repository, volatileSnapshots(transaction.Snapshots), volatileSnapshots(transaction.Results))
+		if rollbackErr != nil {
 			return errors.Join(cause, fmt.Errorf("proposal rollback failed: %w", rollbackErr))
 		}
 		if removeErr := inbox.removeDecisionTransaction(id); removeErr != nil {
 			return errors.Join(cause, fmt.Errorf("proposal rollback cleanup failed: %w", removeErr))
 		}
+		if external {
+			return errors.Join(cause, ErrProposalVersionConflict)
+		}
 		return cause
 	}
+	original := volatileSnapshots(transaction.Snapshots)
 	results := volatileSnapshots(transaction.Results)
-	if err := inbox.writeCanonicalSnapshots(results[:1]); err != nil {
+	if err := inbox.writeCanonicalSnapshots(results[:1], original[:1]); err != nil {
 		return nil, rollback(err)
 	}
 	if inbox.afterCanonicalWrite != nil {
@@ -206,7 +211,7 @@ func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAud
 			return nil, rollback(err)
 		}
 	}
-	if err := inbox.writeCanonicalSnapshots(results[1:]); err != nil {
+	if err := inbox.writeCanonicalSnapshots(results[1:], original[1:]); err != nil {
 		return nil, rollback(err)
 	}
 	transaction.Stage = decisionTransactionCanonical

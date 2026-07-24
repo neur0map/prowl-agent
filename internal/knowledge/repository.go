@@ -448,7 +448,7 @@ func atomicWrite(path string, data []byte, mode fs.FileMode) error {
 		return err
 	}
 	defer directory.Close()
-	return directory.Sync()
+	return syncDirectoryAfterRename(directory)
 }
 
 func (r *Repository) writeBundleFile(rel string, data []byte, mode fs.FileMode) error {
@@ -501,5 +501,5 @@ func atomicWriteInRoot(root *os.Root, rel string, data []byte, mode fs.FileMode)
 		return err
 	}
 	defer directory.Close()
-	return directory.Sync()
+	return syncDirectoryAfterRename(directory)
 }

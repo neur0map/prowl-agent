@@ -55,7 +55,6 @@ func syncKnowledge(ws *workspace.Workspace, repo *knowledge.Repository) error {
 	return repo.SyncStore(db, ws.Root, time.Now().UTC())
 }
 
-const cliKnowledgePrincipalID = "local-cli"
 
 func decideKnowledgeProposal(inbox *knowledge.ReviewInbox, id string, action knowledge.DecisionAction, now time.Time) (*knowledge.Proposal, error) {
 	state, err := inbox.Describe(id)
@@ -65,7 +64,7 @@ func decideKnowledgeProposal(inbox *knowledge.ReviewInbox, id string, action kno
 	sum := sha256.Sum256([]byte(id + "\x00" + string(action) + "\x00" + state.Version))
 	result, err := inbox.Decide(context.Background(), knowledge.DecisionRequest{
 		ProposalID: id, Action: action, ExpectedVersion: state.Version,
-		IdempotencyKey: hex.EncodeToString(sum[:]), PrincipalID: cliKnowledgePrincipalID,
+		IdempotencyKey: hex.EncodeToString(sum[:]), PrincipalID: knowledge.LocalPrincipalID,
 	}, now)
 	if err != nil {
 		return nil, err

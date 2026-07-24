@@ -56,7 +56,7 @@ func TestProposalAPIRequiresConfirmationAndIsIdempotent(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &acceptedEnvelope); err != nil {
 		t.Fatal(err)
 	}
-	if acceptedEnvelope.Data.Idempotent || acceptedEnvelope.Data.Proposal.Status != "accepted" || acceptedEnvelope.Data.Audit.PrincipalID != localWorkbenchPrincipalID || acceptedEnvelope.Data.Audit.VersionBefore != acceptedDetail.Version || acceptedEnvelope.Data.Version == "" {
+	if acceptedEnvelope.Data.Idempotent || acceptedEnvelope.Data.Proposal.Status != "accepted" || acceptedEnvelope.Data.Audit.PrincipalID != knowledge.LocalPrincipalID || acceptedEnvelope.Data.Audit.VersionBefore != acceptedDetail.Version || acceptedEnvelope.Data.Version == "" {
 		t.Fatalf("accept result=%+v", acceptedEnvelope.Data)
 	}
 	if _, err := project.Knowledge.ReadBundleFile("decisions/accepted.md"); err != nil {
@@ -85,7 +85,7 @@ func TestProposalAPIRequiresConfirmationAndIsIdempotent(t *testing.T) {
 	var rejectedEnvelope struct {
 		Data KnowledgeProposalDecision `json:"data"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &rejectedEnvelope); err != nil || rejectedEnvelope.Data.Audit.Action != knowledge.DecisionReject || rejectedEnvelope.Data.Audit.PrincipalID != localWorkbenchPrincipalID || rejectedEnvelope.Data.Idempotent {
+	if err := json.Unmarshal(response.Body.Bytes(), &rejectedEnvelope); err != nil || rejectedEnvelope.Data.Audit.Action != knowledge.DecisionReject || rejectedEnvelope.Data.Audit.PrincipalID != knowledge.LocalPrincipalID || rejectedEnvelope.Data.Idempotent {
 		t.Fatalf("reject result=%+v err=%v", rejectedEnvelope.Data, err)
 	}
 	if _, err := project.Knowledge.ReadBundleFile("decisions/rejected.md"); !os.IsNotExist(err) {

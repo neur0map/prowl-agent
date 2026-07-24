@@ -105,6 +105,43 @@ func TestKnowledgeReadReturnsStablePagesDetailsAndProposalDiff(t *testing.T) {
 	}
 }
 
+func TestKnowledgeProposalDetailAcceptsSharedLocalPrincipalAudit(t *testing.T) {
+	project := openWorkbenchProject(t, nil)
+	if err := project.Knowledge.Init(); err != nil {
+		t.Fatal(err)
+	}
+	candidatePath := filepath.Join(t.TempDir(), "candidate.md")
+	if err := os.WriteFile(candidatePath, []byte("---\ntype: Decision\ntitle: Shared principal\n---\nAccepted by the CLI.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inbox := knowledge.NewReviewInbox(project.Workspace.Proposals, project.Knowledge)
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/shared-principal.md", "cli", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Decide(context.Background(), knowledge.DecisionRequest{
+		ProposalID: proposal.ID, Action: knowledge.DecisionAccept, ExpectedVersion: state.Version,
+		IdempotencyKey: "cli-accepted-audit", PrincipalID: knowledge.LocalPrincipalID,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := service.KnowledgeProposal(context.Background(), proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Proposal.Decision == nil || detail.Proposal.Decision.PrincipalID != knowledge.LocalPrincipalID {
+		t.Fatalf("proposal decision=%+v", detail.Proposal.Decision)
+	}
+}
+
 func TestKnowledgeReadRejectsInvalidPaginationAndMissingDetail(t *testing.T) {
 	project := openWorkbenchProject(t, nil)
 	service, err := NewService(project)

@@ -15,7 +15,6 @@ import (
 const (
 	MaxKnowledgeProposalDecisionRequestBytes = 2 << 10
 	maxKnowledgeProposalDecisionFieldBytes   = 128
-	localWorkbenchPrincipalID                = "local-operator"
 )
 
 var (
@@ -65,7 +64,7 @@ func (service *Service) DecideKnowledgeProposal(ctx context.Context, id string, 
 		Action:          action,
 		ExpectedVersion: input.ExpectedVersion,
 		IdempotencyKey:  input.IdempotencyKey,
-		PrincipalID:     localWorkbenchPrincipalID,
+		PrincipalID:     knowledge.LocalPrincipalID,
 	}, time.Now().UTC())
 	if errors.Is(err, fs.ErrNotExist) {
 		return KnowledgeProposalDecision{}, ErrKnowledgeNotFound
@@ -118,7 +117,7 @@ func safeKnowledgeProposal(proposal knowledge.Proposal, roots []string) (knowled
 }
 
 func safeKnowledgeDecisionAudit(audit knowledge.DecisionAudit, proposal knowledge.Proposal, roots []string) (knowledge.DecisionAudit, error) {
-	if audit.ProposalID != proposal.ID || audit.PrincipalID != localWorkbenchPrincipalID || audit.Action != knowledge.DecisionAccept && audit.Action != knowledge.DecisionReject || audit.ExpectedVersion == "" || audit.VersionBefore == "" || audit.VersionAfter == "" || !validKnowledgeText(audit.SchemaVersion, 128, roots...) || !validKnowledgeText(audit.IdempotencyKey, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.ExpectedVersion, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.VersionBefore, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.VersionAfter, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.PrincipalID, maxKnowledgeProposalDecisionFieldBytes, roots...) || len(audit.Rollback.Paths) != 3 || audit.Rollback.Paths[0] != proposal.TargetPath || audit.Rollback.Paths[1] != "index.md" || audit.Rollback.Paths[2] != "log.md" {
+	if audit.ProposalID != proposal.ID || audit.PrincipalID != knowledge.LocalPrincipalID || audit.Action != knowledge.DecisionAccept && audit.Action != knowledge.DecisionReject || audit.ExpectedVersion == "" || audit.VersionBefore == "" || audit.VersionAfter == "" || !validKnowledgeText(audit.SchemaVersion, 128, roots...) || !validKnowledgeText(audit.IdempotencyKey, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.ExpectedVersion, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.VersionBefore, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.VersionAfter, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.PrincipalID, maxKnowledgeProposalDecisionFieldBytes, roots...) || !validKnowledgeText(audit.DecidedAt, 64, roots...) {
 		return knowledge.DecisionAudit{}, ErrInvalidDerivedData
 	}
 	if audit.Action == knowledge.DecisionAccept && proposal.Status != "accepted" || audit.Action == knowledge.DecisionReject && proposal.Status != "rejected" {

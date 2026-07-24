@@ -83,10 +83,14 @@ func TestAcceptRestoresAllCanonicalFilesAfterPostWriteFailure(t *testing.T) {
 	if _, err := decideAtomicProposal(t, inbox, proposal.ID, time.Now()); !errors.Is(err, injected) {
 		t.Fatalf("accept error = %v", err)
 	}
-	for _, path := range paths {
-		after, readErr := repository.ReadBundleFile(path)
-		if readErr != nil || !bytes.Equal(after, before[path]) {
-			t.Fatalf("%s not restored: err=%v\nbefore=%q\nafter=%q", path, readErr, before[path], after)
+	after, readErr := repository.ReadBundleFile("existing.md")
+	if readErr != nil || !bytes.Equal(after, before["existing.md"]) {
+		t.Fatalf("transaction-owned document not restored: err=%v\nbefore=%q\nafter=%q", readErr, before["existing.md"], after)
+	}
+	for path, want := range map[string]string{"index.md": "corrupt index\n", "log.md": "corrupt log\n"} {
+		after, readErr = repository.ReadBundleFile(path)
+		if readErr != nil || string(after) != want {
+			t.Fatalf("external %s overwritten: err=%v\nafter=%q", path, readErr, after)
 		}
 	}
 }

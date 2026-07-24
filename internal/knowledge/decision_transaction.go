@@ -134,14 +134,18 @@ func (inbox *ReviewInbox) recoverDecisionTransaction(id string) error {
 	if err := inbox.validDecisionTransaction(transaction, id); err != nil {
 		return err
 	}
+	original := volatileSnapshots(transaction.Snapshots)
+	results := volatileSnapshots(transaction.Results)
 	current, err := snapshotBundleFiles(inbox.Repository, transaction.Proposal.TargetPath, "index.md", "log.md")
 	if err != nil {
 		return err
 	}
-	original := volatileSnapshots(transaction.Snapshots)
-
-	results := volatileSnapshots(transaction.Results)
-	if snapshotsMatch(current, results) {
+	candidate, candidateErr := readRootFile(inbox.Root, transaction.Proposal.CandidatePath, MaxDocumentBytes)
+	candidateMatches := candidateErr == nil && bytes.Equal(candidate, transaction.Candidate)
+	if candidateErr != nil && !os.IsNotExist(candidateErr) {
+		return candidateErr
+	}
+	if candidateMatches && snapshotsMatch(current, results) {
 		stored, err := inbox.load(id)
 		if err != nil {
 			return err
@@ -160,26 +164,80 @@ func (inbox *ReviewInbox) recoverDecisionTransaction(id string) error {
 		}
 		return inbox.removeDecisionTransaction(id)
 	}
-	for index := range current {
-		if !sameSnapshot(current[index], original[index]) && !sameSnapshot(current[index], results[index]) {
-			return fmt.Errorf("proposal decision transaction cannot safely recover %s", current[index].path)
-		}
-	}
-	if err := restoreBundleSnapshots(inbox.Repository, original); err != nil {
+	external, err := restoreDecisionTransactionSnapshots(inbox.Repository, original, results)
+	if err != nil {
 		return fmt.Errorf("proposal decision transaction rollback failed: %w", err)
 	}
-	return inbox.removeDecisionTransaction(id)
+	if err := inbox.removeDecisionTransaction(id); err != nil {
+		return err
+	}
+	if !candidateMatches || external {
+		return ErrProposalVersionConflict
+	}
+	return nil
 }
 
-func (inbox *ReviewInbox) writeCanonicalSnapshots(snapshots []fileSnapshot) error {
+func restoreDecisionTransactionSnapshots(repository *Repository, original, results []fileSnapshot) (bool, error) {
+	if len(original) != len(results) || len(original) == 0 {
+		return false, errors.New("invalid decision transaction snapshots")
+	}
+	paths := make([]string, len(original))
+	for index := range original {
+		if original[index].path != results[index].path {
+			return false, errors.New("invalid decision transaction snapshot paths")
+		}
+		paths[index] = original[index].path
+	}
+	current, err := snapshotBundleFiles(repository, paths...)
+	if err != nil {
+		return false, err
+	}
+	external := false
+	for index := range current {
+		switch {
+		case sameSnapshot(current[index], original[index]):
+		case sameSnapshot(current[index], results[index]):
+			if err := restoreBundleSnapshots(repository, original[index:index+1]); err != nil {
+				return false, err
+			}
+		default:
+			external = true
+		}
+	}
+	after, err := snapshotBundleFiles(repository, paths...)
+	if err != nil {
+		return false, err
+	}
+	for index := range after {
+		if !sameSnapshot(original[index], results[index]) && sameSnapshot(after[index], results[index]) {
+			return false, fmt.Errorf("transaction result remains at %s", after[index].path)
+		}
+		if !sameSnapshot(after[index], original[index]) {
+			external = true
+		}
+	}
+	return external, nil
+}
+
+func (inbox *ReviewInbox) writeCanonicalSnapshots(snapshots, expected []fileSnapshot) error {
+	if len(snapshots) != len(expected) {
+		return errors.New("canonical snapshot count mismatch")
+	}
 	root, err := os.OpenRoot(inbox.Repository.Root)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	for _, snapshot := range snapshots {
-		if !snapshot.exists {
-			return errors.New("canonical result is missing")
+	for index, snapshot := range snapshots {
+		if !snapshot.exists || snapshot.path != expected[index].path {
+			return errors.New("invalid canonical result")
+		}
+		current, err := snapshotBundleFiles(inbox.Repository, snapshot.path)
+		if err != nil {
+			return err
+		}
+		if !sameSnapshot(current[0], expected[index]) {
+			return ErrProposalVersionConflict
 		}
 		if err := atomicWriteInRoot(root, snapshot.path, snapshot.data, snapshot.mode); err != nil {
 			return err
@@ -233,7 +291,7 @@ func (inbox *ReviewInbox) removeDecisionTransaction(id string) error {
 		return err
 	}
 	defer directory.Close()
-	return directory.Sync()
+	return syncDirectoryAfterRename(directory)
 }
 
 func (inbox *ReviewInbox) validDecisionTransaction(transaction *decisionTransaction, id string) error {

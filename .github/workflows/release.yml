@@ -85,7 +85,6 @@ jobs:
         shell: pwsh
         run: |
           & C:\vcpkg\vcpkg.exe install "sqlite3[fts5]:x64-mingw-static"
-          "CC=C:\msys64\mingw64\bin\gcc.exe" >> $env:GITHUB_ENV
           "CGO_CFLAGS=-IC:\vcpkg\installed\x64-mingw-static\include" >> $env:GITHUB_ENV
           "CGO_LDFLAGS=-LC:\vcpkg\installed\x64-mingw-static\lib -lsqlite3" >> $env:GITHUB_ENV
 

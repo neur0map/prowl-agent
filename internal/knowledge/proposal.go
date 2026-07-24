@@ -34,6 +34,9 @@ type ReviewInbox struct {
 	// afterCanonicalWrite is a package-private fault-injection seam used to
 	// verify transactional rollback after the first canonical mutation.
 	afterCanonicalWrite func() error
+	// afterCanonicalWrites simulates a process interruption after all canonical
+	// files are durable but before the proposal audit is committed.
+	afterCanonicalWrites func()
 }
 
 func NewReviewInbox(root string, repository *Repository) *ReviewInbox {
@@ -144,10 +147,6 @@ func (inbox *ReviewInbox) Diff(id string) (string, error) {
 	return documentDiff(proposal.TargetPath, old, candidate), nil
 }
 
-// Accept applies a proposal and rolls canonical files back if any later step fails.
-func (inbox *ReviewInbox) Accept(id string, now time.Time) (*Proposal, error) {
-	return inbox.accept(id, now, nil)
-}
 
 func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAudit) (*Proposal, error) {
 	proposal, err := inbox.load(id)
@@ -182,43 +181,50 @@ func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAud
 			return nil, fmt.Errorf("proposal target changed after review was created: %s", proposal.TargetPath)
 		}
 	}
-	backups, err := snapshotBundleFiles(inbox.Repository, proposal.TargetPath, "index.md", "log.md")
+	transaction, err := inbox.prepareAcceptTransaction(*proposal, candidate, doc, decision, now)
 	if err != nil {
 		return nil, err
 	}
+	if err := inbox.writeDecisionTransaction(transaction); err != nil {
+		return nil, err
+	}
 	rollback := func(cause error) error {
-		if rollbackErr := restoreBundleSnapshots(inbox.Repository, backups); rollbackErr != nil {
+		if rollbackErr := restoreBundleSnapshots(inbox.Repository, volatileSnapshots(transaction.Snapshots)); rollbackErr != nil {
 			return errors.Join(cause, fmt.Errorf("proposal rollback failed: %w", rollbackErr))
+		}
+		if removeErr := inbox.removeDecisionTransaction(id); removeErr != nil {
+			return errors.Join(cause, fmt.Errorf("proposal rollback cleanup failed: %w", removeErr))
 		}
 		return cause
 	}
-	if err := inbox.Repository.Write(doc); err != nil {
-		return nil, err
+	results := volatileSnapshots(transaction.Results)
+	if err := inbox.writeCanonicalSnapshots(results[:1]); err != nil {
+		return nil, rollback(err)
 	}
 	if inbox.afterCanonicalWrite != nil {
 		if err := inbox.afterCanonicalWrite(); err != nil {
 			return nil, rollback(err)
 		}
 	}
-	if err := inbox.Repository.AppendLog("accepted", proposal.TargetPath, now); err != nil {
+	if err := inbox.writeCanonicalSnapshots(results[1:]); err != nil {
 		return nil, rollback(err)
 	}
-	if err := inbox.Repository.GenerateIndex(); err != nil {
+	transaction.Stage = decisionTransactionCanonical
+	if err := inbox.writeDecisionTransaction(transaction); err != nil {
 		return nil, rollback(err)
 	}
-	proposal.Status = "accepted"
-	proposal.ReviewedAt = now.UTC().Format(time.RFC3339)
-	proposal.Decision = decision
-	if err := inbox.writeProposal(proposal); err != nil {
+	if inbox.afterCanonicalWrites != nil {
+		inbox.afterCanonicalWrites()
+	}
+	if err := inbox.writeProposal(&transaction.Proposal); err != nil {
 		return nil, rollback(err)
 	}
-	return proposal, nil
+	if err := inbox.removeDecisionTransaction(id); err != nil {
+		return nil, err
+	}
+	return &transaction.Proposal, nil
 }
 
-// Reject records review without touching canonical knowledge.
-func (inbox *ReviewInbox) Reject(id string, now time.Time) (*Proposal, error) {
-	return inbox.reject(id, now, nil)
-}
 
 func (inbox *ReviewInbox) reject(id string, now time.Time, decision *DecisionAudit) (*Proposal, error) {
 	proposal, err := inbox.load(id)

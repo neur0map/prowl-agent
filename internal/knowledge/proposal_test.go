@@ -2,6 +2,7 @@ package knowledge_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,22 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 )
+
+func decideProposal(t *testing.T, inbox *knowledge.ReviewInbox, id string, action knowledge.DecisionAction, now time.Time) (*knowledge.Proposal, error) {
+	t.Helper()
+	state, err := inbox.Describe(id)
+	if err != nil {
+		return nil, err
+	}
+	result, err := inbox.Decide(context.Background(), knowledge.DecisionRequest{
+		ProposalID: id, Action: action, ExpectedVersion: state.Version,
+		IdempotencyKey: "test-" + string(action) + "-" + state.Version[:16], PrincipalID: "test",
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	return &result.Proposal, nil
+}
 
 func TestProposalCreateDiffAcceptAndReject(t *testing.T) {
 	root := t.TempDir()
@@ -35,7 +52,7 @@ func TestProposalCreateDiffAcceptAndReject(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo.Root, filepath.FromSlash(proposal.TargetPath))); !os.IsNotExist(err) {
 		t.Fatal("proposal changed accepted knowledge before review")
 	}
-	accepted, err := inbox.Accept(proposal.ID, now.Add(time.Minute))
+	accepted, err := decideProposal(t, inbox, proposal.ID, knowledge.DecisionAccept, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +77,7 @@ func TestProposalCreateDiffAcceptAndReject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rejected, err := inbox.Reject(rejectedProposal.ID, now.Add(2*time.Minute))
+	rejected, err := decideProposal(t, inbox, rejectedProposal.ID, knowledge.DecisionReject, now.Add(2*time.Minute))
 	if err != nil || rejected.Status != "rejected" {
 		t.Fatalf("reject = %+v, %v", rejected, err)
 	}
@@ -90,7 +107,7 @@ func TestProposalCollisionLeavesProposalReviewable(t *testing.T) {
 	if err := repo.Write(manual); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inbox.Accept(proposal.ID, now.Add(time.Minute)); err == nil {
+	if _, err := decideProposal(t, inbox, proposal.ID, knowledge.DecisionAccept, now.Add(time.Minute)); err == nil {
 		t.Fatal("accept should reject a newly occupied destination")
 	}
 	proposals, err := inbox.List()
@@ -164,7 +181,7 @@ func TestProposalAcceptRejectsIntermediateDirectorySymlinkSwap(t *testing.T) {
 	if err := repo.Write(direct); err == nil {
 		t.Fatal("repository write followed an intermediate directory symlink")
 	}
-	if _, err := inbox.Accept(proposal.ID, time.Now()); err == nil {
+	if _, err := decideProposal(t, inbox, proposal.ID, knowledge.DecisionAccept, time.Now()); err == nil {
 		t.Fatal("accept followed an intermediate directory symlink")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "candidate.md")); !os.IsNotExist(err) {
@@ -195,7 +212,7 @@ func TestProposalAcceptRejectsChangedUpdateBase(t *testing.T) {
 	if err := repo.Write(human); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inbox.Accept(proposal.ID, time.Now()); err == nil {
+	if _, err := decideProposal(t, inbox, proposal.ID, knowledge.DecisionAccept, time.Now()); err == nil {
 		t.Fatal("accept overwrote a target changed after proposal creation")
 	}
 	kept, err := repo.ReadBundleFile("existing.md")

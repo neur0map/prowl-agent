@@ -440,7 +440,15 @@ func atomicWrite(path string, data []byte, mode fs.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func (r *Repository) writeBundleFile(rel string, data []byte, mode fs.FileMode) error {
@@ -485,5 +493,13 @@ func atomicWriteInRoot(root *os.Root, rel string, data []byte, mode fs.FileMode)
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return root.Rename(tmp, clean)
+	if err := root.Rename(tmp, clean); err != nil {
+		return err
+	}
+	directory, err := root.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }

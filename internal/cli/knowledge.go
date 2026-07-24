@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -50,6 +53,24 @@ func syncKnowledge(ws *workspace.Workspace, repo *knowledge.Repository) error {
 	}
 	defer db.Close()
 	return repo.SyncStore(db, ws.Root, time.Now().UTC())
+}
+
+const cliKnowledgePrincipalID = "local-cli"
+
+func decideKnowledgeProposal(inbox *knowledge.ReviewInbox, id string, action knowledge.DecisionAction, now time.Time) (*knowledge.Proposal, error) {
+	state, err := inbox.Describe(id)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(id + "\x00" + string(action) + "\x00" + state.Version))
+	result, err := inbox.Decide(context.Background(), knowledge.DecisionRequest{
+		ProposalID: id, Action: action, ExpectedVersion: state.Version,
+		IdempotencyKey: hex.EncodeToString(sum[:]), PrincipalID: cliKnowledgePrincipalID,
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	return &result.Proposal, nil
 }
 
 func newKnowledgeInitCmd() *cobra.Command {
@@ -223,7 +244,7 @@ func newKnowledgeAcceptCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			proposal, err := inbox.Accept(args[0], time.Now().UTC())
+			proposal, err := decideKnowledgeProposal(inbox, args[0], knowledge.DecisionAccept, time.Now().UTC())
 			if err != nil {
 				return err
 			}
@@ -250,7 +271,7 @@ func newKnowledgeRejectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			proposal, err := inbox.Reject(args[0], time.Now().UTC())
+			proposal, err := decideKnowledgeProposal(inbox, args[0], knowledge.DecisionReject, time.Now().UTC())
 			if err != nil {
 				return err
 			}

@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,6 +19,22 @@ func (atomicTestCodec) Parse(path string, data []byte) (*Document, error) {
 
 func (atomicTestCodec) Marshal(document *Document) ([]byte, error) {
 	return append([]byte(nil), document.Body...), nil
+}
+
+func decideAtomicProposal(t *testing.T, inbox *ReviewInbox, id string, now time.Time) (*Proposal, error) {
+	t.Helper()
+	state, err := inbox.Describe(id)
+	if err != nil {
+		return nil, err
+	}
+	result, err := inbox.Decide(context.Background(), DecisionRequest{
+		ProposalID: id, Action: DecisionAccept, ExpectedVersion: state.Version,
+		IdempotencyKey: "atomic-" + state.Version[:16], PrincipalID: "test",
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	return &result.Proposal, nil
 }
 
 func TestAcceptRestoresAllCanonicalFilesAfterPostWriteFailure(t *testing.T) {
@@ -63,7 +80,7 @@ func TestAcceptRestoresAllCanonicalFilesAfterPostWriteFailure(t *testing.T) {
 		}
 		return injected
 	}
-	if _, err := inbox.Accept(proposal.ID, time.Now()); !errors.Is(err, injected) {
+	if _, err := decideAtomicProposal(t, inbox, proposal.ID, time.Now()); !errors.Is(err, injected) {
 		t.Fatalf("accept error = %v", err)
 	}
 	for _, path := range paths {
@@ -112,7 +129,7 @@ func TestAcceptReportsRollbackFailure(t *testing.T) {
 		}
 		return errors.New("injected failure")
 	}
-	_, err = inbox.Accept(proposal.ID, time.Now())
+	_, err = decideAtomicProposal(t, inbox, proposal.ID, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "proposal rollback failed") {
 		t.Fatalf("rollback failure not reported: %v", err)
 	}

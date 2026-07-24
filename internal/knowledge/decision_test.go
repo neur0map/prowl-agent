@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -63,6 +64,134 @@ func TestExpectedVersionRequiresCurrentProposalAndPersistsImmutableAudit(t *test
 	}
 }
 
+func TestDecisionRecoversCanonicalAcceptBeforeProposalCommit(t *testing.T) {
+	root := t.TempDir()
+	repository := NewRepository(filepath.Join(root, "knowledge"), atomicTestCodec{})
+	if err := repository.Init(); err != nil {
+		t.Fatal(err)
+	}
+	candidatePath := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidatePath, []byte("---\ntype: Note\ntitle: Recovery\n---\nRecovery body.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
+	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/recovery.md", "tester", createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decidedAt := createdAt.Add(time.Minute)
+	request := DecisionRequest{
+		ProposalID: proposal.ID, Action: DecisionAccept, ExpectedVersion: before.Version,
+		IdempotencyKey: "recovery-decision", PrincipalID: "local-operator",
+	}
+	interrupted := errors.New("simulated process interruption")
+	inbox.afterCanonicalWrites = func() { panic(interrupted) }
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != interrupted {
+				t.Fatalf("interruption=%v", recovered)
+			}
+		}()
+		_, _ = inbox.Decide(context.Background(), request, decidedAt)
+	}()
+
+	restarted := NewReviewInbox(inbox.Root, repository)
+	result, err := restarted.Decide(context.Background(), request, decidedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Idempotent || result.Proposal.Status != "accepted" {
+		t.Fatalf("recovered result=%+v", result)
+	}
+	if _, err := repository.ReadBundleFile(proposal.TargetPath); err != nil {
+		t.Fatalf("accepted canonical document missing after recovery: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inbox.Root, proposal.ID, decisionTransactionFile)); !os.IsNotExist(err) {
+		t.Fatalf("recovery transaction remains: %v", err)
+	}
+}
+
+
+func TestDecideSerializesConflictingAcceptAndReject(t *testing.T) {
+	root := t.TempDir()
+	repository := NewRepository(filepath.Join(root, "knowledge"), atomicTestCodec{})
+	if err := repository.Init(); err != nil {
+		t.Fatal(err)
+	}
+	candidatePath := filepath.Join(root, "candidate.md")
+	if err := os.WriteFile(candidatePath, []byte("---\ntype: Note\ntitle: Serialized\n---\nSerialized body.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/serialized.md", "tester", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := inbox.Describe(proposal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan DecisionResult, 2)
+	decisionErrors := make(chan error, 2)
+	var wait sync.WaitGroup
+	for _, action := range []DecisionAction{DecisionAccept, DecisionReject} {
+		wait.Add(1)
+		go func(action DecisionAction) {
+			defer wait.Done()
+			<-start
+			result, err := inbox.Decide(context.Background(), DecisionRequest{
+				ProposalID: proposal.ID, Action: action, ExpectedVersion: state.Version,
+				IdempotencyKey: "concurrent-" + string(action), PrincipalID: "local-operator",
+			}, now.Add(time.Minute))
+			results <- result
+			decisionErrors <- err
+		}(action)
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	close(decisionErrors)
+	var accepted, rejected, conflicts int
+	for err := range decisionErrors {
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, ErrProposalVersionConflict) {
+			conflicts++
+			continue
+		}
+		t.Fatalf("concurrent decision error=%v", err)
+	}
+	for result := range results {
+		switch result.Proposal.Status {
+		case "accepted":
+			accepted++
+		case "rejected":
+			rejected++
+		}
+	}
+	if conflicts != 1 || accepted+rejected != 1 {
+		t.Fatalf("conflicts=%d accepted=%d rejected=%d", conflicts, accepted, rejected)
+	}
+	final, err := inbox.Describe(proposal.ID)
+	if err != nil || final.Proposal.Decision == nil {
+		t.Fatalf("final proposal=%+v err=%v", final, err)
+	}
+	if final.Proposal.Status == "accepted" {
+		if _, err := repository.ReadBundleFile(proposal.TargetPath); err != nil {
+			t.Fatalf("accepted canonical document missing: %v", err)
+		}
+	} else if _, err := repository.ReadBundleFile(proposal.TargetPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected proposal changed canonical knowledge: %v", err)
+	}
+}
 func TestRollbackDecisionLeavesProposalProposedWithoutAudit(t *testing.T) {
 	root := t.TempDir()
 	repository := NewRepository(filepath.Join(root, "knowledge"), atomicTestCodec{})

@@ -127,6 +127,9 @@ func (inbox *ReviewInbox) Decide(ctx context.Context, request DecisionRequest, n
 		return DecisionResult{}, ErrDecisionInProgress
 	}
 	defer func() { _ = lock.Unlock() }()
+	if err := inbox.recoverDecisionTransaction(request.ProposalID); err != nil {
+		return DecisionResult{}, err
+	}
 
 	state, err := inbox.Describe(request.ProposalID)
 	if err != nil {

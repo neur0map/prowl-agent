@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/gofrs/flock"
 )
 
 const (
@@ -33,7 +31,8 @@ const (
 	maxIdempotencyKeyBytes = 128
 	replayPath             = ".prowl/setup-applies.json"
 	transactionPath        = ".prowl-setup-transaction.json"
-	setupLockPath          = ".prowl-setup.lock"
+	legacyTransactionPath  = ".prowl/setup-transaction.json"
+	setupLockPath          = ".prowl/setup.lock"
 	transactionSchema      = 1
 	setupLockTimeout       = 5 * time.Second
 )
@@ -138,6 +137,7 @@ type transaction struct {
 	Request       ApplyRequest           `json:"request"`
 	Snapshots     []transactionSnapshot  `json:"snapshots"`
 	Directories   []transactionDirectory `json:"directories"`
+	journalPath   string
 }
 
 // Service owns setup reads and mutations for one project root.
@@ -209,31 +209,46 @@ func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyO
 	if len(request.IdempotencyKey) == 0 || len(request.IdempotencyKey) > maxIdempotencyKeyBytes {
 		return ApplyOutcome{}, errors.New("invalid setup idempotency key")
 	}
-	initialPlan, err := service.Plan(ctx, request.Integrations)
-	if err != nil {
-		return ApplyOutcome{}, err
-	}
-	if request.ExpectedProjectConfigVersion != initialPlan.ProjectConfigVersion || request.PlanHash != initialPlan.Hash {
-		return ApplyOutcome{}, ErrPlanConflict
-	}
-
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	unlock, err := service.lock(ctx)
-	if err != nil {
-		return ApplyOutcome{}, safeError(err)
-	}
-	defer unlock()
 	root, err := os.OpenRoot(service.root)
 	if err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
 	defer root.Close()
-
-	if err := service.recoverInterruptedTransactionInRoot(root); err != nil {
+	pending, hasPending, err := loadTransactionInRoot(root)
+	if err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
 	replays, err := loadReplaysInRoot(root)
+	if err != nil {
+		return ApplyOutcome{}, safeError(err)
+	}
+	if !hasPending {
+		if previous, ok := replays[request.IdempotencyKey]; ok {
+			if !sameRequest(previous.Request, request) {
+				return ApplyOutcome{}, ErrPlanConflict
+			}
+			return previous.Outcome, nil
+		}
+		initialPlan, err := service.plan(root, ctx, request.Integrations)
+		if err != nil {
+			return ApplyOutcome{}, err
+		}
+		if request.ExpectedProjectConfigVersion != initialPlan.ProjectConfigVersion || request.PlanHash != initialPlan.Hash {
+			return ApplyOutcome{}, ErrPlanConflict
+		}
+	}
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	unlock, err := service.lock(ctx, root)
+	if err != nil {
+		return ApplyOutcome{}, safeError(err)
+	}
+	defer unlock()
+	if err := service.recoverInterruptedTransactionInRoot(root); err != nil {
+		return ApplyOutcome{}, safeError(err)
+	}
+	replays, err = loadReplaysInRoot(root)
 	if err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
@@ -258,11 +273,12 @@ func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyO
 		PlanHash: plan.Hash, ProjectConfigVersion: plan.ProjectConfigVersion,
 		IdempotencyKey: request.IdempotencyKey, RollbackManifest: manifest(snapshots), Verified: true,
 	}
-	pending := transaction{
+	pending = transaction{
 		SchemaVersion: transactionSchema,
 		Request:       request,
 		Snapshots:     transactionSnapshots(snapshots),
 		Directories:   directories,
+		journalPath:   transactionPath,
 	}
 	if err := saveTransactionInRoot(root, pending); err != nil {
 		return ApplyOutcome{}, safeError(err)
@@ -292,7 +308,7 @@ func (service *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyO
 		}
 		return ApplyOutcome{}, safeError(err)
 	}
-	if err := removeTransactionInRoot(root); err != nil {
+	if err := removeTransactionInRoot(root, pending.journalPath); err != nil {
 		return ApplyOutcome{}, safeError(err)
 	}
 	return outcome, nil
@@ -563,11 +579,18 @@ func (service *Service) ensureParentDirectories(root *os.Root, rel string, pendi
 	return nil
 }
 
-func restoreInRoot(root *os.Root, snapshots []transactionSnapshot) error {
+func restoreInRoot(root *os.Root, snapshots []transactionSnapshot, journalPath string) error {
+	journal, err := validateRootPath(root, journalPath)
+	if err != nil {
+		return err
+	}
 	for _, before := range snapshots {
 		clean, err := validateRootPath(root, before.Path)
 		if err != nil {
 			return err
+		}
+		if clean == journal {
+			continue
 		}
 		if before.Existed {
 			if err := writeAtomicInRoot(root, clean, before.Data, os.FileMode(before.Mode).Perm()); err != nil {
@@ -592,7 +615,7 @@ func (service *Service) rollbackTransaction(pending transaction) error {
 }
 
 func (service *Service) rollbackTransactionInRoot(root *os.Root, pending transaction) error {
-	if err := restoreInRoot(root, pending.Snapshots); err != nil {
+	if err := restoreInRoot(root, pending.Snapshots, journalPathFor(pending)); err != nil {
 		return err
 	}
 	directories := append([]transactionDirectory(nil), pending.Directories...)
@@ -600,7 +623,9 @@ func (service *Service) rollbackTransactionInRoot(root *os.Root, pending transac
 		return strings.Count(directories[left].Path, "/") > strings.Count(directories[right].Path, "/")
 	})
 	for _, directory := range directories {
-		if !directory.Created {
+		// The process lock lives in .prowl. It is project-owned, ignored state
+		// rather than an integration destination, and must outlive this rollback.
+		if !directory.Created || directory.Path == ".prowl" {
 			continue
 		}
 		clean, err := validateRootPath(root, directory.Path)
@@ -611,7 +636,7 @@ func (service *Service) rollbackTransactionInRoot(root *os.Root, pending transac
 			return err
 		}
 	}
-	return removeTransactionInRoot(root)
+	return removeTransactionInRoot(root, journalPathFor(pending))
 }
 
 func (service *Service) recoverInterruptedTransactionInRoot(root *os.Root) error {
@@ -624,7 +649,7 @@ func (service *Service) recoverInterruptedTransactionInRoot(root *os.Root) error
 		return err
 	}
 	if replay, ok := replays[pending.Request.IdempotencyKey]; ok && sameRequest(replay.Request, pending.Request) && replay.Outcome.Verified {
-		return removeTransactionInRoot(root)
+		return removeTransactionInRoot(root, journalPathFor(pending))
 	}
 	if err := service.rollbackTransactionInRoot(root, pending); err != nil {
 		return err
@@ -642,21 +667,25 @@ func (service *Service) loadTransaction() (transaction, bool, error) {
 }
 
 func loadTransactionInRoot(root *os.Root) (transaction, bool, error) {
-	data, err := readRootFile(root, transactionPath)
-	if os.IsNotExist(err) {
-		return transaction{}, false, nil
+	for _, path := range []string{transactionPath, legacyTransactionPath} {
+		data, err := readRootFile(root, path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return transaction{}, false, err
+		}
+		var pending transaction
+		if err := json.Unmarshal(data, &pending); err != nil {
+			return transaction{}, false, errors.New("invalid setup transaction")
+		}
+		if pending.SchemaVersion != transactionSchema || len(pending.Snapshots) == 0 {
+			return transaction{}, false, errors.New("invalid setup transaction")
+		}
+		pending.journalPath = path
+		return pending, true, nil
 	}
-	if err != nil {
-		return transaction{}, false, err
-	}
-	var pending transaction
-	if err := json.Unmarshal(data, &pending); err != nil {
-		return transaction{}, false, errors.New("invalid setup transaction")
-	}
-	if pending.SchemaVersion != transactionSchema || len(pending.Snapshots) == 0 {
-		return transaction{}, false, errors.New("invalid setup transaction")
-	}
-	return pending, true, nil
+	return transaction{}, false, nil
 }
 
 func (service *Service) saveTransaction(pending transaction) error {
@@ -673,11 +702,18 @@ func saveTransactionInRoot(root *os.Root, pending transaction) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomicInRoot(root, transactionPath, append(data, '\n'), 0o600)
+	return writeAtomicInRoot(root, journalPathFor(pending), append(data, '\n'), 0o600)
 }
 
-func removeTransactionInRoot(root *os.Root) error {
-	clean, err := validateRootPath(root, transactionPath)
+func journalPathFor(pending transaction) string {
+	if pending.journalPath != "" {
+		return pending.journalPath
+	}
+	return transactionPath
+}
+
+func removeTransactionInRoot(root *os.Root, path string) error {
+	clean, err := validateRootPath(root, path)
 	if err != nil {
 		return err
 	}
@@ -710,22 +746,19 @@ func saveReplaysInRoot(root *os.Root, replays map[string]replayRecord) error {
 	return writeAtomicInRoot(root, replayPath, append(data, '\n'), 0o600)
 }
 
-func (service *Service) lock(ctx context.Context) (func(), error) {
-	path := filepath.Join(service.root, setupLockPath)
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("setup lock must not be a symbolic link")
-	} else if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	lock := flock.New(path)
-	locked, err := lock.TryLockContext(ctx, setupLockTimeout)
+func (service *Service) lock(ctx context.Context, root *os.Root) (func(), error) {
+	clean, err := validateRootPath(root, setupLockPath)
 	if err != nil {
 		return nil, err
 	}
-	if !locked {
-		return nil, errors.New("setup apply is already in progress")
+	if err := root.MkdirAll(filepath.Dir(clean), 0o755); err != nil {
+		return nil, err
 	}
-	return func() { _ = lock.Unlock() }, nil
+	file, err := root.OpenFile(clean, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	return lockSetupFile(ctx, file, setupLockTimeout)
 }
 
 func validateRootPath(root *os.Root, rel string) (string, error) {

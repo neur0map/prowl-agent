@@ -106,6 +106,36 @@ func TestSetupApplyIdempotencyConflictAndAuditRedaction(t *testing.T) {
 	}
 }
 
+func TestSetupApplyReplaysCompletedRequestAfterConfigChanges(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationAgents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "replay-after-config-change",
+	}
+	first, err := service.Apply(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".prowl", "config.toml"), []byte("changed = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Apply(context.Background(), request)
+	if err != nil {
+		t.Fatalf("completed replay was rejected after config change: %v", err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("completed replay changed: first=%+v second=%+v", first, second)
+	}
+}
+
 func TestSetupRollbackPreservesFilesAfterMutationFailure(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".cursor", "mcp.json")
@@ -243,6 +273,55 @@ func TestSetupApplyRecoversInterruptedTransaction(t *testing.T) {
 	}
 }
 
+func TestSetupApplyRecoversLegacyInterruptedTransaction(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationAgents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "legacy-interrupted",
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(agentsBlock+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string]any{
+		"schema_version": 1,
+		"request":        request,
+		"snapshots": []map[string]any{{
+			"path": "AGENTS.md", "data": "", "mode": 0, "existed": false,
+		}},
+		"directories": []map[string]any{{
+			"path": ".prowl", "existed": false,
+		}},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(root, ".prowl", "setup-transaction.json")
+	if err := os.WriteFile(legacyPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), request); err == nil {
+		t.Fatal("legacy interrupted transaction was applied instead of recovered")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy interrupted integration was not restored: %v", statErr)
+	}
+	if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy transaction journal remained: %v", statErr)
+	}
+}
+
 func TestSetupApplyDoesNotRecoverLiveLockedTransaction(t *testing.T) {
 	root := t.TempDir()
 	service, err := NewService(root)
@@ -274,7 +353,10 @@ func TestSetupApplyDoesNotRecoverLiveLockedTransaction(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".prowl-setup-transaction.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lock := flock.New(filepath.Join(root, ".prowl-setup.lock"))
+	if err := os.MkdirAll(filepath.Join(root, ".prowl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := flock.New(filepath.Join(root, ".prowl", "setup.lock"))
 	if err := lock.Lock(); err != nil {
 		t.Fatal(err)
 	}

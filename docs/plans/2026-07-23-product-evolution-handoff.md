@@ -1,5 +1,224 @@
 # Product Evolution Handoff — 2026-07-23
 
+## Final stop handoff — 2026-07-24
+
+This section is the authoritative resume point. Carlos explicitly requested: commit and push everything, record the exact state and remaining work, then stop. Do not resume implementation from older sections of this file.
+
+### Repository checkpoint
+
+- Repository: `/home/neur0map/workspace/prowl-agent`
+- Branch: `product-evolution`
+- Implementation checkpoint: `61bd515 feat(workbench): add bounded project-backed startup`
+- Earlier local checkpoints included in the branch:
+  - `1c62e67 feat(application): make project generations atomic`
+  - `807f6f2 docs(plan): finalize workbench and operations roadmap`
+- Last remote checkpoint before this stop operation: `f45b769 docs(plan): add Hermes-inspired agent operations roadmap`
+- The handoff itself is committed immediately after `61bd515`; use `git log -3 --oneline` after pulling to identify its final SHA.
+- Draft PR: <https://github.com/neur0map/prowl-agent/pull/1>
+- Live toolchain at stop: `go version go1.26.4 linux/amd64`; `go.mod` also declares Go 1.26.4.
+- SQLite tests on this host require `CGO_ENABLED=1` and `-tags sqlite_fts5`.
+
+### Canonical plans
+
+- Product roadmap: `docs/plans/2026-07-23-prowl-agent-product-evolution.md`
+- Phase 3A execution contract: `docs/plans/2026-07-23-phase-3a-workbench-completion.md`
+- Hermes clean-room adaptation and parity ledger: `docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md`
+- This handoff: `docs/plans/2026-07-23-product-evolution-handoff.md`
+- Immutable Hermes research pin: `NousResearch/hermes-agent@c4f5a45d5d9903998fb318ac6f3c5e6623e60445`
+
+### What is complete
+
+#### Phases 1–2
+
+Phase 1 durable Markdown/OKF knowledge and Phase 2 unified retrieval/context/MCP foundations remain complete, independently accepted, committed, and pushed. Their detailed evidence is preserved below.
+
+#### Phase 3A A1
+
+A1 is complete, independently accepted, and committed as `1c62e67`:
+
+- one deterministic `application.Project` lifecycle across CLI, MCP, LSP, query, context, setup, and restart paths;
+- strict configuration and freshness behavior;
+- cross-process refresh serialization;
+- generation-atomic structural/vector publication and complete logical reads;
+- interrupted-generation repair and source-set validation;
+- cancellable inherited stdin for LSP with joined shutdown ordering.
+
+#### Phase 3A A2
+
+A2 was independently accepted and is included in `61bd515`:
+
+- real project-backed `GET /api/v1/health` and `GET /api/v1/brief`;
+- stable bounded JSON success/error envelopes and request IDs;
+- generation-pinned Brief/Health reads;
+- canonical validated `meta.resource_version` handling;
+- SQL-level bounded Overview reads and typed bounded-work errors;
+- bounded knowledge projection using one pinned `os.Root`;
+- strict path, identifier, timestamp, UTF-8, control-character, and response-size validation;
+- request cancellation reaches SQL and knowledge traversal;
+- missing service fails closed with an enveloped `503`.
+
+A later defensive A3 review found one real A2 defect: context-aware knowledge reads could block opening a Markdown FIFO. `61bd515` includes the regression and repair using rooted nonblocking descriptor validation plus context-aware bounded reads.
+
+#### Phase 3A A3 implementation
+
+A3 implementation and all known remediations are included in `61bd515`:
+
+- exact default startup limits: 250 ms and 2,000 nonignored candidate paths;
+- candidate 2,001 rejected before candidate inspection/read/hash;
+- incremental directory reads rather than unbounded `WalkDir` materialization;
+- one pinned accepted `os.Root` for bounded recursion, nested `.gitignore`, metadata, and source content;
+- rooted nonblocking descriptor opens with post-open regular-file validation;
+- FIFO config/source inputs cannot strand startup;
+- context-aware config and SQLite open/schema/migration/metadata paths;
+- SQLite BUSY/LOCKED at the startup bound classifies as `startup_refresh_required`;
+- bounded workspace resolution while ordinary `workspace.Resolve` and `OpenProject` stay synchronous;
+- canonical bounded signatures for unchanged ordinary files and in-root file symlinks;
+- current projects open without refresh; stale/deadline/candidate-overflow startup refuses before listen;
+- real `workbench.Service` is assembled before listener creation;
+- project/listener cleanup is close-once with joined errors.
+
+### A3 acceptance status: not yet final
+
+Do **not** call A3 accepted solely from green tests.
+
+The first remediated same-tree review split:
+
+- specification reviewer: `PASS`;
+- defensive reviewer: `REQUEST_CHANGES` for:
+  1. canonical-vs-bounded signature mismatch for in-root source symlinks;
+  2. blocking FIFO open in context-aware knowledge reads;
+  3. a residual context-unaware workspace-resolution metadata seam.
+
+All three were repaired regression-first before `61bd515`. Exact reports:
+
+```text
+/home/neur0map/.hermes/cache/delegation/subagent-summary-0-20260724_020445_923022.txt
+/home/neur0map/.hermes/cache/delegation/subagent-summary-1-20260724_020445_923166.txt
+```
+
+A fresh two-reviewer batch was dispatched against the final implementation bytes:
+
+```text
+delegation: deleg_2f1f2620
+roles: A3 specification acceptance + defensive correctness/security
+status at stop: running / result not yet consumed
+```
+
+The commit operation did not alter reviewed implementation bytes; it only recorded them. This handoff documentation was added afterward. On resume, read the complete `deleg_2f1f2620` reports first. A completion notification alone is not approval. If either report finds a blocker/high issue, reproduce it and repair regression-first. If both approve, record A3 accepted and continue to A4.
+
+### Verification on the `61bd515` implementation
+
+The following passed after the final symlink, FIFO-knowledge, and workspace-resolution fixes:
+
+```sh
+export PATH="$HOME/sdk/go/bin:$PATH" CGO_ENABLED=1
+
+go test -race -tags sqlite_fts5 \
+  ./internal/cli ./internal/application ./internal/config ./internal/index \
+  ./internal/store ./internal/workspace ./internal/knowledge \
+  -run 'Test(OpenCommand|StartupFreshness|OpenProjectClose|LoadContext|OpenContext|ResolveContext|RepositoryListContextBoundedRejectsFIFO|.*Candidate)' \
+  -count=1
+
+go test -tags sqlite_fts5 ./... -count=1
+go test -race -tags sqlite_fts5 ./... -count=1
+go vet -tags sqlite_fts5 ./...
+go mod verify
+go mod tidy -diff
+git diff --check
+```
+
+Observed:
+
+- exact selector membership was verified with `go test -list`;
+- canonical A3 race selector: pass;
+- full tagged repository suite: pass;
+- full tagged repository race suite: pass;
+- vet: pass;
+- module verification: `all modules verified`;
+- tidy diff: clean;
+- diff check: clean;
+- symlink parity and immediate bounded-open regressions: pass 25 times under race;
+- FIFO knowledge no-writer regression: pass 25 times under race;
+- SQLite lock regression: pass 20 times under race;
+- application contention regression: pass 10 times under race.
+
+An earlier compiled-binary probe returned authenticated HTTP 200, `api_version: "v1"`, health `status: "ok"`, and a canonical resource version. It predates the final symlink/knowledge-only repairs, so rerun compiled acceptance at A5 rather than treating it as final current-binary proof.
+
+### Frontend state and known gate
+
+- Frontend unit tests and production build passed before the latest Go-only repairs.
+- `web/dist` was not regenerated by A2/A3.
+- Current Playwright fixture is known to build its test binary under the indexed repository's `.tmp/...` path after indexing. That mutates the generation and A3 correctly returns `startup_refresh_required` before serving.
+- Fix the fixture by building outside the indexed workspace as part of A5 compiled-binary acceptance; do not weaken A3 freshness to make the faulty fixture pass.
+- This known fixture failure means `npm run test:e2e` is not presently a green final gate.
+
+### A4 design ready, implementation not started
+
+A read-only A4 design audit is saved at:
+
+```text
+/home/neur0map/.hermes/cache/delegation/subagent-summary-0-20260724_020344_334332.txt
+```
+
+The Phase 3A plan now explicitly allows A4 to modify `internal/workbench/handler_test.go`; preserving static `APIOptions.Token` compatibility would retain the vulnerability A4 must remove.
+
+A4 must implement, with strict RED/GREEN tests:
+
+- separate 256-bit launch nonce and bearer;
+- 60-second, exact-origin, atomically single-use `POST /api/v1/auth/bootstrap`;
+- nonce invalidated before bearer response;
+- nonce and bearer stored as digests server-side;
+- fragment removed synchronously before frontend exchange;
+- bearer held only in browser module memory;
+- authenticated fetch restricted to normalized final same-origin `/api/v1/` paths;
+- `redirect: "error"` for authorization-bearing fetches;
+- redacted automatic launch output;
+- `0700` generated directory and exclusive `0600` no-browser handoff file;
+- cleanup on consume, expiry, shutdown, and setup failure;
+- explicit reveal only when stdin and stderr are real TTYs;
+- no legacy static-token fallback.
+
+A4 must not claim compiled-binary security until A5 regenerates and verifies `web/dist`.
+
+### What remains
+
+Execute in the order defined by the canonical plans:
+
+1. Consume `deleg_2f1f2620`; close any A3 blocker/high finding or record dual approval.
+2. Phase 3A A4: nonce-to-bearer browser bootstrap.
+3. A5: asynchronous frontend bootstrap, Home/Brief views, regenerate `web/dist`, repair Playwright fixture, and compiled-binary vertical acceptance.
+4. B1–B7c: real Explore, Context Lens, Impact, Knowledge, Timeline, Setup, bounded source previews, and frontend hardening.
+5. C1–C5: durable jobs, SSE/reconnect, cancellation, export, activity/idle behavior, accessibility, localization, fixtures, and guided journeys.
+6. D1–D2: compiled acceptance, security/context/comprehension oracles, and independent Phase 3A closure.
+7. Phase 3B: provider-neutral agent kernel—profiles, sessions, prompt/context assembly, tools/toolsets/skills, approvals, steering, checkpoints, accounting, and delegation.
+8. Phase 3C: durable Kanban/live operations—dependencies, transactional transitions, claims/leases/heartbeats, stale recovery, retries, cancellation, evidence/reviews, workers, append-only events, cursors/reconnect, and operations UI.
+9. Phase 4: bridge prerequisite and Obsidian integration.
+10. Phase 5: memory, recovery, research, automation, cron/webhooks, privacy, retention, and gardening.
+11. Phase 6: traceability, multilingual maturity, adapters, plugin SDK/catalog, and scoped workspace ecosystem.
+12. Phase 7: selected broader Hermes parity and management surfaces.
+13. Full integration/security/concurrency/performance/migration/browser/plugin review and requirement-by-requirement final audit.
+14. Phase 0 remains open until the five-target release workflow executes from an eligible GitHub branch/default-branch context and its artifacts/smoke evidence are recorded.
+
+### First resume procedure
+
+```sh
+cd /home/neur0map/workspace/prowl-agent
+export PATH="$HOME/sdk/go/bin:$PATH" CGO_ENABLED=1
+
+git switch product-evolution
+git pull --ff-only origin product-evolution
+git status --short --branch
+git log -5 --oneline --decorate
+```
+
+Then:
+
+1. Read this final stop section and the three canonical plans.
+2. Read both complete `deleg_2f1f2620` reports and verify which exact tree they inspected.
+3. Confirm the branch is clean and remote/local SHAs match.
+4. If A3 has dual approval, begin A4 with the strict RED tests from the A4 design report. Otherwise repair confirmed findings before A4.
+5. Continue autonomous implementation only after a new explicit user instruction; this handoff records a deliberate stop.
+
 ## Continuation addendum
 
 Work resumed after this checkpoint at the user's explicit request. The canonical plan is now being expanded from the Phase 3A knowledge workbench into a knowledge-native local agent operating system, based on revision-pinned behavioral research from NousResearch Hermes Agent.

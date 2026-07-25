@@ -132,6 +132,46 @@ describe('SetupPage', () => {
     render(<SetupPage />)
     expect((await screen.findByRole('alert')).textContent).toBe('Setup is unavailable. Try again.')
   })
+
+  it('disables Apply while its mutation is pending', async () => {
+    const pending = deferred<{ plan_hash: string; project_config_version: string; idempotency_key: string; rollback_manifest: []; verified: boolean }>()
+    const api = client({ apply: vi.fn(() => pending.promise) })
+    render(<SetupPage client={api} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I approve this setup plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply reviewed setup plan' }))
+    expect((screen.getByRole('button', { name: 'Apply reviewed setup plan' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('ignores an Apply completion after its reviewed plan is superseded', async () => {
+    const pending = deferred<{ plan_hash: string; project_config_version: string; idempotency_key: string; rollback_manifest: []; verified: boolean }>()
+    const api = client({ apply: vi.fn(() => pending.promise) })
+    render(<SetupPage client={api} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I approve this setup plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply reviewed setup plan' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'vscode' }))
+    pending.resolve({ plan_hash: 'plan-hash', project_config_version: 'config-v2', idempotency_key: 'fresh-key', rollback_manifest: [], verified: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(screen.queryByText('Setup applied and verified.')).toBeNull()
+  })
+
+  it('ignores a Verify completion after its reviewed plan is superseded', async () => {
+    const pending = deferred<{ verified: boolean }>()
+    const api = client({ verify: vi.fn(() => pending.promise) })
+    render(<SetupPage client={api} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify reviewed setup' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'vscode' }))
+    pending.resolve({ verified: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(screen.queryByText('Selected integrations verified.')).toBeNull()
+  })
 })
 function deferred<T>() {
   let resolve!: (value: T) => void

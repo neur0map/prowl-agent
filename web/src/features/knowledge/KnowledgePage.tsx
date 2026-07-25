@@ -37,12 +37,12 @@ const defaultClient: KnowledgeClient = {
   async loadPage(cursor = '') {
     const value = await request(`/api/v1/knowledge${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`)
     if (!isKnowledgePage(value)) throw new ClientError()
-    return { items: value.items, next: value.next ?? '' }
+    return { items: value.items.map(normalizeSummary), next: value.next ?? '' }
   },
   async loadDetail(id) {
     const value = await request(`/api/v1/knowledge/${encodeURIComponent(id)}`)
     if (!isKnowledgeDetail(value)) throw new ClientError()
-    return value
+    return { ...value, tags: value.tags ?? [], related: value.related ?? [] }
   },
   async loadProposal(id) {
     const value = await request(`/api/v1/knowledge/proposals/${encodeURIComponent(id)}`)
@@ -68,6 +68,7 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
   const [reviewed, setReviewed] = useState(false)
   const [outcome, setOutcome] = useState('')
   const [decisionError, setDecisionError] = useState(false)
+  const [decisionPending, setDecisionPending] = useState(false)
   const [conflict, setConflict] = useState(false)
   const detailRequest = useRef(0)
   const proposalRequest = useRef(0)
@@ -85,6 +86,7 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
     setOutcome('')
     setDecisionError(false)
     setConflict(false)
+    setDecisionPending(false)
     if (!proposalID) { setProposal({ kind: 'idle' }); return }
     setProposal({ kind: 'loading' })
     void client.loadProposal(proposalID).then(
@@ -115,13 +117,15 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
   }
 
   function decide(action: 'accept' | 'reject') {
-    if (proposal.kind !== 'ready' || !reviewed) return
+    if (proposal.kind !== 'ready' || !reviewed || decisionPending) return
+    const generation = proposalRequest.current
+    setDecisionPending(true)
     setConflict(false)
     setDecisionError(false)
     setOutcome('')
     void client.decide(proposalID ?? proposal.value.proposal.id, action, { expected_version: proposal.value.version, idempotency_key: newKey(), confirm: true }).then(
-      () => setOutcome(`Proposal ${action === 'accept' ? 'accepted' : 'rejected'}.`),
-      (error: unknown) => { if (isKnowledgeConflict(errorCode(error))) setConflict(true); else setDecisionError(true) },
+      () => { if (proposalRequest.current === generation) { setDecisionPending(false); setOutcome(`Proposal ${action === 'accept' ? 'accepted' : 'rejected'}.`) } },
+      (error: unknown) => { if (proposalRequest.current === generation) { setDecisionPending(false); if (isKnowledgeConflict(errorCode(error))) setConflict(true); else setDecisionError(true) } },
     )
   }
 
@@ -136,7 +140,7 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
     {detail?.kind === 'ready' ? <article aria-label="Knowledge detail"><h2>{detail.value.title}</h2><pre>{detail.value.body}</pre>{detail.value.anchors.map((anchor) => { const link = sourceLink(anchor); return <a key={`${anchor.path}:${anchor.line_start}`} href={link.href}>{link.label}</a> })}</article> : null}
     {proposal.kind === 'loading' ? <p role="status">Loading proposal…</p> : null}
     {proposal.kind === 'error' ? <p role="alert">Proposal is unavailable. Try again.</p> : null}
-    {proposal.kind === 'ready' ? <section aria-label="Proposal review"><h2>Knowledge proposal</h2><pre>{proposal.value.diff}</pre><label><input type="checkbox" checked={reviewed} onInput={(event) => setReviewed(event.currentTarget.checked)} />I have reviewed this proposal diff</label><div><button type="button" disabled={!reviewed} onClick={() => decide('accept')}>Accept proposal</button><button type="button" disabled={!reviewed} onClick={() => decide('reject')}>Reject proposal</button></div></section> : null}
+    {proposal.kind === 'ready' ? <section aria-label="Proposal review"><h2>Knowledge proposal</h2><pre>{proposal.value.diff}</pre><label><input type="checkbox" checked={reviewed} onInput={(event) => setReviewed(event.currentTarget.checked)} />I have reviewed this proposal diff</label><div><button type="button" disabled={!reviewed || decisionPending} onClick={() => decide('accept')}>Accept proposal</button><button type="button" disabled={!reviewed || decisionPending} onClick={() => decide('reject')}>Reject proposal</button></div></section> : null}
     {outcome ? <p role="status">{outcome}</p> : null}
     {decisionError ? <p role="alert">Proposal decision is unavailable. Try again.</p> : null}
     {conflict ? <p ref={conflictAlert} role="alert" tabIndex={-1}>The proposal changed before your decision. Review the displayed diff and try again.</p> : null}
@@ -161,7 +165,7 @@ function isKnowledgeDetail(value: unknown): value is KnowledgeDetail {
 }
 
 function isKnowledgeSummary(value: unknown): value is KnowledgeSummary {
-  return isRecord(value) && isString(value.id) && isString(value.path) && isString(value.type) && isString(value.title) && isOptionalString(value.description) && isOptionalString(value.resource) && isOptionalString(value.timestamp) && isOptionalString(value.status) && isOptionalString(value.confidence) && isStringArray(value.tags) && isStringArray(value.related) && Array.isArray(value.anchors) && value.anchors.every((anchor) => isRecord(anchor) && isString(anchor.path) && isFiniteNumber(anchor.line_start) && isFiniteNumber(anchor.line_end) && isOptionalString(anchor.content_hash) && isOptionalString(anchor.symbol))
+  return isRecord(value) && isString(value.id) && isString(value.path) && isString(value.type) && isString(value.title) && isOptionalString(value.description) && isOptionalString(value.resource) && isOptionalString(value.timestamp) && isOptionalString(value.status) && isOptionalString(value.confidence) && isNullableStringArray(value.tags) && isNullableStringArray(value.related) && Array.isArray(value.anchors) && value.anchors.every((anchor) => isRecord(anchor) && isString(anchor.path) && isFiniteNumber(anchor.line_start) && isFiniteNumber(anchor.line_end) && isOptionalString(anchor.content_hash) && isOptionalString(anchor.symbol))
 }
 
 function isKnowledgeProposal(value: unknown): value is KnowledgeProposal {
@@ -173,6 +177,8 @@ function isKnowledgeDecision(value: unknown): value is KnowledgeDecision {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null }
+function normalizeSummary(summary: KnowledgeSummary): KnowledgeSummary { return { ...summary, tags: summary.tags ?? [], related: summary.related ?? [] } }
+function isNullableStringArray(value: unknown): boolean { return value === null || isStringArray(value) }
 function isString(value: unknown): value is string { return typeof value === 'string' }
 function isOptionalString(value: unknown): boolean { return value === undefined || typeof value === 'string' }
 function isStringArray(value: unknown): value is string[] { return Array.isArray(value) && value.every(isString) }

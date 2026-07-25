@@ -39,6 +39,8 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
   const [approved, setApproved] = useState(false)
   const [status, setStatus] = useState('')
   const [outcome, setOutcome] = useState<SetupApplyOutcome | null>(null)
+  const [applying, setApplying] = useState(false)
+  const [verifying, setVerifying] = useState(false)
   const [operationError, setOperationError] = useState(false)
   const [conflict, setConflict] = useState(false)
   const planRequest = useRef(0)
@@ -61,6 +63,8 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
     setOutcome(null)
     setOperationError(false)
     setConflict(false)
+    setApplying(false)
+    setVerifying(false)
   }
 
   function reviewPlan() {
@@ -72,6 +76,8 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
     setOutcome(null)
     setOperationError(false)
     setConflict(false)
+    setApplying(false)
+    setVerifying(false)
     void client.plan(selected).then(
       (value) => { if (planRequest.current === requestID) setPlan(value) },
       () => { if (planRequest.current === requestID) setOperationError(true) },
@@ -79,24 +85,28 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
   }
 
   function apply() {
-    if (!plan || !approved) return
+    if (!plan || !approved || applying) return
+    const generation = planRequest.current
+    setApplying(true)
     setConflict(false)
     setOperationError(false)
     setStatus('')
     setOutcome(null)
     void client.apply({ integrations: plan.integrations, plan_hash: plan.hash, expected_project_config_version: plan.project_config_version, approved: true, idempotency_key: newKey() }).then(
-      (value) => { setOutcome(value); setStatus(value.verified ? 'Setup applied and verified.' : 'Setup applied.') },
-      (error: unknown) => { if (isSetupConflict(errorCode(error))) setConflict(true); else setOperationError(true) },
+      (value) => { if (planRequest.current === generation) { setApplying(false); setOutcome(value); setStatus(value.verified ? 'Setup applied and verified.' : 'Setup applied.') } },
+      (error: unknown) => { if (planRequest.current === generation) { setApplying(false); if (isSetupConflict(errorCode(error))) setConflict(true); else setOperationError(true) } },
     )
   }
 
   function verify() {
-    if (!plan) return
+    if (!plan || verifying) return
+    const generation = planRequest.current
+    setVerifying(true)
     setOperationError(false)
     setStatus('')
     void client.verify(plan.integrations).then(
-      (value) => setStatus(value.verified ? 'Selected integrations verified.' : 'Selected integrations could not be verified.'),
-      () => setOperationError(true),
+      (value) => { if (planRequest.current === generation) { setVerifying(false); setStatus(value.verified ? 'Selected integrations verified.' : 'Selected integrations could not be verified.') } },
+      () => { if (planRequest.current === generation) { setVerifying(false); setOperationError(true) } },
     )
   }
 
@@ -107,7 +117,7 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
     {detection.kind === 'ready' && detection.value.integrations.length === 0 ? <p>No supported integrations were detected.</p> : null}
     {detection.kind === 'ready' && detection.value.integrations.length > 0 ? <fieldset><legend>Select integrations</legend>{detection.value.integrations.map((integration) => <label key={integration}><input type="checkbox" checked={selected.includes(integration)} onInput={(event) => toggle(integration, event.currentTarget.checked)} />{integration}</label>)}</fieldset> : null}
     {detection.kind === 'ready' && detection.value.integrations.length > 0 ? <button type="button" disabled={selected.length === 0} onClick={reviewPlan}>Review setup plan</button> : null}
-    {plan ? <section aria-label="Reviewed setup plan"><h2>Reviewed setup plan</h2><ul>{plan.actions.map((action) => <li key={`${action.integration}:${action.path}`}><strong>{action.integration}</strong><code>{action.path}</code><span>{action.description}</span></li>)}</ul><label><input type="checkbox" checked={approved} onInput={(event) => setApproved(event.currentTarget.checked)} />I approve this setup plan</label><div><button type="button" disabled={!approved} onClick={apply}>Apply reviewed setup plan</button><button type="button" onClick={verify}>Verify reviewed setup</button></div></section> : null}
+    {plan ? <section aria-label="Reviewed setup plan"><h2>Reviewed setup plan</h2><ul>{plan.actions.map((action) => <li key={`${action.integration}:${action.path}`}><strong>{action.integration}</strong><code>{action.path}</code><span>{action.description}</span></li>)}</ul><label><input type="checkbox" checked={approved} onInput={(event) => setApproved(event.currentTarget.checked)} />I approve this setup plan</label><div><button type="button" disabled={!approved || applying} onClick={apply}>Apply reviewed setup plan</button><button type="button" disabled={verifying} onClick={verify}>Verify reviewed setup</button></div></section> : null}
     {status ? <p role="status">{status}</p> : null}
     {outcome ? <dl aria-label="Setup outcome"><dt>Plan hash</dt><dd>{outcome.plan_hash}</dd><dt>Project configuration version</dt><dd>{outcome.project_config_version}</dd><dt>Idempotency key</dt><dd>{outcome.idempotency_key}</dd><dt>Verified</dt><dd>{String(outcome.verified)}</dd><dt>Rollback entries</dt><dd>{outcome.rollback_manifest.length}</dd></dl> : null}
     {operationError ? <p role="alert">Setup operation is unavailable. Try again.</p> : null}

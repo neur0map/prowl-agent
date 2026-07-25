@@ -130,6 +130,35 @@ describe('KnowledgePage', () => {
     first.resolve(detail)
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Second guide' })).toBeTruthy())
   })
+
+  it('normalizes nullable canonical tag sequences from the default client', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: { items: [{ ...page.items[0], tags: null, related: null }] }, meta: {} }), { status: 200 }))
+    render(<KnowledgePage />)
+    expect(await screen.findByRole('button', { name: 'Guide' })).toBeTruthy()
+  })
+
+  it('ignores a decision completion from a superseded proposal', async () => {
+    const decision = deferred<{ version: string; idempotent: boolean }>()
+    const api = client({ decide: vi.fn(() => decision.promise), loadProposal: vi.fn((id: string) => Promise.resolve({ ...proposal, proposal: { ...proposal.proposal, id }, diff: id === 'proposal-1' ? proposal.diff : '@@ proposal two' })) })
+    const view = render(<KnowledgePage client={api} proposalID="proposal-1" />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I have reviewed this proposal diff' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Accept proposal' }))
+    view.rerender(<KnowledgePage client={api} proposalID="proposal-2" />)
+    await screen.findByText((_, element) => element?.tagName === 'PRE' && element.textContent === '@@ proposal two')
+    decision.resolve({ version: 'old', idempotent: false })
+    await Promise.resolve()
+    expect(screen.queryByText('Proposal accepted.')).toBeNull()
+  })
+
+  it('disables both proposal decisions while one is pending', async () => {
+    const decision = deferred<{ version: string; idempotent: boolean }>()
+    const api = client({ decide: vi.fn(() => decision.promise) })
+    render(<KnowledgePage client={api} proposalID="proposal-1" />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I have reviewed this proposal diff' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Accept proposal' }))
+    expect((screen.getByRole('button', { name: 'Accept proposal' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Reject proposal' }) as HTMLButtonElement).disabled).toBe(true)
+  })
 })
 
 function deferred<T>() {

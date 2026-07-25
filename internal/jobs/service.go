@@ -120,15 +120,20 @@ func (s *Service) work() {
 		s.publish(s.ctx)
 		runCtx, cancel := context.WithCancel(s.ctx)
 		s.store.setActive(job.ID, cancel)
-		err = s.runner(runCtx, job, func(phase string, progress int) error {
-			_, err := s.store.updateProgress(runCtx, job.ID, phase, progress)
-			if err == nil {
-				s.publish(runCtx)
-			}
-			return err
-		})
+		if err = runCtx.Err(); err == nil {
+			err = s.runner(runCtx, job, func(phase string, progress int) error {
+				_, err := s.store.updateProgress(runCtx, job.ID, phase, progress)
+				if err == nil {
+					s.publish(runCtx)
+				}
+				return err
+			})
+		}
 		cancel()
 		s.store.clearActive(job.ID)
+		if s.ctx.Err() != nil {
+			return
+		}
 		if _, finishErr := s.store.finish(context.Background(), job.ID, err); finishErr == nil {
 			s.publish(s.ctx)
 		}

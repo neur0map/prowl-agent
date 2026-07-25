@@ -408,22 +408,21 @@ func (s *Store) PublisherWatermark(ctx context.Context) (uint64, error) {
 	return value, err
 }
 func (s *Store) SetPublisherWatermark(ctx context.Context, sequence uint64) error {
-	state, err := s.State(ctx)
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE authority SET publisher_watermark=? WHERE id=1 AND publisher_watermark<=? AND retention_floor<=? AND ?<=(SELECT COALESCE(MAX(sequence),0) FROM outbox)`, sequence, sequence, sequence, sequence)
 	if err != nil {
 		return err
 	}
-	if sequence < state.RetentionFloor || sequence > state.Head {
-		return ErrInvalidTransition
-	}
-	watermark, err := s.PublisherWatermark(ctx)
+	changed, err := result.RowsAffected()
 	if err != nil {
 		return err
 	}
-	if sequence < watermark {
+	if changed != 1 {
 		return ErrInvalidTransition
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE authority SET publisher_watermark=? WHERE id=1`, sequence)
-	return err
+	return nil
 }
 func (s *Store) AdvanceRetention(ctx context.Context, floor uint64, snapshotURI string) error {
 	tx, err := s.begin(ctx)
@@ -431,17 +430,20 @@ func (s *Store) AdvanceRetention(ctx context.Context, floor uint64, snapshotURI 
 		return err
 	}
 	defer tx.Rollback()
-	var previous uint64
-	if err := tx.QueryRowContext(ctx, `SELECT retention_floor FROM authority WHERE id=1`).Scan(&previous); err != nil {
+	var previous, watermark, head uint64
+	if err := tx.QueryRowContext(ctx, `SELECT retention_floor, publisher_watermark FROM authority WHERE id=1`).Scan(&previous, &watermark); err != nil {
 		return err
 	}
-	if floor < previous {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM outbox`).Scan(&head); err != nil {
+		return err
+	}
+	if floor < previous || floor > head {
 		return ErrInvalidTransition
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM outbox WHERE sequence < ?`, floor); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE authority SET retention_floor=?, snapshot_uri=? WHERE id=1`, floor, snapshotURI); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE authority SET retention_floor=?, snapshot_uri=?, publisher_watermark=CASE WHEN publisher_watermark < ? THEN ? ELSE publisher_watermark END WHERE id=1`, floor, snapshotURI, floor, floor); err != nil {
 		return err
 	}
 	return tx.Commit()

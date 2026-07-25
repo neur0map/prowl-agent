@@ -36,10 +36,10 @@ Each corresponding focused test then passed after its minimal component implemen
 Source evidence uses a native `<a>` with this deterministic, same-origin hash:
 
 ```text
-#/source?path=${encodeURIComponent(projectRelativePath)}&line_start=<start>&line_end=<end>
+#/source?path=${encodeURIComponent(projectRelativePath)}&line_start=<start>&line_end=<full-end>&preview_end=<bounded-preview-end>
 ```
 
-The hash carries only the project-relative path and server-provided line range. The Explore test proves the anchor exposes that hash, receives keyboard focus, and activates as a native link.
+The hash retains the complete project-relative source anchor and carries a bounded preview end for source requests. The Explore test proves the anchor exposes that hash, receives keyboard focus, and activates as a native link.
 
 ## Self-review and concerns
 
@@ -58,7 +58,7 @@ Concerns: none.
 
 ### GREEN evidence
 
-- Source links now use the established `#/source?path=<encoded-project-relative-path>&line_start=<start>&line_end=<end>` grammar.
+- Source links now use the established `#/source?path=<encoded-project-relative-path>&line_start=<start>&line_end=<full-end>&preview_end=<bounded-preview-end>` grammar.
 - Context Lens and Impact retain a request identity and accept only the latest completion.
 - Explore validates envelope metadata plus every rendered workspace, section, fact, anchor, and tour field.
 - Context Lens validates envelope metadata, packet fields, all items, and all citations.
@@ -72,3 +72,10 @@ Remediation concerns: none.
 
 - RED: `cd web && npm test -- --run src/features/explore/ExplorePage.test.tsx` failed because a source anchor from line 8 through 1000 generated an unbounded `line_end=1000` hash.
 - GREEN: `sourceLink` keeps the original `SourceTarget` reference and clamps only the preview hash end to `line_start + 399`, matching the local `maxSourcePreviewLines = 400` compatibility constant for `internal/workbench.MaxSourcePreviewLines`.
+
+### Full source range route state
+
+- RED: `cd web && npm test -- --run src/features/explore/ExplorePage.test.tsx` failed because the previous bounded hash rewrote `line_end=1000` to `line_end=407`, losing the exact citation range.
+- GREEN: the route now preserves the original `line_start` and `line_end`, while `preview_end` alone is bounded to `line_start + 399`. `SourceLink.previewEnd` makes the transport compatibility value explicit without mutating the typed anchor.
+- `cd web && npm test -- --run src/features/explore src/features/context src/features/impact` passed: 3 files, 21 tests.
+- `cd web && npm run typecheck` passed.

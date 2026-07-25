@@ -56,13 +56,13 @@ describe('ExplorePage', () => {
     expect(screen.getByText('Main service')).toBeTruthy()
     expect(screen.getByText('HTTP server')).toBeTruthy()
     const link = screen.getByRole('link', { name: 'cmd/server/main.go lines 8–20' })
-    expect(link.getAttribute('href')).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20')
+    expect(link.getAttribute('href')).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20&preview_end=20')
 
     expect(link.tagName).toBe('A')
     link.focus()
     expect(document.activeElement).toBe(link)
     link.click()
-    await waitFor(() => expect(window.location.hash).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20'))
+    await waitFor(() => expect(window.location.hash).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20&preview_end=20'))
   })
 
   it('bounds source navigation to the maximum source preview range', () => {
@@ -70,7 +70,7 @@ describe('ExplorePage', () => {
     const link = sourceLink(anchor)
 
     expect(link.target).toBe(anchor)
-    expect(link.href).toBe('#/source?path=internal%2Fauth%2Fservice.go&line_start=8&line_end=407')
+    expect(link.href).toBe('#/source?path=internal%2Fauth%2Fservice.go&line_start=8&line_end=1000&preview_end=407')
   })
 
   it('treats malformed rendered explore data as unavailable', async () => {

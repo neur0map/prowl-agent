@@ -10,6 +10,7 @@ export type SourceLink = {
   href: string
   label: string
   target: SourceTarget
+  previewEnd: number
 }
 
 // Must match internal/workbench.MaxSourcePreviewLines so hash navigation always reaches /api/v1/source.
@@ -18,9 +19,10 @@ const maxSourcePreviewLines = 400
 export function sourceLink(target: SourceTarget): SourceLink {
   const previewEnd = Math.min(target.line_end, target.line_start + maxSourcePreviewLines - 1)
   return {
-    href: `#/source?path=${encodeURIComponent(target.path)}&line_start=${target.line_start}&line_end=${previewEnd}`,
+    href: `#/source?path=${encodeURIComponent(target.path)}&line_start=${target.line_start}&line_end=${target.line_end}&preview_end=${previewEnd}`,
     label: `${target.path} lines ${target.line_start}–${target.line_end}`,
     target,
+    previewEnd,
   }
 }
 

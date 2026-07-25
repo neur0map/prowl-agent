@@ -77,7 +77,7 @@ describe('ImpactPage', () => {
     expect(screen.getByText('3 transitive dependents')).toBeTruthy()
     expect(screen.getByText('internal/auth/service_test.go')).toBeTruthy()
     const link = screen.getByRole('link', { name: 'docs/auth.md lines 4–9' })
-    expect(link.getAttribute('href')).toBe('#/source?path=docs%2Fauth.md&line_start=4&line_end=9')
+    expect(link.getAttribute('href')).toBe('#/source?path=docs%2Fauth.md&line_start=4&line_end=9&preview_end=9')
   })
 
   it('ignores impact evidence superseded by a later path submission', async () => {

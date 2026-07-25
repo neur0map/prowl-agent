@@ -1,0 +1,136 @@
+package jobs
+
+import (
+	"context"
+	"sync"
+)
+
+// Publisher is the narrow post-commit delivery boundary used by the worker.
+type Publisher interface {
+	PublishCommitted(context.Context) error
+	Close() error
+}
+
+// Runner performs an index refresh and reports bounded durable progress.
+type Runner func(context.Context, Job, func(string, int) error) error
+
+type Service struct {
+	store     *Store
+	publisher Publisher
+	runner    Runner
+	ctx       context.Context
+	cancel    context.CancelFunc
+	notify    chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
+	wg        sync.WaitGroup
+	startErr  error
+	closeErr  error
+}
+
+func NewService(store *Store, publisher Publisher, runner Runner) *Service {
+	return &Service{store: store, publisher: publisher, runner: runner, notify: make(chan struct{}, 1)}
+}
+func (s *Service) Start(ctx context.Context) error {
+	s.startOnce.Do(func() {
+		if s.store == nil || s.runner == nil {
+			s.startErr = ErrInvalidJob
+			return
+		}
+		s.ctx, s.cancel = context.WithCancel(ctx)
+		if err := s.store.reconcile(s.ctx); err != nil {
+			s.startErr = err
+			s.cancel()
+			return
+		}
+		s.wg.Add(1)
+		go s.work()
+		s.signal()
+	})
+	return s.startErr
+}
+func (s *Service) EnqueueOrResumeIndex(ctx context.Context) (Job, bool, error) {
+	job, created, err := s.store.EnqueueOrResumeIndex(ctx)
+	if err == nil {
+		s.publish(ctx)
+		s.signal()
+	}
+	return job, created, err
+}
+func (s *Service) Get(ctx context.Context, id string) (Job, error) { return s.store.Get(ctx, id) }
+func (s *Service) Cancel(ctx context.Context, id string, version uint64) (Job, error) {
+	job, err := s.store.Cancel(ctx, id, version)
+	if err == nil {
+		s.publish(ctx)
+		s.signal()
+	}
+	return job, err
+}
+func (s *Service) Close() error {
+	s.closeOnce.Do(func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		s.wg.Wait()
+		if s.publisher != nil {
+			s.closeErr = s.publisher.Close()
+		}
+		if s.store != nil {
+			if err := s.store.Close(); err != nil {
+				s.closeErr = err
+			}
+		}
+	})
+	return s.closeErr
+}
+func (s *Service) signal() {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+}
+func (s *Service) publish(ctx context.Context) {
+	if s.publisher != nil {
+		_ = s.publisher.PublishCommitted(ctx)
+	}
+}
+func (s *Service) work() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+		job, ok, err := s.store.claim(s.ctx)
+		if err != nil {
+			if s.ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+		if !ok {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-s.notify:
+			}
+			continue
+		}
+		s.publish(s.ctx)
+		runCtx, cancel := context.WithCancel(s.ctx)
+		s.store.setActive(job.ID, cancel)
+		err = s.runner(runCtx, job, func(phase string, progress int) error {
+			_, err := s.store.updateProgress(runCtx, job.ID, phase, progress)
+			if err == nil {
+				s.publish(runCtx)
+			}
+			return err
+		})
+		cancel()
+		s.store.clearActive(job.ID)
+		if _, finishErr := s.store.finish(context.Background(), job.ID, err); finishErr == nil {
+			s.publish(s.ctx)
+		}
+	}
+}

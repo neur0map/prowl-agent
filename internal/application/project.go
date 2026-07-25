@@ -18,6 +18,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/index"
+	"github.com/prowl-agent/prowl-agent/internal/jobs"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/query"
@@ -90,7 +91,9 @@ type Project struct {
 	beforeIndex func()
 	// afterIndex is a package-private test seam invoked while generation writes
 	// are still uncommitted and before post-index signature validation.
-	afterIndex func()
+	afterIndex            func()
+	jobService            *jobs.Service
+	startupRefreshPending bool
 }
 
 // OpenProject resolves a workspace, opens its derived store, loads strict
@@ -124,22 +127,19 @@ func OpenWorkbenchProject(parent context.Context, start string, opts Options, li
 	defer cancel()
 	project, err := assembleProject(ctx, start, opts, workspace.ResolveContext, config.LoadContext, store.OpenContext)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &StartupRefreshRequiredError{Cause: err}
-		}
 		return nil, err
 	}
 	current, probeErr := project.startupFresh(ctx, limits.CandidatePaths)
 	if probeErr != nil {
-		closeErr := project.Close()
 		var candidateLimit index.CandidateLimitError
 		if errors.Is(probeErr, context.DeadlineExceeded) || errors.As(probeErr, &candidateLimit) {
-			return nil, errors.Join(&StartupRefreshRequiredError{Cause: probeErr}, closeErr)
+			project.startupRefreshPending = true
+			return project, nil
 		}
-		return nil, errors.Join(probeErr, closeErr)
+		return nil, errors.Join(probeErr, project.Close())
 	}
 	if !current {
-		return nil, errors.Join(&StartupRefreshRequiredError{Cause: errors.New("project data is stale")}, project.Close())
+		project.startupRefreshPending = true
 	}
 	return project, nil
 }
@@ -411,10 +411,13 @@ func (p *Project) Close() error {
 	}
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)
+		if p.jobService != nil {
+			p.closeErr = p.jobService.Close()
+		}
 		p.refreshGate <- struct{}{}
 		defer func() { <-p.refreshGate }()
 		if p.Store != nil {
-			p.closeErr = p.Store.Close()
+			p.closeErr = errors.Join(p.closeErr, p.Store.Close())
 		}
 	})
 	return p.closeErr
@@ -435,4 +438,20 @@ func generationReadGuard(path string) store.ReadGuard {
 		}
 		return func() { _ = fileLock.Unlock() }, nil
 	}
+}
+
+func (p *Project) StartupRefreshPending() bool { return p != nil && p.startupRefreshPending }
+
+func (p *Project) AttachJobsService(service *jobs.Service) error { if p == nil || service == nil || p.closed.Load() {
+		return errors.New("invalid project jobs service")
+	}
+	if p.jobService != nil {
+		return errors.New("project jobs service already attached")
+	}
+	p.jobService = service
+	return nil
+ }
+
+func (p *Project) RefreshWithProgress(ctx context.Context, _ index.ProgressReporter) (RefreshResult, error) {
+	return p.Refresh(ctx)
 }

@@ -20,6 +20,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/prowl-agent/prowl-agent/internal/application"
+	"github.com/prowl-agent/prowl-agent/internal/events"
+	"github.com/prowl-agent/prowl-agent/internal/jobs"
 	"github.com/prowl-agent/prowl-agent/internal/workbench"
 	workbenchweb "github.com/prowl-agent/prowl-agent/web"
 )
@@ -73,7 +75,10 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 			if noBrowser && revealURL && !dependencies.interactive() {
 				return errors.New("--reveal-url requires an interactive terminal")
 			}
-			var service *workbench.Service
+			var (
+				service    *workbench.Service
+				jobService *jobs.Service
+			)
 			if dependencies.openProject != nil {
 				project, err := dependencies.openProject(cmd.Context())
 				if err != nil {
@@ -84,7 +89,22 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 					closeProject = func(project *application.Project) error { return project.Close() }
 				}
 				defer func() { runErr = errors.Join(runErr, closeProject(project)) }()
-				service, err = workbench.NewService(project)
+				service, err = func() (*workbench.Service, error) {
+					service, err := workbench.NewService(project)
+					if err != nil {
+						return nil, err
+					}
+					jobService, err = newProjectJobsService(project)
+					if err != nil {
+						return nil, err
+					}
+					if project.StartupRefreshPending() {
+						if _, _, err := jobService.EnqueueOrResumeIndex(cmd.Context()); err != nil {
+							return nil, err
+						}
+					}
+					return service, nil
+				}()
 				if err != nil {
 					return err
 				}
@@ -100,10 +120,19 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 			listener = &closeOnceListener{Listener: listener}
 			defer func() { runErr = errors.Join(runErr, listener.Close()) }()
 			origin := "http://" + listener.Addr().String()
-			handler, err := workbench.NewHandler(workbench.HandlerOptions{
-				API:    workbench.APIOptions{Bootstrap: authority, AllowedOrigin: origin, Service: service},
-				Assets: dependencies.assets,
-			})
+			handler, err := func() (http.Handler, error) {
+				handler, err := workbench.NewHandler(workbench.HandlerOptions{API: workbench.APIOptions{Bootstrap: authority, AllowedOrigin: origin, Service: service},
+					Assets: dependencies.assets})
+				if err != nil {
+					return nil, err
+				}
+				if jobService != nil {
+					if err := jobService.Start(cmd.Context()); err != nil {
+						return nil, err
+					}
+				}
+				return handler, nil
+			}()
 			if err != nil {
 				return err
 			}
@@ -139,6 +168,32 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 
 func standardStreamsAreTerminals() bool {
 	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stderr.Fd())
+}
+
+func newProjectJobsService(project *application.Project) (*jobs.Service, error) {
+	store, err := jobs.Open(context.Background(), project.Workspace.Root)
+	if err != nil {
+		return nil, err
+	}
+	broker, err := events.NewBroker(events.NewProjectJobsOutbox(store), events.BrokerOptions{})
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	service := jobs.NewService(store, broker, func(ctx context.Context, _ jobs.Job, progress func(string, int) error) error {
+		if err := progress("refreshing", 1); err != nil {
+			return err
+		}
+		if _, err := project.Refresh(ctx); err != nil {
+			return err
+		}
+		return progress("complete", 100)
+	})
+	if err := project.AttachJobsService(service); err != nil {
+		_ = service.Close()
+		return nil, err
+	}
+	return service, nil
 }
 
 func writeBootstrapHandoff(target string) (string, error) {

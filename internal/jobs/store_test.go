@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,5 +62,28 @@ func TestJobEnqueueAndCancelAreDurable(t *testing.T) {
 	}
 	if cancelled.Status != StatusCancelling {
 		t.Fatalf("status=%s", cancelled.Status)
+	}
+}
+
+func TestJobsMigrationRefusesFutureSchema(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	root := t.TempDir()
+	path, _, err := DBPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE jobs_schema (identity TEXT NOT NULL, version INTEGER NOT NULL); INSERT INTO jobs_schema VALUES ('prowl.project-jobs/v1', 2)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if _, err := Open(context.Background(), root); err == nil {
+		t.Fatal("Open accepted future schema")
 	}
 }

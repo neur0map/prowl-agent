@@ -63,7 +63,7 @@ func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error)
 
 // IndexWithOptionsContext incrementally synchronizes the store while honoring
 // cancellation between traversal, file parsing, and graph resolution phases.
-func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
+func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
 	var sum Summary
 	if err := ctx.Err(); err != nil {
 		return sum, err
@@ -214,6 +214,21 @@ func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, o
 		return sum, err
 	}
 	return sum, nil
+}
+
+func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
+	return indexWithOptions(ctx, s, root, opt)
+}
+
+func IndexWithOptionsProgressContext(ctx context.Context, s *store.Store, root string, opt Options, report ProgressReporter) (Summary, error) {
+	if report != nil {
+		report(Progress{Phase: "starting", Percent: 0})
+	}
+	result, err := indexWithOptions(ctx, s, root, opt)
+	if err == nil && report != nil {
+		report(Progress{Phase: "complete", Percent: 100})
+	}
+	return result, err
 }
 
 func languageAllowed(lang string, configured []string) bool {

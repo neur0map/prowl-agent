@@ -21,6 +21,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/events"
+	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/jobs"
 	"github.com/prowl-agent/prowl-agent/internal/workbench"
 	workbenchweb "github.com/prowl-agent/prowl-agent/web"
@@ -94,7 +95,7 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 					if err != nil {
 						return nil, err
 					}
-					jobService, err = newProjectJobsService(project)
+					jobService, err = newProjectJobsService(cmd.Context(), project)
 					if err != nil {
 						return nil, err
 					}
@@ -170,8 +171,8 @@ func standardStreamsAreTerminals() bool {
 	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stderr.Fd())
 }
 
-func newProjectJobsService(project *application.Project) (*jobs.Service, error) {
-	store, err := jobs.Open(context.Background(), project.Workspace.Root)
+func newProjectJobsService(ctx context.Context, project *application.Project) (*jobs.Service, error) {
+	store, err := jobs.Open(ctx, project.Workspace.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +185,7 @@ func newProjectJobsService(project *application.Project) (*jobs.Service, error) 
 		if err := progress("refreshing", 1); err != nil {
 			return err
 		}
-		if _, err := project.Refresh(ctx); err != nil {
+		if _, err := project.RefreshWithProgress(ctx, func(snapshot index.Progress) { _ = progress(snapshot.Phase, snapshot.Percent) }); err != nil {
 			return err
 		}
 		return progress("complete", 100)

@@ -453,6 +453,13 @@ func (p *Project) AttachJobsService(service *jobs.Service) error {
 	return nil
 }
 
-func (p *Project) RefreshWithProgress(ctx context.Context, _ index.ProgressReporter) (RefreshResult, error) {
-	return p.Refresh(ctx)
+func (p *Project) RefreshWithProgress(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
+	if report != nil {
+		report(index.Progress{Phase: "refreshing", Percent: 0})
+	}
+	result, err := p.Refresh(ctx)
+	if err == nil && report != nil {
+		report(index.Progress{Phase: "complete", Percent: 100})
+	}
+	return result, err
 }

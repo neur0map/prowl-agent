@@ -14,10 +14,15 @@ import (
 	"sync"
 	"time"
 
+	_ "embed"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 const schemaVersion = 1
+
+//go:embed migrations/001_project_jobs_outbox.sql
+var migrationV1 string
+
 const schemaIdentity = "prowl.project-jobs/v1"
 const maxEvidenceBytes = 4096
 
@@ -93,17 +98,8 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 		defer tx.Rollback()
-		for _, statement := range []string{
-			`CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL, phase TEXT NOT NULL, progress INTEGER NOT NULL, evidence TEXT NOT NULL, outcome TEXT NOT NULL, error_code TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, CHECK (progress >= 0 AND progress <= 100))`,
-			`CREATE UNIQUE INDEX one_active_index_job ON jobs(kind) WHERE kind = 'index' AND status IN ('queued','running','cancelling')`,
-			`CREATE TABLE outbox (sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, payload BLOB NOT NULL)`,
-			`CREATE TABLE authority (id INTEGER PRIMARY KEY CHECK (id=1), epoch INTEGER NOT NULL, retention_floor INTEGER NOT NULL, snapshot_uri TEXT NOT NULL, publisher_watermark INTEGER NOT NULL)`,
-			`INSERT INTO authority(id, epoch, retention_floor, snapshot_uri, publisher_watermark) VALUES(1, 1, 0, '', 0)`,
-			`INSERT INTO jobs_schema(identity, version) VALUES('prowl.project-jobs/v1', 1)`,
-		} {
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return err
-			}
+		if _, err := tx.ExecContext(ctx, migrationV1); err != nil {
+			return err
 		}
 		return tx.Commit()
 	}

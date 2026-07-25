@@ -234,6 +234,14 @@ func TestOpenCommandInjectsProjectServiceAndClosesOwnedResourcesOnce(t *testing.
 			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ok"`) {
 				t.Fatalf("health status=%d body=%q", response.Code, response.Body.String())
 			}
+			refresh := httptest.NewRequest(http.MethodPost, "/api/v1/index/refresh", nil)
+			refresh.Host = owned.Addr().String()
+			refresh.Header.Set("Authorization", "Bearer "+bearer)
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, refresh)
+			if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"kind":"index"`) {
+				t.Fatalf("refresh status=%d body=%q", response.Code, response.Body.String())
+			}
 			if err := owned.Close(); err != nil {
 				t.Fatal(err)
 			}

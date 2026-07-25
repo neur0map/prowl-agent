@@ -61,6 +61,10 @@ var declaredAPIRoutes = []apiRoute{
 	{Method: http.MethodPost, Path: "/api/v1/setup/plan"},
 	{Method: http.MethodPost, Path: "/api/v1/setup/apply"},
 	{Method: http.MethodPost, Path: "/api/v1/setup/verify"},
+	{Method: http.MethodGet, Path: "/api/v1/events"},
+	{Method: http.MethodGet, Path: "/api/v1/jobs/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/jobs/{id}/cancel"},
+	{Method: http.MethodPost, Path: "/api/v1/index/refresh"},
 }
 
 func routeInventory() []apiRoute {
@@ -208,12 +212,20 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 			serveKnowledgeList(response, request, options.Service)
 		case "/api/v1/timeline":
 			serveTimeline(response, request, options.Service)
+		case "/api/v1/events":
+			serveEvents(response, request, options.Service)
+		case "/api/v1/index/refresh":
+			serveRefresh(response, request, options.Service)
 		case "/api/v1/setup/detect", "/api/v1/setup/plan", "/api/v1/setup/apply", "/api/v1/setup/verify":
 			setupRoutes.ServeHTTP(response, request)
 			return
 		default:
 			if strings.HasPrefix(request.URL.Path, "/api/v1/knowledge/") {
 				serveKnowledgeRoute(response, request, options.Service)
+				return
+			}
+			if strings.HasPrefix(request.URL.Path, "/api/v1/jobs/") {
+				serveJobRoute(response, request, options.Service)
 				return
 			}
 			if strings.HasPrefix(request.URL.Path, "/api/v1/tours/") {
@@ -433,6 +445,11 @@ func securityBoundary(next http.Handler, options APIOptions) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		setSecurityHeaders(response)
 		response.Header().Set("Cache-Control", "no-store")
+		if hasCredentialQuery(request.URL.Query()) {
+			writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
+			return
+		}
+		response.Header().Set("Cache-Control", "no-store")
 		if request.Host != expectedHost {
 			writeError(response, request, http.StatusForbidden, "forbidden", "request is forbidden", unavailableVersion)
 			return
@@ -462,4 +479,14 @@ func securityBoundary(next http.Handler, options APIOptions) http.Handler {
 		ctx := context.WithValue(request.Context(), requestIDGeneratorKey{}, options.RequestIDGenerator)
 		next.ServeHTTP(response, request.WithContext(ctx))
 	})
+}
+
+func hasCredentialQuery(values url.Values) bool {
+	for key := range values {
+		switch strings.ToLower(key) {
+		case "access_token", "token", "bearer", "authorization", "api_key":
+			return true
+		}
+	}
+	return false
 }

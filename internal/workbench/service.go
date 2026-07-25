@@ -9,12 +9,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/capability"
+	"github.com/prowl-agent/prowl-agent/internal/events"
+	"github.com/prowl-agent/prowl-agent/internal/jobs"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 	"github.com/prowl-agent/prowl-agent/internal/setup"
@@ -81,7 +84,18 @@ type Service struct {
 	project       *application.Project
 	setup         *setup.Service
 	afterOverview func() // deterministic package test seam; invoked under ReadGuard
+
+	liveMu sync.RWMutex
+	live   *liveOperations
+	replay jobReplayCache
 }
+
+type liveOperations struct {
+	jobs   *jobs.Service
+	broker *events.Broker
+}
+
+var ErrLiveOperationsUnavailable = errors.New("live operations are unavailable")
 
 func NewService(project *application.Project) (*Service, error) {
 	if project == nil || project.Workspace == nil || project.Store == nil || project.Query == nil || project.Context == nil || project.Knowledge == nil || project.Capabilities == nil || project.ReadGuard == nil {
@@ -92,6 +106,34 @@ func NewService(project *application.Project) (*Service, error) {
 		return nil, err
 	}
 	return &Service{project: project, setup: setupService}, nil
+}
+
+// AttachLiveOperations makes the project-owned jobs service and broker
+// available to the workbench. The workbench borrows and never closes either.
+func (service *Service) AttachLiveOperations(jobService *jobs.Service, broker *events.Broker) error {
+	if service == nil || jobService == nil || broker == nil {
+		return ErrLiveOperationsUnavailable
+	}
+	service.liveMu.Lock()
+	defer service.liveMu.Unlock()
+	if service.live != nil {
+		return ErrLiveOperationsUnavailable
+	}
+	service.live = &liveOperations{jobs: jobService, broker: broker}
+	return nil
+}
+
+func (service *Service) liveOperations() (*liveOperations, error) {
+	if service == nil {
+		return nil, ErrLiveOperationsUnavailable
+	}
+	service.liveMu.RLock()
+	live := service.live
+	service.liveMu.RUnlock()
+	if live == nil || live.jobs == nil || live.broker == nil {
+		return nil, ErrLiveOperationsUnavailable
+	}
+	return live, nil
 }
 
 // localPrincipalID is the only workbench actor identity. Browser payloads

@@ -79,6 +79,7 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 			var (
 				service    *workbench.Service
 				jobService *jobs.Service
+				broker     *events.Broker
 			)
 			if dependencies.openProject != nil {
 				project, err := dependencies.openProject(cmd.Context())
@@ -95,8 +96,11 @@ func newOpenCmd(dependencies openDependencies) *cobra.Command {
 					if err != nil {
 						return nil, err
 					}
-					jobService, err = newProjectJobsService(cmd.Context(), project)
+					jobService, broker, err = newProjectJobsService(cmd.Context(), project)
 					if err != nil {
+						return nil, err
+					}
+					if err := service.AttachLiveOperations(jobService, broker); err != nil {
 						return nil, err
 					}
 					if project.StartupRefreshPending() {
@@ -171,22 +175,22 @@ func standardStreamsAreTerminals() bool {
 	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stderr.Fd())
 }
 
-func newProjectJobsService(ctx context.Context, project *application.Project) (*jobs.Service, error) {
+func newProjectJobsService(ctx context.Context, project *application.Project) (*jobs.Service, *events.Broker, error) {
 	store, err := jobs.Open(ctx, project.Workspace.Root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	broker, err := events.NewBroker(events.NewProjectJobsOutbox(store), events.BrokerOptions{})
 	if err != nil {
 		_ = store.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	service := jobs.NewService(store, broker, projectRefreshRunner(project))
 	if err := project.AttachJobsService(service); err != nil {
 		_ = service.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	return service, nil
+	return service, broker, nil
 }
 
 func projectRefreshRunner(project *application.Project) jobs.Runner {

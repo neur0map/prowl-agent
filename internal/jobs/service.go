@@ -77,6 +77,14 @@ func (s *Service) EnqueueOrResumeIndex(ctx context.Context) (Job, bool, error) {
 	return job, created, err
 }
 func (s *Service) Get(ctx context.Context, id string) (Job, error) { return s.store.Get(ctx, id) }
+
+// StreamState returns the current durable project-job stream authority.
+func (s *Service) StreamState(ctx context.Context) (StreamState, error) {
+	if s == nil || s.store == nil {
+		return StreamState{}, ErrClosed
+	}
+	return s.store.State(ctx)
+}
 func (s *Service) Cancel(ctx context.Context, id string, version uint64) (Job, error) {
 	job, err := s.store.Cancel(ctx, id, version)
 	if err == nil {

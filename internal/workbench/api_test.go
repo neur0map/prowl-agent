@@ -424,6 +424,10 @@ func TestRouteInventory(t *testing.T) {
 		"POST /api/v1/setup/plan",
 		"POST /api/v1/setup/apply",
 		"POST /api/v1/setup/verify",
+		"GET /api/v1/events",
+		"GET /api/v1/jobs/{id}",
+		"POST /api/v1/jobs/{id}/cancel",
+		"POST /api/v1/index/refresh",
 	}
 	got := make([]string, 0, len(routeInventory()))
 	for _, route := range routeInventory() {

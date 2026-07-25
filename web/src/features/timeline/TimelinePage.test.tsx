@@ -1,6 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../../transport/api', () => ({ apiFetch }))
+
 import { TimelinePage, type TimelineClient } from './TimelinePage'
 
 const events = [
@@ -13,7 +16,10 @@ function client(overrides: Partial<TimelineClient> = {}): TimelineClient {
   return { loadPage: vi.fn().mockResolvedValue({ events, next: 'next-cursor' }), ...overrides }
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  apiFetch.mockReset()
+})
 
 describe('TimelinePage', () => {
   it('announces loading and renders a useful empty state', async () => {
@@ -50,5 +56,17 @@ describe('TimelinePage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Load more timeline events' }))
     await waitFor(() => expect(api.loadPage).toHaveBeenLastCalledWith('next-cursor'))
     expect(await screen.findByText('accepted')).toBeTruthy()
+  })
+
+  it('shows a safe error for malformed default timeline data', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: {}, meta: {} }), { status: 200 }))
+    render(<TimelinePage />)
+    expect((await screen.findByRole('alert')).textContent).toBe('Timeline is unavailable. Try again.')
+  })
+
+  it('does not offer pagination when a final server page omits next', async () => {
+    render(<TimelinePage client={client({ loadPage: vi.fn().mockResolvedValue({ events }) })} />)
+    await screen.findAllByRole('listitem')
+    expect(screen.queryByRole('button', { name: 'Load more timeline events' })).toBeNull()
   })
 })

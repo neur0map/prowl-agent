@@ -1,6 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../../transport/api', () => ({ apiFetch }))
+
 import { KnowledgePage, type KnowledgeClient } from './KnowledgePage'
 
 const page = {
@@ -10,7 +13,7 @@ const page = {
   next: 'next-page',
 }
 const detail = { ...page.items[0], body: '# Guide\nContent', backlinks: [] }
-const proposal = { proposal: { id: 'proposal-1', title: 'Update guide' }, diff: '@@ -1 +1 @@\n-old\n+new', version: 'proposal-version' }
+const proposal = { proposal: { id: 'proposal-1', operation: 'update', target_path: 'docs/guide.md', candidate_path: 'reviews/proposal-1.md', status: 'pending', created_at: '2026-07-24T12:00:00Z' }, diff: '@@ -1 +1 @@\n-old\n+new', version: 'proposal-version' }
 
 function client(overrides: Partial<KnowledgeClient> = {}): KnowledgeClient {
   return {
@@ -22,7 +25,10 @@ function client(overrides: Partial<KnowledgeClient> = {}): KnowledgeClient {
   }
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  apiFetch.mockReset()
+})
 
 describe('KnowledgePage', () => {
   it('announces loading before rendering the canonical empty list', async () => {
@@ -81,4 +87,53 @@ describe('KnowledgePage', () => {
     await waitFor(() => expect(document.activeElement).toBe(alert))
     expect(screen.getByText((_, element) => element?.tagName === 'PRE' && element.textContent === '@@ -1 +1 @@\n-old\n+new')).toBeTruthy()
   })
+
+  it('maps production proposal conflicts to a focused alert', async () => {
+    apiFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify(path.includes('/accept') ? { error: { code: 'proposal_version_conflict' }, meta: {} } : path.includes('/proposals/') ? { data: proposal, meta: {} } : { data: page, meta: {} }), { status: path.includes('/accept') ? 409 : 200 })))
+    render(<KnowledgePage proposalID="proposal-1" createIdempotencyKey={() => 'fresh-key'} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I have reviewed this proposal diff' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Accept proposal' }))
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(document.activeElement).toBe(alert))
+  })
+
+  it('clears confirmation when a different proposal loads', async () => {
+    const api = client({ loadProposal: vi.fn((id: string) => Promise.resolve({ ...proposal, proposal: { ...proposal.proposal, id }, diff: id === 'proposal-1' ? proposal.diff : '@@ newer' })) })
+    const view = render(<KnowledgePage client={api} proposalID="proposal-1" />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I have reviewed this proposal diff' }))
+    view.rerender(<KnowledgePage client={api} proposalID="proposal-2" />)
+    await screen.findByText((_, element) => element?.tagName === 'PRE' && element.textContent === '@@ newer')
+    expect((screen.getByRole('button', { name: 'Accept proposal' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('shows a safe error for malformed default list responses', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: {}, meta: {} }), { status: 200 }))
+    render(<KnowledgePage />)
+    expect((await screen.findByRole('alert')).textContent).toBe('Knowledge is unavailable. Try again.')
+  })
+
+  it('does not paginate an injected final page that omits next', async () => {
+    render(<KnowledgePage client={client({ loadPage: vi.fn().mockResolvedValue({ items: page.items }) })} />)
+    await screen.findByRole('button', { name: 'Guide' })
+    expect(screen.queryByRole('button', { name: 'Load more knowledge' })).toBeNull()
+  })
+
+  it('ignores an older detail response after another document is selected', async () => {
+    const first = deferred<typeof detail>()
+    const second = deferred<typeof detail>()
+    const api = client({ loadPage: vi.fn().mockResolvedValue({ items: [page.items[0], { ...page.items[0], id: 'doc-2', title: 'Second guide' }], next: '' }), loadDetail: vi.fn((id: string) => id === 'doc-1' ? first.promise : second.promise) })
+    render(<KnowledgePage client={api} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Guide' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Second guide' }))
+    second.resolve({ ...detail, id: 'doc-2', title: 'Second guide' })
+    await screen.findByRole('heading', { name: 'Second guide' })
+    first.resolve(detail)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Second guide' })).toBeTruthy())
+  })
 })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}

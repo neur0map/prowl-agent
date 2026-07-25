@@ -1,6 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../../transport/api', () => ({ apiFetch }))
+
 import { SetupPage, type SetupClient } from './SetupPage'
 
 const detected = { integrations: ['vscode', 'neovim'], project_config_version: 'config-v1' }
@@ -19,7 +22,10 @@ function client(overrides: Partial<SetupClient> = {}): SetupClient {
   }
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  apiFetch.mockReset()
+})
 
 describe('SetupPage', () => {
   it('announces detection loading and renders a useful empty state', async () => {
@@ -84,4 +90,51 @@ describe('SetupPage', () => {
     await waitFor(() => expect(api.verify).toHaveBeenCalledWith(['vscode']))
     expect((await screen.findByRole('status')).textContent).toBe('Selected integrations verified.')
   })
+
+  it('maps a production setup conflict to the focused alert', async () => {
+    apiFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify(path.endsWith('/detect') ? { data: detected, meta: {} } : path.endsWith('/plan') ? { data: plan, meta: {} } : { error: { code: 'setup_conflict' }, meta: {} }), { status: path.endsWith('/apply') ? 409 : 200 })))
+    render(<SetupPage createIdempotencyKey={() => 'fresh-key'} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I approve this setup plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply reviewed setup plan' }))
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(document.activeElement).toBe(alert))
+  })
+
+  it('requires fresh approval after a newly reviewed plan arrives', async () => {
+    const api = client({ plan: vi.fn().mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, hash: 'new-hash' }) })
+    render(<SetupPage client={api} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'I approve this setup plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    await waitFor(() => expect(api.plan).toHaveBeenCalledTimes(2))
+    expect((screen.getByRole('checkbox', { name: 'I approve this setup plan' }) as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('ignores a plan response superseded by a selection change', async () => {
+    const pending = deferred<typeof plan>()
+    const api = client({ plan: vi.fn(() => pending.promise) })
+    render(<SetupPage client={api} />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review setup plan' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'vscode' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'neovim' }))
+    pending.resolve(plan)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(screen.queryByText('Install Prowl server')).toBeNull()
+  })
+
+  it('shows a safe error for malformed default detection data', async () => {
+    apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: {}, meta: {} }), { status: 200 }))
+    render(<SetupPage />)
+    expect((await screen.findByRole('alert')).textContent).toBe('Setup is unavailable. Try again.')
+  })
 })
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}

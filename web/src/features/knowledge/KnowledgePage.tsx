@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
-import { sourceLink, type APIEnvelope } from '../../transport/contracts'
+import { sourceLink } from '../../transport/contracts'
 
 type KnowledgeAnchor = { path: string; line_start: number; line_end: number; content_hash?: string; symbol?: string }
 type KnowledgeSummary = { id: string; path: string; type: string; title: string; description?: string; resource?: string; tags: string[]; timestamp?: string; status?: string; confidence?: string; related: string[]; anchors: KnowledgeAnchor[] }
 type KnowledgePageData = { items: KnowledgeSummary[]; next: string }
 type KnowledgeDetail = KnowledgeSummary & { body: string; backlinks: Array<{ id: string; path: string; type: string; title: string }> }
-type KnowledgeProposal = { proposal: { id: string; title?: string }; diff: string; version: string }
+type KnowledgeProposal = { proposal: { id: string; operation: string; target_path: string; candidate_path: string; status: string; created_at: string }; diff: string; version: string }
 type KnowledgeDecision = { version: string; idempotent: boolean }
 type KnowledgeDecisionRequest = { expected_version: string; idempotency_key: string; confirm: true }
 
@@ -21,72 +21,86 @@ export type KnowledgeClient = {
 type LoadState<T> = { kind: 'loading' } | { kind: 'ready'; value: T } | { kind: 'error' }
 type ProposalState = { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; value: KnowledgeProposal } | { kind: 'error' }
 
-async function envelope<T>(path: string, init?: RequestInit): Promise<T> {
+class ClientError extends Error {
+  constructor(readonly code?: string) { super('request failed') }
+}
+
+async function request(path: string, init?: RequestInit): Promise<unknown> {
   const response = await apiFetch(path, init)
-  if (!response.ok) throw new Error('request failed')
-  const payload: unknown = await response.json()
-  if (!isEnvelope<T>(payload)) throw new Error('invalid response')
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok) throw new ClientError(errorCode(payload))
+  if (!isEnvelope(payload)) throw new ClientError()
   return payload.data
 }
 
-function isEnvelope<T>(value: unknown): value is APIEnvelope<T> {
-  return typeof value === 'object' && value !== null && 'data' in value && 'meta' in value
-}
-
 const defaultClient: KnowledgeClient = {
-  loadPage: (cursor = '') => envelope<KnowledgePageData>(`/api/v1/knowledge${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`),
-  loadDetail: (id) => envelope<KnowledgeDetail>(`/api/v1/knowledge/${encodeURIComponent(id)}`),
-  loadProposal: (id) => envelope<KnowledgeProposal>(`/api/v1/knowledge/proposals/${encodeURIComponent(id)}`),
-  decide: (id, action, request) => envelope<KnowledgeDecision>(`/api/v1/knowledge/proposals/${encodeURIComponent(id)}/${action}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
-  }),
+  async loadPage(cursor = '') {
+    const value = await request(`/api/v1/knowledge${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`)
+    if (!isKnowledgePage(value)) throw new ClientError()
+    return { items: value.items, next: value.next ?? '' }
+  },
+  async loadDetail(id) {
+    const value = await request(`/api/v1/knowledge/${encodeURIComponent(id)}`)
+    if (!isKnowledgeDetail(value)) throw new ClientError()
+    return value
+  },
+  async loadProposal(id) {
+    const value = await request(`/api/v1/knowledge/proposals/${encodeURIComponent(id)}`)
+    if (!isKnowledgeProposal(value)) throw new ClientError()
+    return value
+  },
+  async decide(id, action, input) {
+    const value = await request(`/api/v1/knowledge/proposals/${encodeURIComponent(id)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
+    if (!isKnowledgeDecision(value)) throw new ClientError()
+    return value
+  },
 }
 
 export function createIdempotencyKey(): string {
   return crypto.randomUUID()
 }
 
-export function KnowledgePage({ client = defaultClient, proposalID, createIdempotencyKey: newKey = createIdempotencyKey }: {
-  client?: KnowledgeClient
-  proposalID?: string
-  createIdempotencyKey?: () => string
-}) {
+export function KnowledgePage({ client = defaultClient, proposalID, createIdempotencyKey: newKey = createIdempotencyKey }: { client?: KnowledgeClient; proposalID?: string; createIdempotencyKey?: () => string }) {
   const [page, setPage] = useState<LoadState<KnowledgePageData>>({ kind: 'loading' })
   const [detail, setDetail] = useState<LoadState<KnowledgeDetail> | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [proposal, setProposal] = useState<ProposalState>({ kind: 'idle' })
   const [reviewed, setReviewed] = useState(false)
   const [outcome, setOutcome] = useState('')
+  const [decisionError, setDecisionError] = useState(false)
   const [conflict, setConflict] = useState(false)
+  const detailRequest = useRef(0)
+  const proposalRequest = useRef(0)
   const conflictAlert = useRef<HTMLParagraphElement>(null)
 
   useEffect(() => {
     let active = true
-    void client.loadPage().then(
-      (value) => { if (active) setPage({ kind: 'ready', value }) },
-      () => { if (active) setPage({ kind: 'error' }) },
-    )
+    void client.loadPage().then((value) => { if (active) setPage({ kind: 'ready', value: { items: value.items, next: value.next ?? '' } }) }, () => { if (active) setPage({ kind: 'error' }) })
     return () => { active = false }
   }, [client])
 
   useEffect(() => {
-    if (!proposalID) return
-    let active = true
+    const requestID = ++proposalRequest.current
+    setReviewed(false)
+    setOutcome('')
+    setDecisionError(false)
+    setConflict(false)
+    if (!proposalID) { setProposal({ kind: 'idle' }); return }
     setProposal({ kind: 'loading' })
     void client.loadProposal(proposalID).then(
-      (value) => { if (active) setProposal({ kind: 'ready', value }) },
-      () => { if (active) setProposal({ kind: 'error' }) },
+      (value) => { if (proposalRequest.current === requestID) setProposal({ kind: 'ready', value }) },
+      () => { if (proposalRequest.current === requestID) setProposal({ kind: 'error' }) },
     )
-    return () => { active = false }
   }, [client, proposalID])
 
   useEffect(() => { if (conflict) conflictAlert.current?.focus() }, [conflict])
 
   function selectDetail(id: string) {
+    const requestID = ++detailRequest.current
     setDetail({ kind: 'loading' })
     void client.loadDetail(id).then(
-      (value) => setDetail({ kind: 'ready', value }),
-      () => setDetail({ kind: 'error' }),
+      (value) => { if (detailRequest.current === requestID) setDetail({ kind: 'ready', value }) },
+      () => { if (detailRequest.current === requestID) setDetail({ kind: 'error' }) },
     )
   }
 
@@ -95,7 +109,7 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
     const current = page.value
     setLoadingMore(true)
     void client.loadPage(current.next).then(
-      (next) => setPage({ kind: 'ready', value: { items: [...current.items, ...next.items], next: next.next } }),
+      (next) => setPage({ kind: 'ready', value: { items: [...current.items, ...next.items], next: next.next ?? '' } }),
       () => setPage({ kind: 'error' }),
     ).finally(() => setLoadingMore(false))
   }
@@ -103,12 +117,11 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
   function decide(action: 'accept' | 'reject') {
     if (proposal.kind !== 'ready' || !reviewed) return
     setConflict(false)
+    setDecisionError(false)
     setOutcome('')
-    void client.decide(proposalID ?? proposal.value.proposal.id, action, {
-      expected_version: proposal.value.version, idempotency_key: newKey(), confirm: true,
-    }).then(
+    void client.decide(proposalID ?? proposal.value.proposal.id, action, { expected_version: proposal.value.version, idempotency_key: newKey(), confirm: true }).then(
       () => setOutcome(`Proposal ${action === 'accept' ? 'accepted' : 'rejected'}.`),
-      (error: unknown) => { if (errorCode(error) === 'conflict') setConflict(true) },
+      (error: unknown) => { if (isKnowledgeConflict(errorCode(error))) setConflict(true); else setDecisionError(true) },
     )
   }
 
@@ -123,12 +136,51 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
     {detail?.kind === 'ready' ? <article aria-label="Knowledge detail"><h2>{detail.value.title}</h2><pre>{detail.value.body}</pre>{detail.value.anchors.map((anchor) => { const link = sourceLink(anchor); return <a key={`${anchor.path}:${anchor.line_start}`} href={link.href}>{link.label}</a> })}</article> : null}
     {proposal.kind === 'loading' ? <p role="status">Loading proposal…</p> : null}
     {proposal.kind === 'error' ? <p role="alert">Proposal is unavailable. Try again.</p> : null}
-    {proposal.kind === 'ready' ? <section aria-label="Proposal review"><h2>{proposal.value.proposal.title ?? 'Knowledge proposal'}</h2><pre>{proposal.value.diff}</pre><label><input type="checkbox" checked={reviewed} onInput={(event) => setReviewed(event.currentTarget.checked)} />I have reviewed this proposal diff</label><div><button type="button" disabled={!reviewed} onClick={() => decide('accept')}>Accept proposal</button><button type="button" disabled={!reviewed} onClick={() => decide('reject')}>Reject proposal</button></div></section> : null}
+    {proposal.kind === 'ready' ? <section aria-label="Proposal review"><h2>Knowledge proposal</h2><pre>{proposal.value.diff}</pre><label><input type="checkbox" checked={reviewed} onInput={(event) => setReviewed(event.currentTarget.checked)} />I have reviewed this proposal diff</label><div><button type="button" disabled={!reviewed} onClick={() => decide('accept')}>Accept proposal</button><button type="button" disabled={!reviewed} onClick={() => decide('reject')}>Reject proposal</button></div></section> : null}
     {outcome ? <p role="status">{outcome}</p> : null}
+    {decisionError ? <p role="alert">Proposal decision is unavailable. Try again.</p> : null}
     {conflict ? <p ref={conflictAlert} role="alert" tabIndex={-1}>The proposal changed before your decision. Review the displayed diff and try again.</p> : null}
   </section>
 }
 
-function errorCode(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined
+function isEnvelope(value: unknown): value is { data: unknown; meta: Record<string, unknown> } {
+  return isRecord(value) && 'data' in value && isRecord(value.meta)
 }
+
+function isKnowledgePage(value: unknown): value is { items: KnowledgeSummary[]; next?: string } {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every(isKnowledgeSummary) && (value.next === undefined || typeof value.next === 'string')
+}
+
+function isKnowledgeDetail(value: unknown): value is KnowledgeDetail {
+  if (!isRecord(value)) return false
+  const record = value
+  if (!isKnowledgeSummary(value)) return false
+  const body = record.body
+  const backlinks = record.backlinks
+  return typeof body === 'string' && Array.isArray(backlinks) && backlinks.every((item) => isRecord(item) && isString(item.id) && isString(item.path) && isString(item.type) && isString(item.title))
+}
+
+function isKnowledgeSummary(value: unknown): value is KnowledgeSummary {
+  return isRecord(value) && isString(value.id) && isString(value.path) && isString(value.type) && isString(value.title) && isOptionalString(value.description) && isOptionalString(value.resource) && isOptionalString(value.timestamp) && isOptionalString(value.status) && isOptionalString(value.confidence) && isStringArray(value.tags) && isStringArray(value.related) && Array.isArray(value.anchors) && value.anchors.every((anchor) => isRecord(anchor) && isString(anchor.path) && isFiniteNumber(anchor.line_start) && isFiniteNumber(anchor.line_end) && isOptionalString(anchor.content_hash) && isOptionalString(anchor.symbol))
+}
+
+function isKnowledgeProposal(value: unknown): value is KnowledgeProposal {
+  return isRecord(value) && isRecord(value.proposal) && isString(value.proposal.id) && isString(value.proposal.operation) && isString(value.proposal.target_path) && isString(value.proposal.candidate_path) && isString(value.proposal.status) && isString(value.proposal.created_at) && typeof value.diff === 'string' && isString(value.version)
+}
+
+function isKnowledgeDecision(value: unknown): value is KnowledgeDecision {
+  return isRecord(value) && isString(value.version) && typeof value.idempotent === 'boolean'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null }
+function isString(value: unknown): value is string { return typeof value === 'string' }
+function isOptionalString(value: unknown): boolean { return value === undefined || typeof value === 'string' }
+function isStringArray(value: unknown): value is string[] { return Array.isArray(value) && value.every(isString) }
+function isFiniteNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) }
+function errorCode(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  if (isString(value.code)) return value.code
+  if (isRecord(value.error) && isString(value.error.code)) return value.error.code
+  return undefined
+}
+function isKnowledgeConflict(code: string | undefined): boolean { return code === 'proposal_version_conflict' || code === 'decision_in_progress' || code === 'conflict' }

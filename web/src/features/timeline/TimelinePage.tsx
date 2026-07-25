@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
-import type { APIEnvelope } from '../../transport/contracts'
 
 type TimelineGitCommit = { commit: string; subject: string }
 type TimelineKnowledgeLog = { action: string; path: string }
@@ -10,18 +9,16 @@ type TimelineEvent = { id: string; occurred_at: string; kind: string; provenance
 type TimelineData = { events: TimelineEvent[]; next: string }
 
 export type TimelineClient = { loadPage: (cursor?: string) => Promise<TimelineData> }
-
 type TimelineState = { kind: 'loading'; events: TimelineEvent[] } | { kind: 'ready'; events: TimelineEvent[]; next: string } | { kind: 'error'; events: TimelineEvent[] }
 
-const defaultClient: TimelineClient = {
-  async loadPage(cursor = '') {
-    const response = await apiFetch(`/api/v1/timeline${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`)
-    if (!response.ok) throw new Error('request failed')
-    const payload: unknown = await response.json()
-    if (typeof payload !== 'object' || payload === null || !('data' in payload) || !('meta' in payload)) throw new Error('invalid response')
-    return (payload as APIEnvelope<TimelineData>).data
-  },
+async function loadTimeline(cursor = ''): Promise<TimelineData> {
+  const response = await apiFetch(`/api/v1/timeline${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`)
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok || !isEnvelope(payload) || !isTimelineData(payload.data)) throw new Error('timeline unavailable')
+  return { events: payload.data.events, next: payload.data.next ?? '' }
 }
+
+const defaultClient: TimelineClient = { loadPage: loadTimeline }
 
 export function TimelinePage({ client = defaultClient }: { client?: TimelineClient }) {
   const [state, setState] = useState<TimelineState>({ kind: 'loading', events: [] })
@@ -29,7 +26,7 @@ export function TimelinePage({ client = defaultClient }: { client?: TimelineClie
   useEffect(() => {
     let active = true
     void client.loadPage().then(
-      (value) => { if (active) setState({ kind: 'ready', events: value.events, next: value.next }) },
+      (value) => { if (active) setState({ kind: 'ready', events: value.events, next: value.next ?? '' }) },
       () => { if (active) setState({ kind: 'error', events: [] }) },
     )
     return () => { active = false }
@@ -41,7 +38,7 @@ export function TimelinePage({ client = defaultClient }: { client?: TimelineClie
     const cursor = state.next
     setState({ kind: 'loading', events: prior })
     void client.loadPage(cursor).then(
-      (value) => setState({ kind: 'ready', events: [...prior, ...value.events], next: value.next }),
+      (value) => setState({ kind: 'ready', events: [...prior, ...value.events], next: value.next ?? '' }),
       () => setState({ kind: 'error', events: prior }),
     )
   }
@@ -55,3 +52,13 @@ export function TimelinePage({ client = defaultClient }: { client?: TimelineClie
     {state.kind === 'ready' && state.next !== '' ? <button type="button" onClick={loadNext}>Load more timeline events</button> : null}
   </section>
 }
+
+function isEnvelope(value: unknown): value is { data: unknown; meta: Record<string, unknown> } { return isRecord(value) && 'data' in value && isRecord(value.meta) }
+function isTimelineData(value: unknown): value is { events: TimelineEvent[]; next?: string } { return isRecord(value) && Array.isArray(value.events) && value.events.every(isTimelineEvent) && (value.next === undefined || typeof value.next === 'string') }
+function isTimelineEvent(value: unknown): value is TimelineEvent { return isRecord(value) && isString(value.id) && isString(value.occurred_at) && isString(value.kind) && isString(value.provenance) && (value.git === undefined || isGit(value.git)) && (value.knowledge === undefined || isKnowledge(value.knowledge)) && (value.context === undefined || isContext(value.context)) }
+function isGit(value: unknown): value is TimelineGitCommit { return isRecord(value) && isString(value.commit) && isString(value.subject) }
+function isKnowledge(value: unknown): value is TimelineKnowledgeLog { return isRecord(value) && isString(value.action) && isString(value.path) }
+function isContext(value: unknown): value is TimelineContextTrace { return isRecord(value) && isString(value.run_id) && isString(value.query_hash) && isString(value.hash_version) && isString(value.mode) && isFiniteNumber(value.budget_tokens) && isFiniteNumber(value.budget_bytes) && isFiniteNumber(value.estimated_tokens) && isFiniteNumber(value.estimated_bytes) && isString(value.strategy_version) && isString(value.status) && (value.error_code === undefined || isString(value.error_code)) }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null }
+function isString(value: unknown): value is string { return typeof value === 'string' }
+function isFiniteNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) }

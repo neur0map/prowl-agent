@@ -21,6 +21,16 @@ function encodedStream(...parts: string[]): ReadableStream<Uint8Array> {
   })
 }
 
+function controlledStream() {
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+  const body = new ReadableStream<Uint8Array>({ start: (value) => { controller = value } })
+  return {
+    body,
+    enqueue: (value: Uint8Array) => controller?.enqueue(value),
+    close: () => controller?.close(),
+  }
+}
+
 async function authenticatedFetch(...responses: Response[]) {
   const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ bearer }), { status: 200 }))
   for (const response of responses) fetchMock.mockResolvedValueOnce(response)
@@ -71,6 +81,30 @@ describe('project-job event transport', () => {
     expect(states).toEqual(['live'])
   })
 
+  it('keeps TextDecoder state isolated for concurrent chunked streams', async () => {
+    const first = controlledStream()
+    const second = controlledStream()
+    await authenticatedFetch(
+      new Response(first.body, { headers: { 'Content-Type': 'text/event-stream' } }),
+      new Response(second.body, { headers: { 'Content-Type': 'text/event-stream' } }),
+    )
+    const firstPending = streamProjectJobEvents(cursor(), { signal: new AbortController().signal, onEvent: vi.fn(), onState: vi.fn() })
+    await flush()
+    first.enqueue(new Uint8Array([58, 32, 0xe2]))
+    await flush()
+    const received: StreamNotification[] = []
+    const secondPending = streamProjectJobEvents(cursor(2), { signal: new AbortController().signal, onEvent: (notification) => received.push(notification), onState: vi.fn() })
+    await flush()
+    second.enqueue(new TextEncoder().encode(`: keepalive\n\nevent: project-job.changed\ndata: {"cursor":{"stream_scope":"project-job","scope_id":"${scopeID}","epoch":3,"sequence":3},"kind":"project-job.changed"}\n\n`))
+    second.close()
+    first.enqueue(new Uint8Array([0x9c, 0x93, 10, 10]))
+    first.close()
+
+    await expect(secondPending).resolves.toBeUndefined()
+    await expect(firstPending).resolves.toBeUndefined()
+    expect(received).toEqual([{ type: 'invalidate', cursor: cursor(3) }])
+  })
+
   it('rejects malformed events and unusable stream responses before they reach UI state', async () => {
     const malformed = new Response(encodedStream(
       `event: project-job.changed\ndata: {"cursor":{"stream_scope":"operations","scope_id":"${scopeID}","epoch":3,"sequence":2},"kind":"project-job.changed"}\n\n`,
@@ -101,6 +135,31 @@ describe('project-job event transport', () => {
     await expect(pending).rejects.toHaveProperty('name', 'AbortError')
     expect(cancelled).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('delays and aborts safely when native promise resolvers are unavailable', async () => {
+    vi.useFakeTimers()
+    const descriptor = Object.getOwnPropertyDescriptor(Promise, 'withResolvers')
+    Object.defineProperty(Promise, 'withResolvers', { configurable: true, value: undefined })
+    try {
+      const timeoutController = new AbortController()
+      let settled = 0
+      const timeout = abortableDelay(250, timeoutController.signal).then(() => { settled += 1 })
+      await vi.advanceTimersByTimeAsync(249)
+      expect(settled).toBe(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await timeout
+      timeoutController.abort()
+      expect(settled).toBe(1)
+
+      const abortController = new AbortController()
+      const aborted = abortableDelay(4_000, abortController.signal)
+      abortController.abort()
+      await expect(aborted).resolves.toBeUndefined()
+    } finally {
+      if (descriptor === undefined) delete (Promise as PromiseConstructor & { withResolvers?: unknown }).withResolvers
+      else Object.defineProperty(Promise, 'withResolvers', descriptor)
+    }
   })
 
   it('reconnects from the latest reset cursor with bounded, abortable delay', async () => {

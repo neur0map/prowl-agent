@@ -1,14 +1,8 @@
 import { apiFetch } from './api'
 
-const decoder = new TextDecoder()
 const scopeIDPattern = /^[a-f0-9]{64}$/
 const snapshotURIPattern = /^snapshot:\/\/[a-z0-9-]+$/
 
-type PromiseResolvers<T> = {
-  promise: Promise<T>
-  resolve: (value: T | PromiseLike<T>) => void
-  reject: (reason?: unknown) => void
-}
 
 export type EventCursor = {
   stream_scope: 'project-job'
@@ -95,18 +89,19 @@ export function reconnectDelayMilliseconds(attempt: number): number {
 
 export function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve()
-  const { promise, resolve } = (Promise as PromiseConstructor & { withResolvers<T>(): PromiseResolvers<T> }).withResolvers<void>()
-  const timer = window.setTimeout(done, milliseconds)
-  function done() {
-    window.clearTimeout(timer)
-    signal.removeEventListener('abort', done)
-    resolve()
-  }
-  signal.addEventListener('abort', done, { once: true })
-  return promise
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(finish, milliseconds)
+    function finish() {
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    signal.addEventListener('abort', finish, { once: true })
+  })
 }
 
 async function parseEventStream(body: ReadableStream<Uint8Array>, options: WatchOptions): Promise<void> {
+  const decoder = new TextDecoder()
   const reader = body.getReader()
   let pending = ''
   let eventName: string | undefined

@@ -44,3 +44,28 @@ cd web && npm test -- --run src/transport/events.test.ts src/features/jobs/JobSt
 ## Concerns
 
 None. The transport intentionally surfaces only a bounded generic verification/retry message; raw server response text and bearer values remain unavailable to the UI.
+
+## Post-review transport remediation
+
+An independent review found two portability and concurrency defects after the first C4 commit:
+
+1. The `TextDecoder` instance was module-global. Streaming decoder state is mutable, so two overlapping stream readers could corrupt each other's partial UTF-8 input.
+2. `abortableDelay` called `Promise.withResolvers()` behind a TypeScript cast. The configured `ES2022` target does not declare it, and older supported Chromium implementations do not provide it.
+
+RED evidence was added before the remediation:
+
+- A concurrent stream test fed one reader a partial UTF-8 comment and then fed a second reader a valid keepalive plus change event. It failed with `event payload was invalid`, proving shared decoder state crossed readers.
+- A delay test removed `Promise.withResolvers` from the runtime, then tested both timeout and abort settlement. It failed with `TypeError: Promise.withResolvers is not a function`.
+
+GREEN remediation:
+
+- `parseEventStream` now constructs one `TextDecoder` per reader.
+- `abortableDelay` now uses the standard promise constructor with one cleanup function shared by timeout and abort. It clears the timer, unregisters the abort listener, and resolves only once.
+
+The exact C4 gate was rerun after remediation:
+
+```sh
+cd web && npm test -- --run src/transport/events.test.ts src/features/jobs/JobStatus.test.tsx src/app/App.test.tsx && npm run build
+```
+
+Observed result: 3 Vitest files passed, 30 tests passed, TypeScript typecheck passed, and Vite built 21 modules successfully.

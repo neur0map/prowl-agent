@@ -40,6 +40,13 @@ describe('workbench shell', () => {
     expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Secure workbench session unavailable. Reopen Prowl from your terminal.')
   })
 
+  it('does not move initial keyboard focus past the skip link', async () => {
+    render(<App />)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.activeElement).not.toBe(screen.getByRole('main'))
+  })
+
   it('keeps the persistent index status surface outside the session-security error state', () => {
     const { rerender } = render(<App />)
 

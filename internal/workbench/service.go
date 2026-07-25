@@ -88,6 +88,10 @@ type Service struct {
 	liveMu sync.RWMutex
 	live   *liveOperations
 	replay jobReplayCache
+	// exportNow is a deterministic package test seam.
+	exportNow func() time.Time
+	// maxSynchronousExportBytes is a deterministic package test seam.
+	maxSynchronousExportBytes int
 }
 
 type liveOperations struct {
@@ -118,6 +122,9 @@ func (service *Service) AttachLiveOperations(jobService *jobs.Service, broker *e
 	defer service.liveMu.Unlock()
 	if service.live != nil {
 		return ErrLiveOperationsUnavailable
+	}
+	if err := jobService.SetExportRunner(service.runOfflineExport); err != nil {
+		return err
 	}
 	service.live = &liveOperations{jobs: jobService, broker: broker}
 	return nil

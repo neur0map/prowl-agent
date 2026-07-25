@@ -273,7 +273,7 @@ func validJobID(value string) bool {
 }
 
 func validJobKind(kind jobs.Kind) bool {
-	return kind == jobs.KindIndex || kind == jobs.KindResearch || kind == jobs.KindSetup
+	return kind == jobs.KindIndex || kind == jobs.KindExport || kind == jobs.KindResearch || kind == jobs.KindSetup
 }
 func validJobStatus(status jobs.Status) bool {
 	return status == jobs.StatusQueued || status == jobs.StatusRunning || status == jobs.StatusCancelling || status == jobs.StatusSucceeded || status == jobs.StatusFailed || status == jobs.StatusCancelled

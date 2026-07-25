@@ -352,6 +352,7 @@ func TestAPIAllFailuresUseStableBoundedEnvelope(t *testing.T) {
 		{name: "missing bearer", method: http.MethodGet, path: "/api/v1/health", status: 401, challenge: "Bearer", mutate: func(r *http.Request) { r.Header.Del("Authorization") }},
 		{name: "unknown", method: http.MethodGet, path: "/api/v1/hostile-token", status: 404},
 		{name: "method", method: http.MethodPost, path: "/api/v1/brief", status: 405, allow: http.MethodGet},
+		{name: "export method", method: http.MethodGet, path: "/api/v1/export", status: 405, allow: http.MethodPost},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -441,6 +442,8 @@ func TestRouteInventory(t *testing.T) {
 		"GET /api/v1/jobs/{id}",
 		"POST /api/v1/jobs/{id}/cancel",
 		"POST /api/v1/index/refresh",
+		"POST /api/v1/export",
+		"GET /api/v1/export/{id}",
 	}
 	got := make([]string, 0, len(routeInventory()))
 	for _, route := range routeInventory() {

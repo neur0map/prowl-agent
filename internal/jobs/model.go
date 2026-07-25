@@ -18,6 +18,7 @@ type Kind string
 
 const (
 	KindIndex    Kind = "index"
+	KindExport   Kind = "export"
 	KindResearch Kind = "research"
 	KindSetup    Kind = "setup"
 )

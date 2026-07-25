@@ -202,3 +202,56 @@ test('brief vertical slice: compiled workbench is secure, accessible, and source
     }
   }
 })
+
+test('events jobs and offline export: compiled workbench snapshot renders without networking', async ({ page, request }) => {
+  const process = spawn(binary, ['open', '--no-browser', '--port', '0'], {
+    cwd: project,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: childEnvironment,
+  })
+  let stopped = false
+  try {
+    const startup = await waitForStartup(process)
+    const launchURL = readFileSync(startup.handoff, 'utf8').trim()
+    const nonce = new URLSearchParams(new URL(launchURL).hash.slice(1)).get('nonce')
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    const bootstrap = await request.post(`${startup.origin}/api/v1/auth/bootstrap`, {
+      data: { nonce },
+      headers: { Origin: startup.origin },
+    })
+    expect(bootstrap.status()).toBe(200)
+    const payload = await bootstrap.json() as { bearer: string }
+    expect(payload.bearer).toMatch(/^[A-Za-z0-9_-]{43}$/)
+
+    const exported = await request.post(`${startup.origin}/api/v1/export`, {
+      headers: { Authorization: `Bearer ${payload.bearer}` },
+    })
+    expect(exported.status()).toBe(200)
+    expect(exported.headers()['content-type']).toBe('text/html; charset=utf-8')
+    const html = await exported.text()
+    for (const forbidden of [payload.bearer, nonce!, '/api/v1/', 'Bearer ', temporaryRoot, project]) {
+      expect(html).not.toContain(forbidden)
+    }
+    expect(html).toContain("default-src 'none'")
+    expect(html).toContain("connect-src 'none'")
+    expect(html).toContain("script-src 'none'")
+
+    await page.route('**/*', (route) => route.abort())
+    await page.setContent(html)
+    await expect(page.getByRole('heading', { name: 'go-auth-service' })).toBeVisible()
+    await expect(page.getByText(sourceAnchor)).toBeVisible()
+    const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content')
+    expect(csp).toContain("connect-src 'none'")
+    expect(await page.evaluate(() => performance.getEntriesByType('resource').length)).toBe(0)
+
+    process.kill('SIGTERM')
+    const [exitCode] = await once(process, 'exit')
+    expect(exitCode).toBe(0)
+    stopped = true
+  } finally {
+    if (!stopped && process.exitCode === null && process.signalCode === null) {
+      process.kill('SIGTERM')
+      await once(process, 'exit')
+    }
+  }
+})

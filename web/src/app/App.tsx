@@ -268,6 +268,7 @@ export function App({ sessionError = false }: AppProps) {
   const [route, setRoute] = useState(readRoute)
   const [reloadKey, setReloadKey] = useState(0)
   const main = useRef<HTMLElement>(null)
+  const initialFocus = useRef(true)
 
   useEffect(() => {
     const updateRoute = () => setRoute(readRoute())
@@ -276,6 +277,10 @@ export function App({ sessionError = false }: AppProps) {
   }, [])
 
   useEffect(() => {
+    if (initialFocus.current) {
+      initialFocus.current = false
+      return
+    }
     main.current?.focus()
   }, [route.key, reloadKey])
 

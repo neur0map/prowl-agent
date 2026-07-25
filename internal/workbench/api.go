@@ -65,6 +65,8 @@ var declaredAPIRoutes = []apiRoute{
 	{Method: http.MethodGet, Path: "/api/v1/jobs/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/jobs/{id}/cancel"},
 	{Method: http.MethodPost, Path: "/api/v1/index/refresh"},
+	{Method: http.MethodPost, Path: "/api/v1/export"},
+	{Method: http.MethodGet, Path: "/api/v1/export/{id}"},
 }
 
 func routeInventory() []apiRoute {
@@ -216,12 +218,23 @@ func NewAPI(options APIOptions) (http.Handler, error) {
 			serveEvents(response, request, options.Service)
 		case "/api/v1/index/refresh":
 			serveRefresh(response, request, options.Service)
+		case "/api/v1/export":
+			serveOfflineExport(response, request, options.Service)
 		case "/api/v1/setup/detect", "/api/v1/setup/plan", "/api/v1/setup/apply", "/api/v1/setup/verify":
 			setupRoutes.ServeHTTP(response, request)
 			return
 		default:
 			if strings.HasPrefix(request.URL.Path, "/api/v1/knowledge/") {
 				serveKnowledgeRoute(response, request, options.Service)
+				return
+			}
+			if strings.HasPrefix(request.URL.Path, "/api/v1/export/") {
+				id, err := url.PathUnescape(strings.TrimPrefix(request.URL.EscapedPath(), "/api/v1/export/"))
+				if err != nil {
+					writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
+					return
+				}
+				serveOfflineExportArtifact(response, request, options.Service, id)
 				return
 			}
 			if strings.HasPrefix(request.URL.Path, "/api/v1/jobs/") {

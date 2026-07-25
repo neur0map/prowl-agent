@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,6 +26,7 @@ var migrationV1 string
 
 const schemaIdentity = "prowl.project-jobs/v1"
 const maxEvidenceBytes = 4096
+const maxExportArtifactBytes = 256 << 10
 
 type Store struct {
 	db      *sql.DB
@@ -134,6 +136,96 @@ func applyMigrationV1(ctx context.Context, db *sql.DB) error {
 
 func (s *Store) Path() string    { return s.path }
 func (s *Store) ScopeID() string { return s.scopeID }
+
+// WriteExportArtifact atomically persists a bounded artifact for a running
+// export job without exposing the filesystem path outside the jobs boundary.
+func (s *Store) WriteExportArtifact(ctx context.Context, id string, content []byte) error {
+	if !validID(id) || len(content) == 0 || len(content) > maxExportArtifactBytes {
+		return ErrInvalidJob
+	}
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	job, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if job.Kind != KindExport || job.Status != StatusRunning {
+		return ErrInvalidTransition
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	directory := s.exportDirectory()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(directory, ".export-*")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = file.Close()
+		}
+		_ = os.Remove(temporary)
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	if written, err := file.Write(content); err != nil {
+		return err
+	} else if written != len(content) {
+		return io.ErrShortWrite
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	closed = true
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, s.exportPath(id)); err != nil {
+		return err
+	}
+	return os.Chmod(s.exportPath(id), 0o600)
+}
+
+// ReadExportArtifact returns only completed export artifacts.
+func (s *Store) ReadExportArtifact(ctx context.Context, id string) ([]byte, error) {
+	if !validID(id) {
+		return nil, ErrInvalidJob
+	}
+	job, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if job.Kind != KindExport || job.Status != StatusSucceeded {
+		return nil, ErrInvalidTransition
+	}
+	content, err := os.ReadFile(s.exportPath(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrInvalidTransition
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(content) == 0 || len(content) > maxExportArtifactBytes {
+		return nil, ErrInvalidJob
+	}
+	return content, nil
+}
+
+func (s *Store) exportDirectory() string     { return filepath.Join(filepath.Dir(s.path), "exports") }
+func (s *Store) exportPath(id string) string { return filepath.Join(s.exportDirectory(), id+".html") }
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,12 +240,23 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) EnqueueOrResumeIndex(ctx context.Context) (Job, bool, error) {
+	return s.enqueueOrResume(ctx, KindIndex)
+}
+
+func (s *Store) EnqueueOrResumeExport(ctx context.Context) (Job, bool, error) {
+	return s.enqueueOrResume(ctx, KindExport)
+}
+
+func (s *Store) enqueueOrResume(ctx context.Context, kind Kind) (Job, bool, error) {
+	if kind != KindIndex && kind != KindExport {
+		return Job{}, false, ErrInvalidJob
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
-	job, err := loadActiveIndex(ctx, tx)
+	job, err := loadActiveKind(ctx, tx, kind)
 	if err == nil {
 		return job, false, tx.Commit()
 	}
@@ -168,7 +271,7 @@ func (s *Store) EnqueueOrResumeIndex(ctx context.Context) (Job, bool, error) {
 		return Job{}, false, err
 	}
 	now := time.Now().UTC()
-	job = Job{ID: id, Kind: KindIndex, Status: StatusQueued, Version: 1, Phase: "queued", CreatedAt: now, UpdatedAt: now}
+	job = Job{ID: id, Kind: kind, Status: StatusQueued, Version: 1, Phase: "queued", CreatedAt: now, UpdatedAt: now}
 	if err := insertJob(ctx, tx, job); err != nil {
 		return Job{}, false, err
 	}
@@ -240,12 +343,20 @@ func (s *Store) Cancel(ctx context.Context, id string, expectedVersion uint64) (
 }
 
 func (s *Store) claim(ctx context.Context) (Job, bool, error) {
+	return s.claimRunnable(ctx, false)
+}
+
+func (s *Store) claimRunnable(ctx context.Context, includeExport bool) (Job, bool, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
-	job, err := scanJob(tx.QueryRowContext(ctx, jobQuery+` WHERE status IN ('queued','cancelling') AND kind='index' ORDER BY created_at LIMIT 1`))
+	query := jobQuery + ` WHERE status IN ('queued','cancelling') AND kind='index'`
+	if includeExport {
+		query = jobQuery + ` WHERE status IN ('queued','cancelling') AND kind IN ('index','export')`
+	}
+	job, err := scanJob(tx.QueryRowContext(ctx, query+` ORDER BY created_at LIMIT 1`))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, tx.Commit()
 	}
@@ -272,12 +383,20 @@ func (s *Store) claim(ctx context.Context) (Job, bool, error) {
 }
 
 func (s *Store) reconcile(ctx context.Context) error {
+	return s.reconcileRunnable(ctx, false)
+}
+
+func (s *Store) reconcileRunnable(ctx context.Context, includeExport bool) error {
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, jobQuery+` WHERE kind='index' AND status IN ('running','cancelling')`)
+	query := jobQuery + ` WHERE kind='index' AND status IN ('running','cancelling')`
+	if includeExport {
+		query = jobQuery + ` WHERE kind IN ('index','export') AND status IN ('running','cancelling')`
+	}
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -351,9 +470,13 @@ func (s *Store) finish(ctx context.Context, id string, runErr error) (Job, error
 	if job.Status == StatusCancelling || errors.Is(runErr, context.Canceled) {
 		job.Status, job.Phase, job.Outcome = StatusCancelled, "cancelled", "cancelled"
 	} else if runErr != nil {
-		job.Status, job.Phase, job.Outcome, job.ErrorCode = StatusFailed, "failed", "failed", "index_failed"
+		job.Status, job.Phase, job.Outcome, job.ErrorCode = StatusFailed, "failed", "failed", string(job.Kind)+"_failed"
 	} else {
-		job.Status, job.Phase, job.Progress, job.Outcome = StatusSucceeded, "complete", 100, "succeeded"
+		outcome := "succeeded"
+		if job.Kind == KindExport {
+			outcome = "exported"
+		}
+		job.Status, job.Phase, job.Progress, job.Outcome = StatusSucceeded, "complete", 100, outcome
 	}
 	job.Version++
 	job.UpdatedAt = time.Now().UTC()
@@ -365,6 +488,9 @@ func (s *Store) finish(ctx context.Context, id string, runErr error) (Job, error
 	}
 	if err := tx.Commit(); err != nil {
 		return Job{}, err
+	}
+	if job.Kind == KindExport && job.Status != StatusSucceeded {
+		_ = os.Remove(s.exportPath(job.ID))
 	}
 	return job, nil
 }
@@ -518,8 +644,8 @@ func scanJob(row rowScanner) (Job, error) {
 	job.UpdatedAt = time.Unix(0, updated).UTC()
 	return job, err
 }
-func loadActiveIndex(ctx context.Context, tx *sql.Tx) (Job, error) {
-	return scanJob(tx.QueryRowContext(ctx, jobQuery+` WHERE kind='index' AND status IN ('queued','running','cancelling') LIMIT 1`))
+func loadActiveKind(ctx context.Context, tx *sql.Tx, kind Kind) (Job, error) {
+	return scanJob(tx.QueryRowContext(ctx, jobQuery+` WHERE kind=? AND status IN ('queued','running','cancelling') LIMIT 1`, kind))
 }
 func insertJob(ctx context.Context, tx *sql.Tx, j Job) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO jobs(id,kind,status,version,phase,progress,evidence,outcome,error_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, j.ID, j.Kind, j.Status, j.Version, j.Phase, j.Progress, j.Evidence, j.Outcome, j.ErrorCode, j.CreatedAt.UnixNano(), j.UpdatedAt.UnixNano())
@@ -565,4 +691,16 @@ func newID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func validID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
 }

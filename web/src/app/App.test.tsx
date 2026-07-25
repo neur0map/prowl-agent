@@ -114,6 +114,25 @@ describe('workbench shell', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects drive-prefixed relative source paths without sending a source request', async () => {
+    const fetchMock = await authenticatedFetch()
+    window.history.replaceState({}, '', '/#/source?path=C%3Aprivate.ts&line_start=1&line_end=2&preview_end=2')
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Source preview unavailable. Check the selected source link and try again.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('enforces the source path byte limit before sending a source request', async () => {
+    const fetchMock = await authenticatedFetch()
+    const path = 'é'.repeat(2049)
+    window.history.replaceState({}, '', `/#/source?path=${encodeURIComponent(path)}&line_start=1&line_end=2&preview_end=2`)
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Source preview unavailable. Check the selected source link and try again.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects control characters in source paths without sending a source request', async () => {
     const fetchMock = await authenticatedFetch()
     window.history.replaceState({}, '', '/#/source?path=src%2Fapi%0Aprivate%09.go&line_start=1&line_end=2&preview_end=2')

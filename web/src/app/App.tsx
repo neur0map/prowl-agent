@@ -78,6 +78,7 @@ function parseSourceRequest(params: URLSearchParams): SourceRequest | null {
     || path.length === 0
     || path.length > 4096
     || path.startsWith('/')
+    || /^[A-Za-z]:\//.test(path)
     || path.includes('\\')
     || /[\u0000-\u001F\u007F-\u009F]/u.test(path)
     || path.split('/').some((part) => part === '' || part === '.' || part === '..')
@@ -104,13 +105,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function isSourcePreview(value: unknown): value is SourcePreview {
+function isSourcePreview(value: unknown, request: SourceRequest): value is SourcePreview {
   return isRecord(value)
-    && typeof value.path === 'string'
-    && Number.isInteger(value.line_start)
-    && Number.isInteger(value.line_end)
+    && value.path === request.path
+    && typeof value.line_start === 'number'
+    && value.line_start === request.lineStart
+    && typeof value.line_end === 'number'
+    && value.line_end === request.previewEnd
     && Array.isArray(value.lines)
-    && value.lines.every((line) => isRecord(line) && Number.isInteger(line.number) && typeof line.text === 'string')
+    && value.lines.length === request.previewEnd - request.lineStart + 1
+    && value.lines.every((line, index) => isRecord(line)
+      && typeof line.number === 'number'
+      && line.number === request.lineStart + index
+      && typeof line.text === 'string')
 }
 
 function isGuidedTour(value: unknown): value is GuidedTour {
@@ -173,7 +180,7 @@ function SourcePreviewPage({ request }: { request: SourceRequest | null }) {
     setState({ kind: 'loading' })
     const query = new URLSearchParams({ path: request.path, line_start: String(request.lineStart), line_end: String(request.previewEnd) })
     void apiJSON<unknown>(`/api/v1/source?${query}`).then(
-      (value) => { if (active) setState(isSourcePreview(value) ? { kind: 'ready', value } : { kind: 'error' }) },
+      (value) => { if (active) setState(isSourcePreview(value, request) ? { kind: 'ready', value } : { kind: 'error' }) },
       () => { if (active) setState({ kind: 'error' }) },
     )
     return () => { active = false }
@@ -284,7 +291,7 @@ export function App({ sessionError = false }: AppProps) {
 
   return (
     <div class="workbench-shell">
-      <a class="skip-link" href="#main-content">Skip to content</a>
+      <a class="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus() }}>Skip to content</a>
       <aside class="sidebar" aria-label="Workbench navigation">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">P</span>

@@ -53,10 +53,24 @@ describe('workbench shell', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('main')))
   })
 
+  it('keeps the active route when the skip link moves focus to main', async () => {
+    window.history.replaceState({}, '', '/#/timeline')
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Timeline' })
+
+    const skipLink = screen.getByRole('link', { name: 'Skip to content' })
+    skipLink.focus()
+    fireEvent.click(skipLink)
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('main')))
+    expect(window.location.hash).toBe('#/timeline')
+    expect(screen.getByRole('heading', { name: 'Timeline' })).toBeTruthy()
+  })
+
   it('loads a bounded source preview while retaining the full source anchor and retries safely', async () => {
     const fetchMock = await authenticatedFetch(
       new Response(JSON.stringify({ code: 'source_unavailable', message: 'private detail' }), { status: 500 }),
-      new Response(JSON.stringify({ data: { path: 'src/app.ts', line_start: 10, line_end: 12, lines: [{ number: 10, text: 'const app = 1' }] }, meta: {} }), { status: 200 }),
+      new Response(JSON.stringify({ data: { path: 'src/app.ts', line_start: 10, line_end: 12, lines: [{ number: 10, text: 'const app = 1' }, { number: 11, text: '' }, { number: 12, text: '' }] }, meta: {} }), { status: 200 }),
     )
     window.history.replaceState({}, '', '/#/source?path=src%2Fapp.ts&line_start=10&line_end=900&preview_end=12')
     render(<App />)
@@ -70,9 +84,30 @@ describe('workbench shell', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
+  it('rejects source previews that do not match the requested bounded range', async () => {
+    await authenticatedFetch(new Response(JSON.stringify({
+      data: { path: 'src/other.ts', line_start: 10, line_end: 12, lines: [{ number: 10, text: 'private source' }, { number: 11, text: 'private source' }, { number: 12, text: 'private source' }] },
+      meta: {},
+    }), { status: 200 }))
+    window.history.replaceState({}, '', '/#/source?path=src%2Fapp.ts&line_start=10&line_end=900&preview_end=12')
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Source preview unavailable. Check the selected source link and try again.')
+    expect(screen.queryByText('private source')).toBeNull()
+  })
+
   it('rejects malformed source hashes without sending a source request', async () => {
     const fetchMock = await authenticatedFetch()
     window.history.replaceState({}, '', '/#/source?path=..%2Fsecrets.txt&line_start=1&line_end=2&preview_end=2')
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Source preview unavailable. Check the selected source link and try again.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects drive-qualified source paths without sending a source request', async () => {
+    const fetchMock = await authenticatedFetch()
+    window.history.replaceState({}, '', '/#/source?path=C%3A%2Fworkspace%2Fsecret.ts&line_start=1&line_end=2&preview_end=2')
     render(<App />)
 
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Source preview unavailable. Check the selected source link and try again.')

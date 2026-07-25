@@ -79,7 +79,7 @@ function parseSourceRequest(params: URLSearchParams): SourceRequest | null {
     || path.length > 4096
     || path.startsWith('/')
     || path.includes('\\')
-    || path.includes('\0')
+    || /[\u0000-\u001F\u007F-\u009F]/u.test(path)
     || path.split('/').some((part) => part === '' || part === '.' || part === '..')
     || lineStart === null
     || lineEnd === null

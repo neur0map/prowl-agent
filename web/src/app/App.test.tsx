@@ -79,6 +79,15 @@ describe('workbench shell', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects control characters in source paths without sending a source request', async () => {
+    const fetchMock = await authenticatedFetch()
+    window.history.replaceState({}, '', '/#/source?path=src%2Fapi%0Aprivate%09.go&line_start=1&line_end=2&preview_end=2')
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Source preview unavailable. Check the selected source link and try again.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('loads the selected guided tour through the authenticated API and renders its source-backed steps', async () => {
     const fetchMock = await authenticatedFetch(new Response(JSON.stringify({
       data: {

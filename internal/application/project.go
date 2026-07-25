@@ -442,7 +442,8 @@ func generationReadGuard(path string) store.ReadGuard {
 
 func (p *Project) StartupRefreshPending() bool { return p != nil && p.startupRefreshPending }
 
-func (p *Project) AttachJobsService(service *jobs.Service) error { if p == nil || service == nil || p.closed.Load() {
+func (p *Project) AttachJobsService(service *jobs.Service) error {
+	if p == nil || service == nil || p.closed.Load() {
 		return errors.New("invalid project jobs service")
 	}
 	if p.jobService != nil {
@@ -450,7 +451,7 @@ func (p *Project) AttachJobsService(service *jobs.Service) error { if p == nil |
 	}
 	p.jobService = service
 	return nil
- }
+}
 
 func (p *Project) RefreshWithProgress(ctx context.Context, _ index.ProgressReporter) (RefreshResult, error) {
 	return p.Refresh(ctx)

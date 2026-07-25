@@ -42,6 +42,12 @@ type Options struct {
 	Languages []string
 }
 
+type Progress struct {
+	Phase   string
+	Percent int
+}
+type ProgressReporter func(Progress)
+
 // Index incrementally synchronizes the store with the project rooted at root.
 // Only files whose content hash changed are reparsed; removed files are deleted;
 // the global resolution passes always run afterward.

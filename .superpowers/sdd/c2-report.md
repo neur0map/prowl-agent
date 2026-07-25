@@ -42,3 +42,14 @@ go test: 1 packages ok
 - Reviewed event payload: it includes only opaque job ID, version, status, phase, bounded progress, outcome, and safe error code.
 - Reviewed SQL/outbox mutation ordering and post-commit publisher behavior.
 - Concern: the harness intermittently served stale `read` snapshots and false-positive `go test` results for newly added undefined symbols. These tool inconsistencies were reported immediately; final race gates are the successful verification evidence above.
+
+## Final post-commit verification
+The first post-commit gate exposed a missing persisted `index.ProgressReporter` type used by the application entrypoint. The root cause was a stale edit snapshot; the type was added through the structural editor. Re-ran successfully:
+
+```text
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/jobs ./internal/events ./internal/application ./internal/index ./internal/cli -run 'Test(Job|JobsDBPath|OutboxTransaction|CommitBeforePublish|PublisherWatermark|StartupRefreshJob|OpenStartupJobWiring|Cancel|Restart)' -count=1
+go test: 5 packages ok
+
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/events -run 'Test(CursorScope|AdapterConformance|ConnectedSubscriberSweep|RetentionReset|SlowSubscriber)' -count=1
+go test: 1 packages ok
+```

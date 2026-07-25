@@ -74,6 +74,58 @@ func TestSSEEmitsRedactedReplayAndUnsubscribesOnDisconnect(t *testing.T) {
 	}
 }
 
+func TestSSEInitialAuthorityScopeMismatchEmitsReset(t *testing.T) {
+	project := openWorkbenchProject(t, nil)
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := jobs.Open(context.Background(), project.Workspace.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker, err := events.NewBroker(events.NewProjectJobsOutbox(store), events.BrokerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobService := jobs.NewService(store, broker, nil)
+	if err := project.AttachJobsService(jobService); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AttachLiveOperations(jobService, broker); err != nil {
+		t.Fatal(err)
+	}
+	state, err := jobService.StreamState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/events?stream_scope=project-job&scope_id=other&epoch="+itoa(state.Epoch)+"&sequence=0", nil).WithContext(ctx)
+	request.Host = "127.0.0.1:43117"
+	request.Header.Set("Authorization", "Bearer test-secret")
+	response := &sseRecorder{ResponseRecorder: httptest.NewRecorder(), wrote: make(chan struct{})}
+	done := make(chan struct{})
+	go func() { handler.ServeHTTP(response, request); close(done) }()
+	select {
+	case <-response.wrote:
+	case <-time.After(time.Second):
+		t.Fatal("initial authority mismatch did not emit reset")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reset stream did not stop")
+	}
+	if body := response.Body.String(); !strings.Contains(body, "event: reset") || !strings.Contains(body, `"snapshot_uri":"snapshot://`) {
+		t.Fatalf("reset body=%q", body)
+	}
+}
+
 type sseRecorder struct {
 	*httptest.ResponseRecorder
 	wrote chan struct{}
@@ -97,6 +149,17 @@ func TestSSEResetPreservesSafeC1SnapshotURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if body := response.Body.String(); !strings.Contains(body, `"snapshot_uri":"snapshot://retained"`) || strings.Contains(body, "/api/v1/jobs/snapshot") {
+		t.Fatalf("reset body=%q", body)
+	}
+}
+
+func TestSSEResetUsesCanonicalFallbackForEmptyC1SnapshotURI(t *testing.T) {
+	response := httptest.NewRecorder()
+	delivery := events.Delivery{Reset: &events.Reset{Cursor: events.Cursor{StreamScope: events.ProjectJob, ScopeID: "scope", Epoch: 1, Sequence: 2}}}
+	if err := writeSSEDelivery(response, delivery); err != nil {
+		t.Fatal(err)
+	}
+	if body := response.Body.String(); !strings.Contains(body, `"snapshot_uri":"snapshot://project-job"`) {
 		t.Fatalf("reset body=%q", body)
 	}
 }

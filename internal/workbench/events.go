@@ -142,7 +142,10 @@ func writeSSEDelivery(response http.ResponseWriter, delivery events.Delivery) er
 }
 
 func safeSnapshotURI(value string) (string, error) {
-	if len(value) == 0 || len(value) > 256 {
+	if value == "" {
+		return "snapshot://project-job", nil
+	}
+	if len(value) > 256 {
 		return "", errors.New("invalid snapshot URI")
 	}
 	parsed, err := url.ParseRequestURI(value)

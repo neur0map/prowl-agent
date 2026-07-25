@@ -155,3 +155,35 @@ func TestJobRoutesRejectMalformedRequestsAndCredentialQueries(t *testing.T) {
 		}
 	}
 }
+
+func TestJobCancelUnavailableIsPrivacySafe(t *testing.T) {
+	tests := []struct {
+		name    string
+		service *Service
+	}{
+		{name: "nil service"},
+		{name: "unattached service", service: func() *Service {
+			service, err := NewService(openWorkbenchProject(t, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return service
+		}()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117", Service: test.service})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := authorizedAPIRequest("/api/v1/jobs/"+strings.Repeat("a", 32)+"/cancel", "cancel-unavailable")
+			request.Method = http.MethodPost
+			request.Body = io.NopCloser(strings.NewReader(`{"expected_version":1,"idempotency_key":"unavailable-key"}`))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"service_unavailable"`) {
+				t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+			}
+		})
+	}
+}

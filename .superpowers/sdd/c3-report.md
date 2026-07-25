@@ -51,3 +51,11 @@ CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/workbench ./internal/cl
 - Replay cache entries contain only validated request identity plus already-safe outcome fields; FIFO eviction remains bounded to 256.
 - Server shutdown first cancels `BaseContext`, which terminates SSE `Next` calls, then invokes `Shutdown`; ownership of C2 jobs/broker remains unchanged.
 - The C2 snapshot addition is read-only and uses no schema migration. Its SQLite transaction establishes one consistent job/head view.
+
+## Reset fallback remediation
+
+`TestSSEResetUsesCanonicalFallbackForEmptyC1SnapshotURI` was RED because an empty C1 reset URI was rejected and the stream exited after its headers. `safeSnapshotURI` now maps only the empty case to the bounded opaque canonical `snapshot://project-job`, while nonempty values still undergo the existing strict `snapshot://<safe-id>` validation. `TestSSEInitialAuthorityScopeMismatchEmitsReset` uses an actual C2 jobs store and C1 broker at initial authority state, requests a mismatched scope, and verifies a reset frame with a snapshot URI before cancellation. This keeps reset recovery available without accepting or reflecting a raw path, query, fragment, or credential.
+
+## Cancel availability remediation
+
+`TestJobCancelUnavailableIsPrivacySafe` was RED with a nil-pointer panic because cancel accessed the replay cache before resolving live operations. Cancel now obtains the complete live pair first and returns the normal privacy-safe `503 service_unavailable` for both `Service:nil` and an unattached service. Replay cache access begins only after that boundary succeeds.

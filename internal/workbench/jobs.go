@@ -143,6 +143,11 @@ func serveJobCancel(response http.ResponseWriter, request *http.Request, service
 		writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
 		return
 	}
+	live, err := service.liveOperations()
+	if err != nil {
+		writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "service is unavailable", unavailableVersion)
+		return
+	}
 	service.replay.mu.Lock()
 	defer service.replay.mu.Unlock()
 	if prior, conflict := service.replay.lookupLocked(input.IdempotencyKey, id, input.ExpectedVersion); conflict {
@@ -150,13 +155,6 @@ func serveJobCancel(response http.ResponseWriter, request *http.Request, service
 		return
 	} else if prior != nil {
 		writeReplayOutcome(response, request, *prior)
-		return
-	}
-	live, err := service.liveOperations()
-	if err != nil {
-		outcome := jobUnavailableOutcome()
-		service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, outcome)
-		writeReplayOutcome(response, request, outcome)
 		return
 	}
 	job, err := live.jobs.Cancel(request.Context(), id, input.ExpectedVersion)

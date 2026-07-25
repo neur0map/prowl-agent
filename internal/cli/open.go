@@ -181,20 +181,24 @@ func newProjectJobsService(ctx context.Context, project *application.Project) (*
 		_ = store.Close()
 		return nil, err
 	}
-	service := jobs.NewService(store, broker, func(ctx context.Context, _ jobs.Job, progress func(string, int) error) error {
-		if err := progress("refreshing", 1); err != nil {
-			return err
-		}
-		if _, err := project.RefreshWithProgress(ctx, func(snapshot index.Progress) { _ = progress(snapshot.Phase, snapshot.Percent) }); err != nil {
-			return err
-		}
-		return progress("complete", 100)
-	})
+	service := jobs.NewService(store, broker, projectRefreshRunner(project))
 	if err := project.AttachJobsService(service); err != nil {
 		_ = service.Close()
 		return nil, err
 	}
 	return service, nil
+}
+
+func projectRefreshRunner(project *application.Project) jobs.Runner {
+	return func(ctx context.Context, _ jobs.Job, progress func(string, int) error) error {
+		if err := progress("refreshing", 1); err != nil {
+			return err
+		}
+		_, err := project.RefreshWithProgress(ctx, func(snapshot index.Progress) error {
+			return progress(snapshot.Phase, snapshot.Percent)
+		})
+		return err
+	}
 }
 
 func writeBootstrapHandoff(target string) (string, error) {

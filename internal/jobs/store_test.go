@@ -65,6 +65,66 @@ func TestJobEnqueueAndCancelAreDurable(t *testing.T) {
 	}
 }
 
+func TestJobsMigrationUpgradesV0Artifact(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	root := t.TempDir()
+	path, _, err := DBPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	v0, err := os.ReadFile(filepath.Join("testdata", "v0.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(string(v0)); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rows, err := store.db.Query(`SELECT name FROM sqlite_master WHERE type IN ('table', 'index') AND name IN ('jobs_schema', 'jobs', 'outbox', 'authority', 'one_active_index_job')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		found[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"jobs_schema", "jobs", "outbox", "authority", "one_active_index_job"} {
+		if !found[name] {
+			t.Fatalf("migration did not create %q: %v", name, found)
+		}
+	}
+	if _, created, err := store.EnqueueOrResumeIndex(context.Background()); err != nil || !created {
+		t.Fatalf("enqueue after migration created=%v err=%v", created, err)
+	}
+	if _, err := store.State(context.Background()); err != nil {
+		t.Fatalf("authority state after migration: %v", err)
+	}
+}
+
 func TestJobsMigrationRefusesFutureSchema(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	root := t.TempDir()
@@ -85,5 +145,24 @@ func TestJobsMigrationRefusesFutureSchema(t *testing.T) {
 	_ = db.Close()
 	if _, err := Open(context.Background(), root); err == nil {
 		t.Fatal("Open accepted future schema")
+	}
+	db, err = sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRow(`SELECT version FROM jobs_schema`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("future schema version rewritten to %d", version)
+	}
+	var tables int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'`).Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 1 {
+		t.Fatalf("future schema was migrated: tables=%d", tables)
 	}
 }

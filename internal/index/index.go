@@ -46,7 +46,7 @@ type Progress struct {
 	Phase   string
 	Percent int
 }
-type ProgressReporter func(Progress)
+type ProgressReporter func(Progress) error
 
 // Index incrementally synchronizes the store with the project rooted at root.
 // Only files whose content hash changed are reparsed; removed files are deleted;
@@ -63,7 +63,7 @@ func IndexWithOptions(s *store.Store, root string, opt Options) (Summary, error)
 
 // IndexWithOptionsContext incrementally synchronizes the store while honoring
 // cancellation between traversal, file parsing, and graph resolution phases.
-func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
+func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Options, report ProgressReporter) (Summary, error) {
 	var sum Summary
 	if err := ctx.Err(); err != nil {
 		return sum, err
@@ -74,10 +74,23 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 	if err := s.SetMeta("index_state", "incomplete"); err != nil {
 		return sum, err
 	}
+	reportProgress := func(phase string, percent int) error {
+		if report == nil {
+			return nil
+		}
+		return report(Progress{Phase: phase, Percent: percent})
+	}
+	if err := reportProgress("walking", 0); err != nil {
+		return sum, err
+	}
 	rels, err := WalkContext(ctx, root, opt.Ignore)
 	if err != nil {
 		return sum, err
 	}
+	if err := reportProgress("indexing", 1); err != nil {
+		return sum, err
+	}
+	filesProcessed := 0
 	current := make(map[string]bool, len(rels))
 	ver := indexVersion()
 	prevVer, _ := s.GetMeta("index_version")
@@ -89,6 +102,13 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 	}
 
 	for _, rel := range rels {
+		filesProcessed++
+		if filesProcessed%32 == 0 && filesProcessed < len(rels) {
+			percent := 1 + filesProcessed*89/len(rels)
+			if err := reportProgress("indexing", percent); err != nil {
+				return sum, err
+			}
+		}
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
@@ -149,6 +169,9 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 		}
 		sum.Parsed++
 	}
+	if err := reportProgress("indexing", 90); err != nil {
+		return sum, err
+	}
 
 	// Remove files that disappeared from the project.
 	all, err := s.AllFiles()
@@ -194,6 +217,9 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 	if err := ctx.Err(); err != nil {
 		return sum, err
 	}
+	if err := reportProgress("resolving", 95); err != nil {
+		return sum, err
+	}
 	if err := graph.Resolve(s); err != nil {
 		return sum, err
 	}
@@ -213,22 +239,18 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 	if err := s.SetMeta("index_state", "complete"); err != nil {
 		return sum, err
 	}
+	if err := reportProgress("complete", 100); err != nil {
+		return sum, errors.Join(err, s.SetMeta("index_state", "incomplete"))
+	}
 	return sum, nil
 }
 
 func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
-	return indexWithOptions(ctx, s, root, opt)
+	return indexWithOptions(ctx, s, root, opt, nil)
 }
 
 func IndexWithOptionsProgressContext(ctx context.Context, s *store.Store, root string, opt Options, report ProgressReporter) (Summary, error) {
-	if report != nil {
-		report(Progress{Phase: "starting", Percent: 0})
-	}
-	result, err := indexWithOptions(ctx, s, root, opt)
-	if err == nil && report != nil {
-		report(Progress{Phase: "complete", Percent: 100})
-	}
-	return result, err
+	return indexWithOptions(ctx, s, root, opt, report)
 }
 
 func languageAllowed(lang string, configured []string) bool {

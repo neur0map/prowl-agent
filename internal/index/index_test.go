@@ -585,3 +585,86 @@ func TestValidateSnapshotAcceptsGeneratedAgentsMarker(t *testing.T) {
 		t.Fatalf("generated marker snapshot: %v", err)
 	}
 }
+
+func TestIndexWithProgressReportsBoundedPhases(t *testing.T) {
+	root := t.TempDir()
+	for i := range 65 {
+		name := filepath.Join(root, fmt.Sprintf("file_%02d.go", i))
+		if err := os.WriteFile(name, []byte("package fixture\nfunc Value() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var snapshots []Progress
+	if _, err := IndexWithOptionsProgressContext(context.Background(), openStore(t), root, Options{}, func(snapshot Progress) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) < 4 {
+		t.Fatalf("progress snapshots=%v, want walking, indexing, resolving, complete", snapshots)
+	}
+	if snapshots[0] != (Progress{Phase: "walking", Percent: 0}) {
+		t.Fatalf("first progress=%+v, want walking at 0", snapshots[0])
+	}
+	if snapshots[len(snapshots)-1] != (Progress{Phase: "complete", Percent: 100}) {
+		t.Fatalf("last progress=%+v, want complete at 100", snapshots[len(snapshots)-1])
+	}
+	indexing := 0
+	seenResolving := false
+	phaseRank := map[string]int{"walking": 0, "indexing": 1, "resolving": 2, "complete": 3}
+	lastRank := -1
+	for i, snapshot := range snapshots {
+		if snapshot.Percent < 0 || snapshot.Percent > 100 {
+			t.Fatalf("progress[%d]=%+v is outside 0..100", i, snapshot)
+		}
+		if i > 0 && snapshot.Percent < snapshots[i-1].Percent {
+			t.Fatalf("progress decreased: %v", snapshots)
+		}
+		rank, ok := phaseRank[snapshot.Phase]
+		if !ok || rank < lastRank {
+			t.Fatalf("progress phases are not ordered: %v", snapshots)
+		}
+		lastRank = rank
+		switch snapshot.Phase {
+		case "indexing":
+			indexing++
+		case "resolving":
+			seenResolving = true
+		}
+	}
+	if !seenResolving {
+		t.Fatalf("progress=%v missing resolving phase", snapshots)
+	}
+	if indexing > 1+(65+31)/32 {
+		t.Fatalf("indexing reports=%d, want at most initial + every 32 files + final; snapshots=%v", indexing, snapshots)
+	}
+}
+
+func TestIndexWithProgressReporterFailureLeavesGenerationIncomplete(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	database := openStore(t)
+	if _, err := IndexWithOptionsContext(context.Background(), database, root, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	reportFailure := errors.New("durable progress update failed")
+	if _, err := IndexWithOptionsProgressContext(context.Background(), database, root, Options{}, func(snapshot Progress) error {
+		if snapshot.Phase == "complete" {
+			return reportFailure
+		}
+		return nil
+	}); !errors.Is(err, reportFailure) {
+		t.Fatalf("index error=%v, want reporter failure", err)
+	}
+	state, err := database.GetMeta("index_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != "incomplete" {
+		t.Fatalf("index_state=%q, want incomplete after reporter failure", state)
+	}
+}

@@ -87,21 +87,17 @@ func Open(ctx context.Context, root string) (*Store, error) {
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS jobs_schema (identity TEXT NOT NULL, version INTEGER NOT NULL)`); err != nil {
+	var schemaExists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs_schema')`).Scan(&schemaExists); err != nil {
 		return err
+	}
+	if !schemaExists {
+		return applyMigrationV1(ctx, db)
 	}
 	var version int
 	err := db.QueryRowContext(ctx, `SELECT version FROM jobs_schema LIMIT 1`).Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if _, err := tx.ExecContext(ctx, migrationV1); err != nil {
-			return err
-		}
-		return tx.Commit()
+		return applyMigrationV1(ctx, db)
 	}
 	if err != nil {
 		return err
@@ -120,6 +116,18 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("jobs schema identity %q is not %q", identity, schemaIdentity)
 	}
 	return nil
+}
+
+func applyMigrationV1(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, migrationV1); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Path() string    { return s.path }

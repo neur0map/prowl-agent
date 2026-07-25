@@ -223,6 +223,10 @@ func assembleProject(
 // and transport-owned freshness watchers. It serializes refreshes but starts no
 // background work itself.
 func (p *Project) Refresh(ctx context.Context) (RefreshResult, error) {
+	return p.refreshWithProgress(ctx, nil)
+}
+
+func (p *Project) refreshWithProgress(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
 	if p.closed.Load() {
 		return RefreshResult{}, errors.New("project is closed")
 	}
@@ -250,7 +254,7 @@ func (p *Project) Refresh(ctx context.Context) (RefreshResult, error) {
 
 	var result RefreshResult
 	for attempt := 0; attempt < 2; attempt++ {
-		result, err = p.refresh(ctx)
+		result, err = p.refresh(ctx, report)
 		if !errors.Is(err, errSourcesChanged) {
 			break
 		}
@@ -265,7 +269,7 @@ func (p *Project) Refresh(ctx context.Context) (RefreshResult, error) {
 
 var errSourcesChanged = index.ErrSourcesChanged
 
-func (p *Project) refresh(ctx context.Context) (RefreshResult, error) {
+func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
 	var result RefreshResult
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -286,7 +290,12 @@ func (p *Project) refresh(ctx context.Context) (RefreshResult, error) {
 		p.beforeIndex()
 	}
 
-	summary, err := index.IndexWithOptionsContext(ctx, current, p.Workspace.Root, opt)
+	var summary index.Summary
+	if report == nil {
+		summary, err = index.IndexWithOptionsContext(ctx, current, p.Workspace.Root, opt)
+	} else {
+		summary, err = index.IndexWithOptionsProgressContext(ctx, current, p.Workspace.Root, opt, report)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -460,12 +469,5 @@ func (p *Project) AttachJobsService(service *jobs.Service) error {
 }
 
 func (p *Project) RefreshWithProgress(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
-	if report != nil {
-		report(index.Progress{Phase: "refreshing", Percent: 0})
-	}
-	result, err := p.Refresh(ctx)
-	if err == nil && report != nil {
-		report(index.Progress{Phase: "complete", Percent: 100})
-	}
-	return result, err
+	return p.refreshWithProgress(ctx, report)
 }

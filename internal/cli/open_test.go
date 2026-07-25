@@ -19,6 +19,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/jobs"
 	"github.com/prowl-agent/prowl-agent/internal/workbench"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 	workbenchweb "github.com/prowl-agent/prowl-agent/web"
@@ -415,4 +416,31 @@ func openReadyWorkbenchProject(t *testing.T) *application.Project {
 		t.Fatal(err)
 	}
 	return project
+}
+
+func TestProjectRefreshRunnerForwardsRealIndexProgressToJobCallback(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	project := openReadyWorkbenchProject(t)
+	defer project.Close()
+
+	var phases []string
+	err := projectRefreshRunner(project)(context.Background(), jobs.Job{}, func(phase string, _ int) error {
+		phases = append(phases, phase)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"refreshing", "walking", "indexing", "resolving", "complete"} {
+		found := false
+		for _, phase := range phases {
+			if phase == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("job progress=%v missing %q", phases, want)
+		}
+	}
 }

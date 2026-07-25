@@ -19,6 +19,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
+	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
@@ -886,5 +887,37 @@ func TestProjectRefreshRejectsRestoredFileOmittedDuringIndexWalk(t *testing.T) {
 	}
 	if _, err := p.Query.FindSymbol("OriginalSymbol"); !errors.Is(err, store.ErrGenerationIncomplete) {
 		t.Fatalf("query error = %v, want incomplete generation", err)
+	}
+}
+
+func TestRefreshWithProgressForwardsIndexPhases(t *testing.T) {
+	root := newProjectFixture(t, config.Default())
+	for i := range 33 {
+		path := filepath.Join(root, fmt.Sprintf("extra_%02d.go", i))
+		if err := os.WriteFile(path, []byte("package fixture\nfunc Value() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, err := OpenProject(context.Background(), root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer project.Close()
+
+	var snapshots []index.Progress
+	if _, err := project.RefreshWithProgress(context.Background(), func(snapshot index.Progress) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	phases := make(map[string]bool, len(snapshots))
+	for _, snapshot := range snapshots {
+		phases[snapshot.Phase] = true
+	}
+	for _, phase := range []string{"walking", "indexing", "resolving", "complete"} {
+		if !phases[phase] {
+			t.Fatalf("progress=%v missing %q", snapshots, phase)
+		}
 	}
 }

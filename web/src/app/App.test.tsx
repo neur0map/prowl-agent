@@ -128,6 +128,23 @@ describe('workbench shell', () => {
     expect(init.body).toBe('{"ids":["ctx-1","ctx-2"]}')
   })
 
+  it('posts canonical colon-bearing context IDs without treating them as proposal identifiers', async () => {
+    const fetchMock = await authenticatedFetch(new Response(JSON.stringify({
+      data: {
+        summary: 'Canonical source selection.',
+        items: [{ id: 'source:api', title: 'Authenticated API', kind: 'source', why_selected: ['selected source'], estimated_tokens: 12 }],
+        budget: { estimated_tokens: 12, estimated_bytes: 34, exact_bytes: 34 },
+      },
+      meta: {},
+    }), { status: 200 }))
+    window.history.replaceState({}, '', '/#/context?ids=source%3Aapi')
+    render(<App />)
+
+    expect(await screen.findByText('Canonical source selection.')).toBeTruthy()
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/context/get')
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).body).toBe('{"ids":["source:api"]}')
+  })
+
   it('does not render malformed context packets', async () => {
     await authenticatedFetch(new Response(JSON.stringify({
       data: {

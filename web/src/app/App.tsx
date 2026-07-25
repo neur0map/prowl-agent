@@ -96,7 +96,7 @@ function parseContextIDs(params: URLSearchParams): string[] | null {
   const raw = params.get('ids')
   if (raw === null) return null
   const ids = raw.split(',')
-  if (ids.length === 0 || ids.length > 100 || ids.some((id) => validIdentifier(id) === null)) return null
+  if (ids.length === 0 || ids.length > 32 || ids.some((id) => id.trim().length === 0 || /[\u0000-\u001F\u007F-\u009F]/u.test(id) || new TextEncoder().encode(id).length > 8 * 1024)) return null
   return ids
 }
 

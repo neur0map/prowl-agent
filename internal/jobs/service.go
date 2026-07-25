@@ -2,7 +2,10 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"sync"
+
+	"github.com/gofrs/flock"
 )
 
 // Publisher is the narrow post-commit delivery boundary used by the worker.
@@ -14,18 +17,21 @@ type Publisher interface {
 // Runner performs an index refresh and reports bounded durable progress.
 type Runner func(context.Context, Job, func(string, int) error) error
 
+var ErrWorkerActive = errors.New("jobs worker is already active")
+
 type Service struct {
-	store     *Store
-	publisher Publisher
-	runner    Runner
-	ctx       context.Context
-	cancel    context.CancelFunc
-	notify    chan struct{}
-	startOnce sync.Once
-	closeOnce sync.Once
-	wg        sync.WaitGroup
-	startErr  error
-	closeErr  error
+	store      *Store
+	publisher  Publisher
+	runner     Runner
+	ctx        context.Context
+	cancel     context.CancelFunc
+	notify     chan struct{}
+	startOnce  sync.Once
+	closeOnce  sync.Once
+	wg         sync.WaitGroup
+	startErr   error
+	closeErr   error
+	workerLock *flock.Flock
 	// beforeClaim is a package-private deterministic worker test seam.
 	beforeClaim func()
 }
@@ -39,9 +45,20 @@ func (s *Service) Start(ctx context.Context) error {
 			s.startErr = ErrInvalidJob
 			return
 		}
+		lock := flock.New(s.store.Path() + ".worker.lock")
+		locked, err := lock.TryLock()
+		if err != nil {
+			s.startErr = err
+			return
+		}
+		if !locked {
+			s.startErr = ErrWorkerActive
+			return
+		}
+		s.workerLock = lock
 		s.ctx, s.cancel = context.WithCancel(ctx)
 		if err := s.store.reconcile(s.ctx); err != nil {
-			s.startErr = err
+			s.startErr = errors.Join(err, s.releaseWorkerLock())
 			s.cancel()
 			return
 		}
@@ -74,16 +91,24 @@ func (s *Service) Close() error {
 			s.cancel()
 		}
 		s.wg.Wait()
+		s.closeErr = errors.Join(s.closeErr, s.releaseWorkerLock())
 		if s.publisher != nil {
-			s.closeErr = s.publisher.Close()
+			s.closeErr = errors.Join(s.closeErr, s.publisher.Close())
 		}
 		if s.store != nil {
-			if err := s.store.Close(); err != nil {
-				s.closeErr = err
-			}
+			s.closeErr = errors.Join(s.closeErr, s.store.Close())
 		}
 	})
 	return s.closeErr
+}
+
+func (s *Service) releaseWorkerLock() error {
+	if s.workerLock == nil {
+		return nil
+	}
+	err := s.workerLock.Unlock()
+	s.workerLock = nil
+	return err
 }
 func (s *Service) signal() {
 	select {

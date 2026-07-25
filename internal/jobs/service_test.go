@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -229,6 +230,83 @@ func TestJobServiceCancelsClaimedJobBeforeRunnerRegistration(t *testing.T) {
 		t.Fatalf("cancelled=%+v runs=%d", cancelled, runs.Load())
 	}
 	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerActivePreventsLiveJobReconciliationAcrossStores(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	root := t.TempDir()
+	store1, err := Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service1 := NewService(store1, &testPublisher{}, func(ctx context.Context, _ Job, _ func(string, int) error) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	job, _, err := service1.EnqueueOrResumeIndex(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := make(chan struct{})
+	service1.runner = func(ctx context.Context, _ Job, _ func(string, int) error) error {
+		close(running)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if err := service1.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-running:
+	case <-time.After(time.Second):
+		t.Fatal("first worker did not claim job")
+	}
+
+	store2, err := Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secondRuns atomic.Int32
+	service2 := NewService(store2, &testPublisher{}, func(context.Context, Job, func(string, int) error) error {
+		secondRuns.Add(1)
+		return nil
+	})
+	if err := service2.Start(context.Background()); !errors.Is(err, ErrWorkerActive) {
+		t.Fatalf("second start error=%v, want ErrWorkerActive", err)
+	}
+	live, err := store2.Get(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.Status != StatusRunning || secondRuns.Load() != 0 {
+		t.Fatalf("live=%+v second runs=%d", live, secondRuns.Load())
+	}
+	if err := service2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := service1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store3, err := Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resumedRuns atomic.Int32
+	service3 := NewService(store3, &testPublisher{}, func(context.Context, Job, func(string, int) error) error {
+		resumedRuns.Add(1)
+		return nil
+	})
+	if err := service3.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resumed := waitForTerminalJob(t, service3, job.ID)
+	if resumed.Status != StatusSucceeded || resumedRuns.Load() != 1 {
+		t.Fatalf("resumed=%+v runs=%d", resumed, resumedRuns.Load())
+	}
+	if err := service3.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

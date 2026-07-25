@@ -166,3 +166,61 @@ func TestJobsMigrationRefusesFutureSchema(t *testing.T) {
 		t.Fatalf("future schema was migrated: tables=%d", tables)
 	}
 }
+
+func TestConcurrentEnqueueReturnsOneDurableJobAcrossStores(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	root := t.TempDir()
+	first, err := Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	type result struct {
+		job     Job
+		created bool
+		err     error
+	}
+	enteredInsert := make(chan struct{}, 2)
+	releaseInsert := make(chan struct{})
+	beforeInsert := func() {
+		enteredInsert <- struct{}{}
+		<-releaseInsert
+	}
+	first.beforeEnqueueInsert = beforeInsert
+	second.beforeEnqueueInsert = beforeInsert
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	enqueue := func(store *Store) {
+		<-start
+		job, created, err := store.EnqueueOrResumeIndex(context.Background())
+		results <- result{job: job, created: created, err: err}
+	}
+	go enqueue(first)
+	go enqueue(second)
+	close(start)
+	<-enteredInsert
+	close(releaseInsert)
+	left, right := <-results, <-results
+	if left.err != nil || right.err != nil {
+		t.Fatalf("left=%+v right=%+v", left, right)
+	}
+	if left.job.ID == "" || left.job.ID != right.job.ID {
+		t.Fatalf("left=%+v right=%+v", left, right)
+	}
+	if (left.created && right.created) || (!left.created && !right.created) {
+		t.Fatalf("created left=%v right=%v", left.created, right.created)
+	}
+	state, err := first.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Head != 1 {
+		t.Fatalf("outbox head=%d, want 1", state.Head)
+	}
+}

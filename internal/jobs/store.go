@@ -33,6 +33,8 @@ type Store struct {
 	mu      sync.Mutex
 	closed  bool
 	active  map[string]context.CancelFunc
+	// beforeEnqueueInsert is a package-private deterministic test seam.
+	beforeEnqueueInsert func()
 }
 
 // DBPath returns the stable jobs database location and workspace identity.
@@ -66,7 +68,7 @@ func Open(ctx context.Context, root string) (*Store, error) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", path+"?_busy_timeout=5000&_foreign_keys=on")
+	db, err := sql.Open("sqlite3", path+"?_busy_timeout=5000&_foreign_keys=on&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +159,9 @@ func (s *Store) EnqueueOrResumeIndex(ctx context.Context) (Job, bool, error) {
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, err
+	}
+	if s.beforeEnqueueInsert != nil {
+		s.beforeEnqueueInsert()
 	}
 	id, err := newID()
 	if err != nil {

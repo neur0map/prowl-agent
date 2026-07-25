@@ -148,3 +148,27 @@ go test: 2 packages ok
 - The active cancel function is registered before the durable re-read. A cancellation before that re-read is recognized without runner invocation; a cancellation afterward reaches the active run context.
 - Progress reports are emitted in source order only when their percentage is at least the prior durable percentage, including across the single source-consistency retry. Equal percentages still preserve their phase update.
 - The replay fallback requires the original cursor to be below the freshly read retention floor. It therefore does not translate unrelated `ErrInvalidTransition` results or failures while reading current authority state.
+
+## C2 cross-process worker and enqueue remediation
+
+### RED → GREEN evidence
+1. `TestWorkerActivePreventsLiveJobReconciliationAcrossStores` opened two independent `jobs.Store` handles for one workspace. RED: the second `Service.Start` returned nil, reconciled the first service's live `running` job, and could start a duplicate runner. GREEN: the first service holds `<jobs.db>.worker.lock` for its complete active lifetime; the second returns `ErrWorkerActive` before reconciliation or worker startup. Once the first service closes, a third service obtains the OS lock, reconciles the interrupted job once, and resumes it.
+2. `TestConcurrentEnqueueReturnsOneDurableJobAcrossStores` uses two stores and a post-read barrier. RED:
+   ```text
+   err: database is locked
+   ```
+   from one concurrent enqueuer after both observed no active job. GREEN: SQLite connections use `BEGIN IMMEDIATE` transaction locking (`_txlock=immediate`), so a second enqueue waits at transaction acquisition, observes the committed active job, and returns it with `created=false`. The insert and changed outbox row remain in one transaction.
+
+### Final cross-process verification
+```text
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/jobs ./internal/events ./internal/application ./internal/index ./internal/cli -run 'Test(Job|JobsDBPath|OutboxTransaction|CommitBeforePublish|PublisherWatermark|StartupRefreshJob|OpenStartupJobWiring|Cancel|Restart|IndexWithProgress|Migration|Concurrent|WorkerActive)' -count=1
+go test: 5 packages ok
+
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/events -run 'Test(CursorScope|AdapterConformance|ConnectedSubscriberSweep|RetentionReset|SlowSubscriber)' -count=1
+go test: 1 packages ok
+```
+
+### Cross-process lifecycle review
+- `Start` attempts the nonblocking exclusive sidecar lock before touching durable state. A lock conflict is a typed local error; no reconciliation, goroutine, or state mutation follows.
+- Any failure after acquisition releases the sidecar lock. `Close` waits for the worker, releases the lock, then closes publisher and database resources.
+- Immediate transactions are bounded by SQLite's existing context-aware call path and busy timeout; no retry loop was added. The two-store test exercises one durable job, one outbox event, identical IDs, and exactly one creator.

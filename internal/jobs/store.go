@@ -236,14 +236,20 @@ func (s *Store) claim(ctx context.Context) (Job, bool, error) {
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
-	job, err := scanJob(tx.QueryRowContext(ctx, jobQuery+` WHERE status='queued' AND kind='index' ORDER BY created_at LIMIT 1`))
+	job, err := scanJob(tx.QueryRowContext(ctx, jobQuery+` WHERE status IN ('queued','cancelling') AND kind='index' ORDER BY created_at LIMIT 1`))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, tx.Commit()
 	}
 	if err != nil {
 		return Job{}, false, err
 	}
-	job.Status, job.Phase, job.Version, job.UpdatedAt = StatusRunning, "starting", job.Version+1, time.Now().UTC()
+	if job.Status == StatusCancelling {
+		job.Status, job.Phase, job.Outcome = StatusCancelled, "cancelled", "cancelled"
+	} else {
+		job.Status, job.Phase = StatusRunning, "starting"
+	}
+	job.Version++
+	job.UpdatedAt = time.Now().UTC()
 	if err := updateJob(ctx, tx, job); err != nil {
 		return Job{}, false, err
 	}
@@ -273,7 +279,7 @@ func (s *Store) reconcile(ctx context.Context) error {
 			return err
 		}
 		if job.Status == StatusCancelling {
-			job.Status, job.Phase = StatusCancelled, "cancelled"
+			job.Status, job.Phase, job.Outcome = StatusCancelled, "cancelled", "cancelled"
 		} else {
 			job.Status, job.Phase = StatusQueued, "queued"
 		}

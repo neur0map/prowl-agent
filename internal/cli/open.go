@@ -191,9 +191,6 @@ func newProjectJobsService(ctx context.Context, project *application.Project) (*
 
 func projectRefreshRunner(project *application.Project) jobs.Runner {
 	return func(ctx context.Context, _ jobs.Job, progress func(string, int) error) error {
-		if err := progress("refreshing", 1); err != nil {
-			return err
-		}
 		_, err := project.RefreshWithProgress(ctx, func(snapshot index.Progress) error {
 			return progress(snapshot.Phase, snapshot.Percent)
 		})

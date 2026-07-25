@@ -107,3 +107,44 @@ go test: 1 packages ok
 - The index callback sequence is phase-ordered, bounded, and nondecreasing; its tests exercise 65 files so periodic reporting and the final report are distinct.
 - Progress callback errors are never discarded: index returns them, application returns the index error through its existing incomplete-generation handling, and the CLI runner returns the durable jobs callback error.
 - Migration checks the stored version before the artifact is invoked, so a future database remains untouched.
+
+## C2 final concurrency remediation
+
+### RED → GREEN evidence
+1. Progress monotonicity was specified before implementation:
+   ```text
+   CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/cli ./internal/application -run 'Test(ProjectRefreshRunnerForwardsNondecreasingIndexProgress|ProjectRefreshRetriesChangedSourcesThenPublishes)' -count=1
+   --- FAIL: TestProjectRefreshRunnerForwardsNondecreasingIndexProgress
+       decreasing durable progress
+   --- FAIL: TestProjectRefreshRetriesChangedSourcesThenPublishes
+       decreasing durable progress
+   ```
+   GREEN: the production CLI runner no longer publishes `refreshing:1`; `Project.RefreshWithProgress` suppresses retry snapshots below the highest published percent. The focused GREEN command passed.
+2. Queue and claim-gap cancellation tests were written before the worker changes. RED showed the live queued cancellation stuck at `StatusCancelling` and the publisher-gated claim-gap scenario invoked the runner once. A follow-up RED asserted startup reconciliation writes the terminal `cancelled` outcome; it failed with an empty outcome. GREEN: `claim` atomically terminalizes `cancelling` jobs, reconciliation records the same terminal outcome, and the worker re-reads durable state after registering its active cancel function.
+3. Retention-race and nil-adapter tests were written before the adapter changes:
+   ```text
+   --- FAIL: TestProjectJobsOutboxResetsWhenRetentionAdvancesDuringReplay
+       err=invalid job transition
+   --- FAIL: TestProjectJobsOutboxNilGuardsAllMethods
+       panic: runtime error: invalid memory address or nil pointer dereference
+   ```
+   GREEN: replay now re-reads state only for the stale-retention transition and returns the current C1 reset; unrelated replay and re-read errors propagate. Watermark adapter methods now share nil receiver/store guards.
+4. Startup API tests were migrated from the removed `ErrStartupRefreshRequired`/`StartupRefreshRequiredError` contract. The prior assertions failed against the already-pending project behavior. Migrated tests close usable projects, distinguish assembly/store deadlines, retain malformed/FIFO failures, and prove `open` writes no jobs for a current project but enqueues one for a pending project.
+
+### Final verification
+```text
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/jobs ./internal/events ./internal/application ./internal/index ./internal/cli -run 'Test(Job|JobsDBPath|OutboxTransaction|CommitBeforePublish|PublisherWatermark|StartupRefreshJob|OpenStartupJobWiring|Cancel|Restart|IndexWithProgress|Migration)' -count=1
+go test: 5 packages ok
+
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/events -run 'Test(CursorScope|AdapterConformance|ConnectedSubscriberSweep|RetentionReset|SlowSubscriber)' -count=1
+go test: 1 packages ok
+
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/application ./internal/cli -count=1
+go test: 2 packages ok
+```
+
+### Lifecycle/race review
+- A claimed `cancelling` job is terminalized in its claim transaction and is never passed to the runner; terminalization releases the one-active-index constraint for a new job.
+- The active cancel function is registered before the durable re-read. A cancellation before that re-read is recognized without runner invocation; a cancellation afterward reaches the active run context.
+- Progress reports are emitted in source order only when their percentage is at least the prior durable percentage, including across the single source-consistency retry. Equal percentages still preserve their phase update.
+- The replay fallback requires the original cursor to be below the freshly read retention floor. It therefore does not translate unrelated `ErrInvalidTransition` results or failures while reading current authority state.

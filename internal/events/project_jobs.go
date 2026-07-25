@@ -2,13 +2,17 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/prowl-agent/prowl-agent/internal/jobs"
 )
 
 // ProjectJobsOutbox adapts the jobs database authority to the C1 outbox contract.
-type ProjectJobsOutbox struct{ store *jobs.Store }
+type ProjectJobsOutbox struct {
+	store        *jobs.Store
+	beforeReplay func()
+}
 
 var _ Outbox = (*ProjectJobsOutbox)(nil)
 
@@ -41,8 +45,23 @@ func (o *ProjectJobsOutbox) Replay(ctx context.Context, after Cursor, limit int)
 	if !sameStream(after, head) || after.Sequence < floor.Sequence || after.Sequence > head.Sequence {
 		return ReplayResult{Reset: &Reset{Cursor: head, SnapshotURI: state.SnapshotURI}}, nil
 	}
+	if o.beforeReplay != nil {
+		o.beforeReplay()
+	}
 	rows, more, err := o.store.Replay(ctx, after.Sequence, limit)
 	if err != nil {
+		if !errors.Is(err, jobs.ErrInvalidTransition) {
+			return ReplayResult{}, err
+		}
+		current, stateErr := o.store.State(ctx)
+		if stateErr != nil {
+			return ReplayResult{}, stateErr
+		}
+		floor := projectJobsCursor(current, current.RetentionFloor)
+		if sameStream(after, floor) && after.Sequence < floor.Sequence {
+			head := projectJobsCursor(current, current.Head)
+			return ReplayResult{Reset: &Reset{Cursor: head, SnapshotURI: current.SnapshotURI}}, nil
+		}
 		return ReplayResult{}, err
 	}
 	events := make([]Event, 0, len(rows))
@@ -52,6 +71,9 @@ func (o *ProjectJobsOutbox) Replay(ctx context.Context, after Cursor, limit int)
 	return ReplayResult{Events: events, More: more}, nil
 }
 func (o *ProjectJobsOutbox) PublisherWatermark(ctx context.Context) (Cursor, error) {
+	if o == nil || o.store == nil {
+		return Cursor{}, ErrNilOutbox
+	}
 	state, err := o.store.State(ctx)
 	if err != nil {
 		return Cursor{}, err
@@ -63,6 +85,9 @@ func (o *ProjectJobsOutbox) PublisherWatermark(ctx context.Context) (Cursor, err
 	return projectJobsCursor(state, sequence), nil
 }
 func (o *ProjectJobsOutbox) SetPublisherWatermark(ctx context.Context, watermark Cursor) error {
+	if o == nil || o.store == nil {
+		return ErrNilOutbox
+	}
 	state, err := o.store.State(ctx)
 	if err != nil {
 		return err

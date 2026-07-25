@@ -255,7 +255,7 @@ func TestOpenCommandStartupFailureDoesNotListen(t *testing.T) {
 	var listens atomic.Int32
 	command := newOpenCmd(openDependencies{
 		openProject: func(context.Context) (*application.Project, error) {
-			return nil, &application.StartupRefreshRequiredError{Cause: context.DeadlineExceeded}
+			return nil, context.DeadlineExceeded
 		},
 		listen: func(int) (net.Listener, error) {
 			listens.Add(1)
@@ -265,8 +265,8 @@ func TestOpenCommandStartupFailureDoesNotListen(t *testing.T) {
 		openURL: func(string) error { return nil },
 		serve:   func(context.Context, net.Listener, http.Handler) error { return nil },
 	})
-	if err := command.Execute(); !errors.Is(err, application.ErrStartupRefreshRequired) {
-		t.Fatalf("error=%v want startup refresh required", err)
+	if err := command.Execute(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v want startup deadline", err)
 	}
 	if listens.Load() != 0 {
 		t.Fatalf("listen called %d times after startup refusal", listens.Load())
@@ -418,29 +418,76 @@ func openReadyWorkbenchProject(t *testing.T) *application.Project {
 	return project
 }
 
-func TestProjectRefreshRunnerForwardsRealIndexProgressToJobCallback(t *testing.T) {
+func TestProjectRefreshRunnerForwardsNondecreasingIndexProgress(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	project := openReadyWorkbenchProject(t)
 	defer project.Close()
 
-	var phases []string
-	err := projectRefreshRunner(project)(context.Background(), jobs.Job{}, func(phase string, _ int) error {
-		phases = append(phases, phase)
+	last := -1
+	err := projectRefreshRunner(project)(context.Background(), jobs.Job{}, func(_ string, progress int) error {
+		if progress < last {
+			return errors.New("decreasing durable progress")
+		}
+		last = progress
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"refreshing", "walking", "indexing", "resolving", "complete"} {
-		found := false
-		for _, phase := range phases {
-			if phase == want {
-				found = true
-				break
-			}
+	if last != 100 {
+		t.Fatalf("final progress=%d, want 100", last)
+	}
+}
+
+func TestOpenStartupJobWiringOnlyEnqueuesPendingProject(t *testing.T) {
+	runOpen := func(project *application.Project) uint64 {
+		t.Helper()
+		root := project.Workspace.Root
+		command := newOpenCmd(openDependencies{
+			openProject: func(context.Context) (*application.Project, error) { return project, nil },
+			listen:      workbench.ListenLoopback,
+			assets:      workbenchweb.Assets,
+			openURL:     func(string) error { return nil },
+			serve:       func(context.Context, net.Listener, http.Handler) error { return nil },
+		})
+		command.SetOut(&bytes.Buffer{})
+		command.SetArgs([]string{"--no-browser"})
+		if err := command.Execute(); err != nil {
+			t.Fatal(err)
 		}
-		if !found {
-			t.Fatalf("job progress=%v missing %q", phases, want)
+		store, err := jobs.Open(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
 		}
+		defer store.Close()
+		state, err := store.State(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.Head
+	}
+
+	current := openReadyWorkbenchProject(t)
+	if head := runOpen(current); head != 0 {
+		t.Fatalf("current project job head=%d, want 0", head)
+	}
+
+	pendingSeed := openReadyWorkbenchProject(t)
+	root := pendingSeed.Workspace.Root
+	if err := pendingSeed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "startup-pending.go"), []byte("package main\nfunc StartupPending() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := application.OpenWorkbenchProject(context.Background(), root, application.Options{}, application.StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pending.StartupRefreshPending() {
+		t.Fatal("stale project is not pending")
+	}
+	if head := runOpen(pending); head == 0 {
+		t.Fatal("pending project did not enqueue a startup job")
 	}
 }

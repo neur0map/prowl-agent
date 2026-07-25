@@ -26,6 +26,8 @@ type Service struct {
 	wg        sync.WaitGroup
 	startErr  error
 	closeErr  error
+	// beforeClaim is a package-private deterministic worker test seam.
+	beforeClaim func()
 }
 
 func NewService(store *Store, publisher Publisher, runner Runner) *Service {
@@ -102,6 +104,9 @@ func (s *Service) work() {
 			return
 		default:
 		}
+		if s.beforeClaim != nil {
+			s.beforeClaim()
+		}
 		job, ok, err := s.store.claim(s.ctx)
 		if err != nil {
 			if s.ctx.Err() != nil {
@@ -118,9 +123,18 @@ func (s *Service) work() {
 			continue
 		}
 		s.publish(s.ctx)
+		if job.Status == StatusCancelled {
+			continue
+		}
 		runCtx, cancel := context.WithCancel(s.ctx)
 		s.store.setActive(job.ID, cancel)
-		if err = runCtx.Err(); err == nil {
+		current, getErr := s.store.Get(runCtx, job.ID)
+		if getErr != nil {
+			err = getErr
+		} else if current.Status == StatusCancelling {
+			cancel()
+			err = context.Canceled
+		} else if err = runCtx.Err(); err == nil {
 			err = s.runner(runCtx, job, func(phase string, progress int) error {
 				_, err := s.store.updateProgress(runCtx, job.ID, phase, progress)
 				if err == nil {

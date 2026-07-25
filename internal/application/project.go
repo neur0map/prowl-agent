@@ -47,18 +47,6 @@ func DefaultStartupLimits() StartupLimits {
 	return StartupLimits{Timeout: 250 * time.Millisecond, CandidatePaths: 2000}
 }
 
-var ErrStartupRefreshRequired = errors.New("startup_refresh_required")
-
-// StartupRefreshRequiredError reports that bounded startup cannot safely serve
-// the current generation without a later refresh job.
-type StartupRefreshRequiredError struct{ Cause error }
-
-func (err *StartupRefreshRequiredError) Error() string { return ErrStartupRefreshRequired.Error() }
-func (err *StartupRefreshRequiredError) Unwrap() error { return err.Cause }
-func (err *StartupRefreshRequiredError) Is(target error) bool {
-	return target == ErrStartupRefreshRequired
-}
-
 // RefreshResult describes one deterministic refresh. EmbeddingError is a
 // best-effort AI warning; structural indexing failures are returned as errors.
 type RefreshResult struct {
@@ -119,7 +107,8 @@ func OpenProject(ctx context.Context, start string, opts Options) (*Project, err
 }
 
 // OpenWorkbenchProject assembles services and performs one bounded freshness
-// probe. It never refreshes synchronously or returns a stale project.
+// probe. A stale or inconclusive probe returns a usable project marked for a
+// later refresh job; it never refreshes synchronously.
 func OpenWorkbenchProject(parent context.Context, start string, opts Options, limits StartupLimits) (*Project, error) {
 	if limits.Timeout <= 0 || limits.Timeout > 10*time.Second || limits.CandidatePaths <= 0 || limits.CandidatePaths > 1_000_000 {
 		return nil, errors.New("invalid workbench startup limits")
@@ -252,9 +241,20 @@ func (p *Project) refreshWithProgress(ctx context.Context, report index.Progress
 		return RefreshResult{}, errors.New("project refresh lock was not acquired")
 	}
 
+	reporter := report
+	if report != nil {
+		lastProgress := -1
+		reporter = func(snapshot index.Progress) error {
+			if snapshot.Percent < lastProgress {
+				return nil
+			}
+			lastProgress = snapshot.Percent
+			return report(snapshot)
+		}
+	}
 	var result RefreshResult
 	for attempt := 0; attempt < 2; attempt++ {
-		result, err = p.refresh(ctx, report)
+		result, err = p.refresh(ctx, reporter)
 		if !errors.Is(err, errSourcesChanged) {
 			break
 		}

@@ -111,7 +111,7 @@ func TestStartupFreshnessOpensCurrentProjectWithInRootSourceSymlink(t *testing.T
 	defer project.Close()
 }
 
-func TestStartupFreshnessRequiresRefreshWithoutPublishingOrReturningProject(t *testing.T) {
+func TestStartupFreshnessReturnsPendingProjectWithoutPublishing(t *testing.T) {
 	root := newProjectFixture(t, config.Default())
 	seed, err := OpenProject(context.Background(), root, Options{})
 	if err != nil {
@@ -123,28 +123,36 @@ func TestStartupFreshnessRequiresRefreshWithoutPublishingOrReturningProject(t *t
 	writeSource(t, root, "package sample\n\nfunc StaleAtStartup() {}\n")
 
 	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
-	if project != nil || !errors.Is(err, ErrStartupRefreshRequired) {
-		t.Fatalf("project=%+v error=%v want startup refresh required", project, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer project.Close()
+	if !project.StartupRefreshPending() {
+		t.Fatal("stale project is not marked pending")
 	}
 }
 
-func TestStartupFreshnessCandidateAndDeadlineBoundsReturnTypedError(t *testing.T) {
+func TestStartupFreshnessCandidateAndDeadlineBoundsReturnPendingProject(t *testing.T) {
 	t.Run("candidate cap", func(t *testing.T) {
 		root := newProjectFixture(t, config.Default())
 		if err := os.WriteFile(filepath.Join(root, "second.go"), []byte("package sample\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 1})
-		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) {
-			t.Fatalf("project=%+v error=%v want startup refresh required", project, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer project.Close()
+		if !project.StartupRefreshPending() {
+			t.Fatal("candidate-limited project is not marked pending")
 		}
 	})
 
-	t.Run("single deadline", func(t *testing.T) {
+	t.Run("assembly deadline", func(t *testing.T) {
 		root := newProjectFixture(t, config.Default())
 		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Nanosecond, CandidatePaths: 2000})
-		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) || !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("project=%+v error=%v want typed deadline", project, err)
+		if project != nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("project=%+v error=%v want assembly deadline", project, err)
 		}
 	})
 
@@ -165,8 +173,12 @@ func TestStartupFreshnessCandidateAndDeadlineBoundsReturnTypedError(t *testing.T
 		defer lock.Unlock()
 		started := time.Now()
 		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: 30 * time.Millisecond, CandidatePaths: 2000})
-		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) || !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("project=%+v error=%v want typed lock deadline", project, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer project.Close()
+		if !project.StartupRefreshPending() {
+			t.Fatal("lock-delayed project is not marked pending")
 		}
 		if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 			t.Fatalf("bounded startup took %v", elapsed)
@@ -197,8 +209,8 @@ func TestStartupFreshnessCandidateAndDeadlineBoundsReturnTypedError(t *testing.T
 		defer locker.Exec(`ROLLBACK`)
 		started := time.Now()
 		project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: 40 * time.Millisecond, CandidatePaths: 2000})
-		if project != nil || !errors.Is(err, ErrStartupRefreshRequired) || !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("project=%+v error=%v want typed store deadline", project, err)
+		if project != nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("project=%+v error=%v want store deadline", project, err)
 		}
 		if elapsed := time.Since(started); elapsed > 300*time.Millisecond {
 			t.Fatalf("bounded store startup took %v", elapsed)
@@ -228,14 +240,14 @@ func TestStartupFreshnessFIFOConfigReturnsWithinDefaultDeadline(t *testing.T) {
 	}
 }
 
-func TestStartupFreshnessMalformedConfigIsNotRefreshRequired(t *testing.T) {
+func TestStartupFreshnessMalformedConfigRemainsDistinct(t *testing.T) {
 	root := newProjectFixture(t, config.Default())
 	configPath := filepath.Join(root, workspace.Dir, "config.toml")
 	if err := os.WriteFile(configPath, []byte("languages = [\"go\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	project, err := OpenWorkbenchProject(context.Background(), root, Options{}, StartupLimits{Timeout: time.Second, CandidatePaths: 2000})
-	if project != nil || err == nil || errors.Is(err, ErrStartupRefreshRequired) || !strings.Contains(err.Error(), "load project config") {
+	if project != nil || err == nil || !strings.Contains(err.Error(), "load project config") {
 		t.Fatalf("project=%+v error=%v want malformed config", project, err)
 	}
 }
@@ -552,8 +564,18 @@ func TestProjectRefreshRetriesChangedSourcesThenPublishes(t *testing.T) {
 			writeSource(t, root, "package sample\n\nfunc AfterRetry() {}\n")
 		}
 	}
-	if _, err := project.Refresh(context.Background()); err != nil {
+	last := -1
+	if _, err := project.RefreshWithProgress(context.Background(), func(snapshot index.Progress) error {
+		if snapshot.Percent < last {
+			return errors.New("decreasing durable progress")
+		}
+		last = snapshot.Percent
+		return nil
+	}); err != nil {
 		t.Fatal(err)
+	}
+	if last != 100 {
+		t.Fatalf("final progress=%d, want 100", last)
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("index attempts = %d, want 2", calls.Load())

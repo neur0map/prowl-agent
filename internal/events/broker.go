@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	DefaultQueueCapacity = 64
-	MinimumSweepInterval = 2 * time.Second
+	DefaultQueueCapacity    = 64
+	DefaultPublishBatchSize = 64
+	MinimumSweepInterval    = 2 * time.Second
 )
 
 var (
@@ -25,8 +26,9 @@ var (
 )
 
 type BrokerOptions struct {
-	QueueCapacity int
-	SweepInterval time.Duration
+	QueueCapacity    int
+	PublishBatchSize int
+	SweepInterval    time.Duration
 }
 
 type Delivery struct {
@@ -69,6 +71,12 @@ func NewBroker(outbox Outbox, options BrokerOptions) (*Broker, error) {
 	if options.QueueCapacity < 1 {
 		return nil, fmt.Errorf("%w: queue capacity must be positive", ErrInvalidBrokerOption)
 	}
+	if options.PublishBatchSize == 0 {
+		options.PublishBatchSize = DefaultPublishBatchSize
+	}
+	if options.PublishBatchSize < 1 {
+		return nil, fmt.Errorf("%w: publish batch size must be positive", ErrInvalidBrokerOption)
+	}
 	if options.SweepInterval == 0 {
 		options.SweepInterval = MinimumSweepInterval
 	}
@@ -99,7 +107,7 @@ func (broker *Broker) Subscribe(ctx context.Context, after Cursor) (*Subscriptio
 		return nil, ErrBrokerClosed
 	}
 
-	replay, err := broker.outbox.Replay(ctx, after)
+	replay, err := broker.outbox.Replay(ctx, after, broker.options.QueueCapacity)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +122,7 @@ func (broker *Broker) Subscribe(ctx context.Context, after Cursor) (*Subscriptio
 		subscription.queue = []Delivery{{Reset: cloneReset(replay.Reset)}}
 	} else {
 		subscription.last = after
-		if len(replay.Events) > subscription.capacity {
+		if replay.More || len(replay.Events) > subscription.capacity {
 			state, err := broker.outbox.State(ctx)
 			if err != nil {
 				return nil, err
@@ -205,29 +213,25 @@ func (broker *Broker) Close() error {
 	if broker == nil {
 		return ErrNilBroker
 	}
-	broker.publishMu.Lock()
+
 	broker.mu.Lock()
 	if broker.closed {
 		broker.mu.Unlock()
-		broker.publishMu.Unlock()
 		return nil
 	}
 	broker.closed = true
-	subscriptions := make([]*Subscription, 0, len(broker.subs))
 	for subscription := range broker.subs {
-		subscriptions = append(subscriptions, subscription)
+		subscription.closeWithoutUnsubscribe()
 	}
 	broker.subs = make(map[*Subscription]struct{})
 	cancel, done := broker.stopSweepLocked()
 	broker.mu.Unlock()
-	broker.publishMu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
-	for _, subscription := range subscriptions {
-		subscription.closeWithoutUnsubscribe()
-	}
+	broker.publishMu.Lock()
+	broker.publishMu.Unlock()
 	if done != nil {
 		<-done
 	}
@@ -239,32 +243,43 @@ func (broker *Broker) publishLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	replay, err := broker.outbox.Replay(ctx, watermark)
-	if err != nil {
-		return err
-	}
-	if replay.Reset != nil {
-		broker.broadcastReset(replay.Reset)
-		return broker.outbox.SetPublisherWatermark(ctx, replay.Reset.Cursor)
-	}
+	for {
+		replay, err := broker.outbox.Replay(ctx, watermark, broker.options.PublishBatchSize)
+		if err != nil {
+			return err
+		}
+		if replay.Reset != nil {
+			if replay.More {
+				return fmt.Errorf("%w: reset replay cannot have more events", ErrInvalidReplay)
+			}
+			broker.broadcastReset(replay.Reset)
+			return broker.outbox.SetPublisherWatermark(ctx, replay.Reset.Cursor)
+		}
 
-	last := watermark
-	for _, event := range replay.Events {
-		if err := validateReplayEvent(last, event); err != nil {
-			return err
+		last := watermark
+		for _, event := range replay.Events {
+			if err := validateReplayEvent(last, event); err != nil {
+				return err
+			}
+			if failure := broker.takePublishFailure(); failure != nil {
+				return failure
+			}
+			if err := broker.broadcastEvent(ctx, event); err != nil {
+				return err
+			}
+			if err := broker.outbox.SetPublisherWatermark(ctx, event.Cursor); err != nil {
+				return err
+			}
+			last = event.Cursor
 		}
-		if failure := broker.takePublishFailure(); failure != nil {
-			return failure
+		if !replay.More {
+			return nil
 		}
-		if err := broker.broadcastEvent(ctx, event); err != nil {
-			return err
+		if len(replay.Events) == 0 {
+			return fmt.Errorf("%w: truncated replay has no events", ErrInvalidReplay)
 		}
-		if err := broker.outbox.SetPublisherWatermark(ctx, event.Cursor); err != nil {
-			return err
-		}
-		last = event.Cursor
+		watermark = last
 	}
-	return nil
 }
 
 func (broker *Broker) broadcastEvent(ctx context.Context, event Event) error {
@@ -356,7 +371,7 @@ func (broker *Broker) sweepLoop(ctx context.Context, done chan struct{}) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = broker.Sweep(context.Background())
+			_ = broker.Sweep(ctx)
 		}
 	}
 }

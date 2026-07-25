@@ -31,7 +31,7 @@ func TestAdapterConformanceCommitRollbackOrderingPayloadAndWatermark(t *testing.
 		t.Fatalf("Rollback() error = %v", err)
 	}
 
-	replay, err := outbox.Replay(ctx, initial.Head)
+	replay, err := outbox.Replay(ctx, initial.Head, 8)
 	if err != nil {
 		t.Fatalf("Replay() after rollback error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestAdapterConformanceCommitRollbackOrderingPayloadAndWatermark(t *testing.
 	}
 	committed[0].Payload[0] = 'Y'
 
-	replay, err = outbox.Replay(ctx, initial.Head)
+	replay, err = outbox.Replay(ctx, initial.Head, 8)
 	if err != nil {
 		t.Fatalf("Replay() after commit error = %v", err)
 	}
@@ -163,7 +163,7 @@ func TestRetentionResetForStaleAndWrongStreamCursors(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			replay, err := outbox.Replay(ctx, after)
+			replay, err := outbox.Replay(ctx, after, 8)
 			if err != nil {
 				t.Fatalf("Replay() error = %v", err)
 			}
@@ -177,5 +177,47 @@ func TestRetentionResetForStaleAndWrongStreamCursors(t *testing.T) {
 				t.Fatalf("reset snapshot URI = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestAdapterConformanceBoundsLargeReplay(t *testing.T) {
+	ctx := context.Background()
+	outbox, err := NewMemoryOutbox(MemoryOutboxConfig{ScopeID: "workspace-a", Epoch: 1})
+	if err != nil {
+		t.Fatalf("NewMemoryOutbox() error = %v", err)
+	}
+	initial, err := outbox.State(ctx)
+	if err != nil {
+		t.Fatalf("State() error = %v", err)
+	}
+	transaction, err := outbox.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	payload := make([]byte, 128*1024)
+	for index := range payload {
+		payload[index] = byte(index)
+	}
+	for index := 0; index < 3; index++ {
+		if err := transaction.Append("job.updated", payload); err != nil {
+			t.Fatalf("Append(%d) error = %v", index, err)
+		}
+	}
+	if _, err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	replay, err := outbox.Replay(ctx, initial.Head, 1)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if got, want := len(replay.Events), 1; got != want {
+		t.Fatalf("bounded replay event count = %d, want %d", got, want)
+	}
+	if !replay.More {
+		t.Fatal("bounded replay More = false, want true")
+	}
+	if got, want := len(replay.Events[0].Payload), len(payload); got != want {
+		t.Fatalf("bounded replay payload bytes = %d, want %d", got, want)
 	}
 }

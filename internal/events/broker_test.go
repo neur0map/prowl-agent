@@ -234,6 +234,192 @@ func TestSlowSubscriberQueueOverflowResetsAndUnrelatedStreamsDoNotLeak(t *testin
 	assertNoDelivery(t, subscription)
 }
 
+func TestSlowSubscriberLargeReplayResetsWithoutUnboundedDelivery(t *testing.T) {
+	ctx := context.Background()
+	outbox, err := NewMemoryOutbox(MemoryOutboxConfig{ScopeID: "workspace-a", Epoch: 1, SnapshotURI: "snapshot://workspace-a/1"})
+	if err != nil {
+		t.Fatalf("NewMemoryOutbox() error = %v", err)
+	}
+	initial, err := outbox.State(ctx)
+	if err != nil {
+		t.Fatalf("State() error = %v", err)
+	}
+	transaction, err := outbox.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	payload := make([]byte, 128*1024)
+	for index := range payload {
+		payload[index] = byte(index)
+	}
+	for range 3 {
+		if err := transaction.Append("job.updated", payload); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+	committed, err := transaction.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	broker, err := NewBroker(outbox, BrokerOptions{QueueCapacity: 1, SweepInterval: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewBroker() error = %v", err)
+	}
+	defer func() {
+		if err := broker.Close(); err != nil {
+			t.Errorf("Broker.Close() error = %v", err)
+		}
+	}()
+	subscription, err := broker.Subscribe(ctx, initial.Head)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+	defer func() {
+		if err := subscription.Close(); err != nil {
+			t.Errorf("Subscription.Close() error = %v", err)
+		}
+	}()
+
+	delivery, err := nextDelivery(t, subscription)
+	if err != nil {
+		t.Fatalf("Next() error = %v", err)
+	}
+	if delivery.Reset == nil || delivery.Event != nil {
+		t.Fatalf("large replay delivery = %#v, want reset", delivery)
+	}
+	if got, want := delivery.Reset.Cursor, committed[len(committed)-1].Cursor; got != want {
+		t.Fatalf("large replay reset cursor = %#v, want %#v", got, want)
+	}
+	assertNoDelivery(t, subscription)
+}
+
+func TestSlowSubscriberCloseCancelsBlockingSweep(t *testing.T) {
+	ctx := context.Background()
+	base, err := NewMemoryOutbox(MemoryOutboxConfig{ScopeID: "workspace-a", Epoch: 1})
+	if err != nil {
+		t.Fatalf("NewMemoryOutbox() error = %v", err)
+	}
+	outbox := &blockingOutbox{
+		Outbox:  base,
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	broker, err := NewBroker(outbox, BrokerOptions{SweepInterval: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewBroker() error = %v", err)
+	}
+	state, err := base.State(ctx)
+	if err != nil {
+		t.Fatalf("State() error = %v", err)
+	}
+	if _, err := broker.Subscribe(ctx, state.Head); err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	select {
+	case <-outbox.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("periodic Sweep() did not reach blocking outbox I/O")
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- broker.Close()
+	}()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Broker.Close() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		close(outbox.release)
+		if err := <-closed; err != nil {
+			t.Fatalf("Broker.Close() after release error = %v", err)
+		}
+		t.Fatal("Broker.Close() did not cancel blocking periodic sweep")
+	}
+}
+
+func TestAdapterConformancePublishesBoundedBatches(t *testing.T) {
+	ctx := context.Background()
+	outbox, err := NewMemoryOutbox(MemoryOutboxConfig{ScopeID: "workspace-a", Epoch: 1})
+	if err != nil {
+		t.Fatalf("NewMemoryOutbox() error = %v", err)
+	}
+	broker, err := NewBroker(outbox, BrokerOptions{QueueCapacity: 4, PublishBatchSize: 1, SweepInterval: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewBroker() error = %v", err)
+	}
+	defer func() {
+		if err := broker.Close(); err != nil {
+			t.Errorf("Broker.Close() error = %v", err)
+		}
+	}()
+	state, err := outbox.State(ctx)
+	if err != nil {
+		t.Fatalf("State() error = %v", err)
+	}
+	subscription, err := broker.Subscribe(ctx, state.Head)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+	transaction, err := outbox.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	for range 3 {
+		if err := transaction.Append("job.updated", []byte("batch")); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+	committed, err := transaction.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if err := broker.PublishCommitted(ctx); err != nil {
+		t.Fatalf("PublishCommitted() error = %v", err)
+	}
+	for index := range committed {
+		delivery, err := nextDelivery(t, subscription)
+		if err != nil {
+			t.Fatalf("Next(%d) error = %v", index, err)
+		}
+		if delivery.Event == nil || delivery.Reset != nil {
+			t.Fatalf("delivery(%d) = %#v, want event", index, delivery)
+		}
+		if got, want := delivery.Event.Cursor, committed[index].Cursor; got != want {
+			t.Fatalf("delivery(%d) cursor = %#v, want %#v", index, got, want)
+		}
+	}
+	watermark, err := outbox.PublisherWatermark(ctx)
+	if err != nil {
+		t.Fatalf("PublisherWatermark() error = %v", err)
+	}
+	if got, want := watermark, committed[len(committed)-1].Cursor; got != want {
+		t.Fatalf("watermark = %#v, want %#v", got, want)
+	}
+}
+
+type blockingOutbox struct {
+	Outbox
+	started chan struct{}
+	release chan struct{}
+}
+
+func (outbox *blockingOutbox) PublisherWatermark(ctx context.Context) (Cursor, error) {
+	select {
+	case outbox.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return Cursor{}, ctx.Err()
+	case <-outbox.release:
+		return outbox.Outbox.PublisherWatermark(ctx)
+	}
+}
+
 func appendAndCommit(t *testing.T, outbox *MemoryOutbox, kind string, payload []byte) Event {
 	t.Helper()
 	transaction, err := outbox.Begin(context.Background())

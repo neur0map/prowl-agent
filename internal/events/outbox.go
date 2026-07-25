@@ -16,6 +16,7 @@ var (
 	ErrInvalidWatermark = errors.New("invalid publisher watermark")
 	ErrInvalidRetention = errors.New("invalid retention floor")
 	ErrTransactionDone  = errors.New("outbox transaction is already complete")
+	ErrInvalidReplayLimit = errors.New("invalid replay limit")
 )
 
 type Event struct {
@@ -48,11 +49,12 @@ type Reset struct {
 type ReplayResult struct {
 	Events []Event
 	Reset  *Reset
+	More   bool
 }
 
 type Outbox interface {
 	State(context.Context) (StreamState, error)
-	Replay(context.Context, Cursor) (ReplayResult, error)
+	Replay(context.Context, Cursor, int) (ReplayResult, error)
 	PublisherWatermark(context.Context) (Cursor, error)
 	SetPublisherWatermark(context.Context, Cursor) error
 }
@@ -104,12 +106,15 @@ func (outbox *MemoryOutbox) State(ctx context.Context) (StreamState, error) {
 	return state, nil
 }
 
-func (outbox *MemoryOutbox) Replay(ctx context.Context, after Cursor) (ReplayResult, error) {
+func (outbox *MemoryOutbox) Replay(ctx context.Context, after Cursor, limit int) (ReplayResult, error) {
 	if err := contextError(ctx); err != nil {
 		return ReplayResult{}, err
 	}
 	if outbox == nil {
 		return ReplayResult{}, ErrNilOutbox
+	}
+	if limit < 1 {
+		return ReplayResult{}, fmt.Errorf("%w: limit must be positive", ErrInvalidReplayLimit)
 	}
 	outbox.mu.RLock()
 	defer outbox.mu.RUnlock()
@@ -121,11 +126,19 @@ func (outbox *MemoryOutbox) Replay(ctx context.Context, after Cursor) (ReplayRes
 		}}, nil
 	}
 
-	events := make([]Event, 0, len(outbox.events))
+	capacity := limit
+	if len(outbox.events) < capacity {
+		capacity = len(outbox.events)
+	}
+	events := make([]Event, 0, capacity)
 	for _, event := range outbox.events {
-		if event.Cursor.Sequence > after.Sequence {
-			events = append(events, cloneEvent(event))
+		if event.Cursor.Sequence <= after.Sequence {
+			continue
 		}
+		if len(events) == limit {
+			return ReplayResult{Events: events, More: true}, nil
+		}
+		events = append(events, cloneEvent(event))
 	}
 	return ReplayResult{Events: events}, nil
 }

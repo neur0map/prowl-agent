@@ -39,6 +39,18 @@ describe('workbench shell', () => {
     expect(screen.getByRole('heading', { name: 'Secure workbench session unavailable' })).toBeTruthy()
     expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Secure workbench session unavailable. Reopen Prowl from your terminal.')
   })
+
+  it('keeps the persistent index status surface outside the session-security error state', () => {
+    const { rerender } = render(<App />)
+
+    expect(screen.getByLabelText('Index status')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Refresh index' })).toBeTruthy()
+
+    rerender(<App sessionError />)
+
+    expect(screen.queryByLabelText('Index status')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Secure workbench session unavailable' })).toBeTruthy()
+  })
   it('tracks hash navigation, marks the active primary route, and moves focus into main', async () => {
     window.history.replaceState({}, '', '/#/explore')
     render(<App />)

@@ -1,7 +1,7 @@
 import { authenticatedBearer } from './auth'
 
-class APIResponseError extends Error {
-  constructor() {
+export class APIResponseError extends Error {
+  constructor(readonly status: number, readonly code?: string) {
     super('workbench API response was unavailable')
   }
 }
@@ -14,10 +14,25 @@ function isEnvelope(value: unknown): value is { data: unknown; meta: Record<stri
     && value.meta !== null
 }
 
+function serverErrorCode(value: unknown): string | undefined {
+  if (
+    typeof value !== 'object'
+    || value === null
+    || !('error' in value)
+    || typeof value.error !== 'object'
+    || value.error === null
+    || !('code' in value.error)
+    || typeof value.error.code !== 'string'
+    || !/^[a-z][a-z0-9_]{0,127}$/.test(value.error.code)
+  ) return undefined
+  return value.error.code
+}
+
 export async function apiJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await apiFetch(path, init)
   const payload: unknown = await response.json().catch(() => null)
-  if (!response.ok || !isEnvelope(payload)) throw new APIResponseError()
+  if (!response.ok) throw new APIResponseError(response.status, serverErrorCode(payload))
+  if (!isEnvelope(payload)) throw new APIResponseError(response.status)
   return payload.data as T
 }
 

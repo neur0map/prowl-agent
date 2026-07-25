@@ -118,7 +118,23 @@ main section:not(.brief-state) [role="status"] { color: var(--secondary); }
 .tour-steps ul li span { color: var(--muted); font-size: 13px; }
 .route-reload { margin: 24px 0 0; }
 
+.job-status { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; margin: 0 0 24px; padding: 16px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface-raised); }
+.job-status-heading { display: grid; gap: 4px; min-width: 0; }
+.job-status-heading strong { color: var(--secondary); font-size: 15px; font-weight: 590; }
+.job-status-detail { display: grid; grid-column: 1; gap: 8px; min-width: 0; color: var(--muted); font-size: 13px; }
+.job-status-detail label { display: grid; gap: 5px; max-width: 440px; color: var(--secondary); }
+.job-status progress { width: 100%; height: 7px; accent-color: var(--accent); }
+.job-status-actions { display: flex; grid-column: 2; grid-row: 1 / span 2; align-items: center; justify-content: flex-end; gap: 8px; }
+.job-outcome, .job-status-message { margin: 0; }
+.job-outcome { grid-column: 1; color: var(--secondary); font-size: 13px; line-height: 1.55; }
+.job-status-message { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.job-status[data-state="failed"] { border-left-color: var(--accent-hover); }
+.job-status[data-state="succeeded"] { border-left-color: var(--secondary); }
+
 @media (max-width: 620px) {
   .local-route { padding: 20px; }
+  .job-status { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .job-status-detail, .job-outcome, .job-status-message, .job-status-actions { grid-column: 1; grid-row: auto; }
+  .job-status-actions { justify-content: flex-start; }
   main section:not(.brief-state) pre { padding: 14px; font-size: 11px; }
 }

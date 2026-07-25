@@ -6,6 +6,7 @@ import { ExplorePage } from '../features/explore/ExplorePage'
 import { ImpactPage } from '../features/impact/ImpactPage'
 import { KnowledgePage } from '../features/knowledge/KnowledgePage'
 import { SetupPage } from '../features/setup/SetupPage'
+import { JobStatus } from '../features/jobs/JobStatus'
 import { TimelinePage } from '../features/timeline/TimelinePage'
 import { apiJSON } from '../transport/api'
 import { sourceLink, type ContextLens, type GuidedTour } from '../transport/contracts'
@@ -315,7 +316,7 @@ export function App({ sessionError = false }: AppProps) {
             <h1>Secure workbench session unavailable</h1>
             <p role="alert">Secure workbench session unavailable. Reopen Prowl from your terminal.</p>
           </section>
-        ) : <div key={reloadKey}>{view}<p class="route-reload"><button type="button" onClick={() => setReloadKey((key) => key + 1)}>{reloadLabel}</button></p></div>}
+        ) : <><JobStatus onInvalidate={() => setReloadKey((key) => key + 1)} /><div key={reloadKey}>{view}<p class="route-reload"><button type="button" onClick={() => setReloadKey((key) => key + 1)}>{reloadLabel}</button></p></div></>}
       </main>
     </div>
   )

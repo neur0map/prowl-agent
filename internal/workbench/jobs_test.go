@@ -76,6 +76,13 @@ func TestJobRoutesRefreshGetCancelAndIdempotency(t *testing.T) {
 		t.Fatalf("get status=%d body=%q", response.Code, response.Body.String())
 	}
 
+	missingGet := authorizedAPIRequest("/api/v1/jobs/"+strings.Repeat("e", 32), "missing-get")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, missingGet)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"job_not_found"`) {
+		t.Fatalf("missing get status=%d body=%q", response.Code, response.Body.String())
+	}
+
 	cancelBody := []byte(`{"expected_version":1,"idempotency_key":"request-1"}`)
 	cancel := authorizedAPIRequest("/api/v1/jobs/"+refreshed.Data.ID+"/cancel", "cancel")
 	cancel.Method, cancel.Body = http.MethodPost, io.NopCloser(bytes.NewReader(cancelBody))
@@ -101,6 +108,30 @@ func TestJobRoutesRefreshGetCancelAndIdempotency(t *testing.T) {
 	handler.ServeHTTP(response, conflict)
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"idempotency_conflict"`) {
 		t.Fatalf("conflict status=%d body=%q", response.Code, response.Body.String())
+	}
+
+	missingID := strings.Repeat("f", 32)
+	missingBody := []byte(`{"expected_version":1,"idempotency_key":"missing-key"}`)
+	missing := authorizedAPIRequest("/api/v1/jobs/"+missingID+"/cancel", "missing")
+	missing.Method, missing.Body = http.MethodPost, io.NopCloser(bytes.NewReader(missingBody))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, missing)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"job_not_found"`) {
+		t.Fatalf("missing status=%d body=%q", response.Code, response.Body.String())
+	}
+	missing = authorizedAPIRequest("/api/v1/jobs/"+missingID+"/cancel", "missing-replay")
+	missing.Method, missing.Body = http.MethodPost, io.NopCloser(bytes.NewReader(missingBody))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, missing)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"job_not_found"`) {
+		t.Fatalf("missing replay status=%d body=%q", response.Code, response.Body.String())
+	}
+	missing = authorizedAPIRequest("/api/v1/jobs/"+refreshed.Data.ID+"/cancel", "missing-conflict")
+	missing.Method, missing.Body = http.MethodPost, io.NopCloser(strings.NewReader(`{"expected_version":1,"idempotency_key":"missing-key"}`))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, missing)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"idempotency_conflict"`) {
+		t.Fatalf("missing conflict status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 

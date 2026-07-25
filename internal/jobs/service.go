@@ -85,6 +85,14 @@ func (s *Service) StreamState(ctx context.Context) (StreamState, error) {
 	}
 	return s.store.State(ctx)
 }
+
+// Snapshot returns a job and the stream head from one durable read snapshot.
+func (s *Service) Snapshot(ctx context.Context, id string) (Job, StreamState, error) {
+	if s == nil || s.store == nil {
+		return Job{}, StreamState{}, ErrClosed
+	}
+	return s.store.Snapshot(ctx, id)
+}
 func (s *Service) Cancel(ctx context.Context, id string, version uint64) (Job, error) {
 	job, err := s.store.Cancel(ctx, id, version)
 	if err == nil {

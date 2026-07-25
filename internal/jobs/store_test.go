@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,5 +223,77 @@ func TestConcurrentEnqueueReturnsOneDurableJobAcrossStores(t *testing.T) {
 	}
 	if state.Head != 1 {
 		t.Fatalf("outbox head=%d, want 1", state.Head)
+	}
+}
+
+func TestGetMissingJobMapsUnknown(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	store, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Get(context.Background(), strings.Repeat("a", 32)); !errors.Is(err, ErrUnknownJob) {
+		t.Fatalf("error=%v want ErrUnknownJob", err)
+	}
+}
+
+func TestSnapshotReadsJobAndOutboxHeadAtomically(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	store, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	job, _, err := store.EnqueueOrResumeIndex(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, state, err := store.Snapshot(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ID != job.ID || state.Head != 1 || state.ScopeID == "" || state.Epoch == 0 || state.SnapshotURI != "snapshot://"+state.ScopeID {
+		t.Fatalf("snapshot=%+v state=%+v", snapshot, state)
+	}
+}
+
+func TestSnapshotDoesNotPairJobWithInterveningHead(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	store, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	job, _, err := store.EnqueueOrResumeIndex(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		job   Job
+		state StreamState
+		err   error
+	}
+	start := make(chan struct{})
+	snapshots := make(chan result, 8)
+	for range 8 {
+		go func() {
+			<-start
+			got, state, err := store.Snapshot(context.Background(), job.ID)
+			snapshots <- result{job: got, state: state, err: err}
+		}()
+	}
+	close(start)
+	if _, err := store.Cancel(context.Background(), job.ID, job.Version); err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		got := <-snapshots
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.job.Version != got.state.Head {
+			t.Fatalf("torn snapshot job=%+v state=%+v", got.job, got.state)
+		}
 	}
 }

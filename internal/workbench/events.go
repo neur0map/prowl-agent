@@ -119,11 +119,15 @@ func writeSSEDelivery(response http.ResponseWriter, delivery events.Delivery) er
 			Kind   string        `json:"kind"`
 		}{Cursor: delivery.Event.Cursor, Kind: "project-job.changed"}
 	case delivery.Reset != nil && delivery.Event == nil:
+		snapshotURI, err := safeSnapshotURI(delivery.Reset.SnapshotURI)
+		if err != nil {
+			return err
+		}
 		name = "reset"
 		data = struct {
 			Cursor      events.Cursor `json:"cursor"`
 			SnapshotURI string        `json:"snapshot_uri"`
-		}{Cursor: delivery.Reset.Cursor, SnapshotURI: "/api/v1/jobs/snapshot"}
+		}{Cursor: delivery.Reset.Cursor, SnapshotURI: snapshotURI}
 	default:
 		return errors.New("invalid stream delivery")
 	}
@@ -135,4 +139,20 @@ func writeSSEDelivery(response http.ResponseWriter, delivery events.Delivery) er
 		return err
 	}
 	return nil
+}
+
+func safeSnapshotURI(value string) (string, error) {
+	if len(value) == 0 || len(value) > 256 {
+		return "", errors.New("invalid snapshot URI")
+	}
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme != "snapshot" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("invalid snapshot URI")
+	}
+	for _, character := range parsed.Host {
+		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-') {
+			return "", errors.New("invalid snapshot URI")
+		}
+	}
+	return value, nil
 }

@@ -89,6 +89,17 @@ func (recorder *sseRecorder) Write(body []byte) (int, error) {
 }
 
 func (recorder *sseRecorder) Flush() {}
+
+func TestSSEResetPreservesSafeC1SnapshotURI(t *testing.T) {
+	response := httptest.NewRecorder()
+	delivery := events.Delivery{Reset: &events.Reset{Cursor: events.Cursor{StreamScope: events.ProjectJob, ScopeID: "scope", Epoch: 1, Sequence: 2}, SnapshotURI: "snapshot://retained"}}
+	if err := writeSSEDelivery(response, delivery); err != nil {
+		t.Fatal(err)
+	}
+	if body := response.Body.String(); !strings.Contains(body, `"snapshot_uri":"snapshot://retained"`) || strings.Contains(body, "/api/v1/jobs/snapshot") {
+		t.Fatalf("reset body=%q", body)
+	}
+}
 func itoa(value uint64) string {
 	if value == 0 {
 		return "0"

@@ -34,3 +34,20 @@ CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/workbench ./internal/ev
 CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./internal/workbench ./internal/cli -count=1
 # go test: 2 packages ok
 ```
+
+## Remediation RED -> GREEN
+
+1. `TestSSEResetPreservesSafeC1SnapshotURI` initially observed the invented `/api/v1/jobs/snapshot` value. Reset delivery now preserves the C1 URI only when it is a bounded opaque `snapshot://<safe-id>` value; unsafe paths, queries, credentials, and fragments fail closed. C2 fills an otherwise-empty initial snapshot URI with the stable opaque project scope URI, so normal scope/epoch mismatch recovery still emits a reset without a storage path.
+2. `TestAPISecurityRejectsMalformedCredentialQuery` initially reached health handling with `503` for `authorization=secret;...`. The boundary now calls `url.ParseQuery` on `RawQuery`, rejects parsing errors before any query-key inspection or route/auth work, and never reflects the value.
+3. The job-route idempotency test now covers a missing-job `404` replay and key reuse against a different job. The cache records the validated request signature and either a bounded success DTO or a canonical error outcome while holding its mutex across mutation. Replays cannot perform a second mutation and mismatched reuse returns `409`.
+4. `TestServeWorkbenchHTTPCancelsActiveSSEOnShutdown` initially timed out because `http.Server.Shutdown` waited on a live stream context. `serveWorkbenchHTTP` now uses a cancelable `BaseContext`, cancels active requests before `Shutdown`, and the production SSE test passes.
+5. `TestGetMissingJobMapsUnknown` and job-route coverage verify valid unknown IDs map to `404 job_not_found`. `Store.Get` and the new read-only `Store.Snapshot` map `sql.ErrNoRows` to `ErrUnknownJob`.
+6. `TestSnapshotReadsJobAndOutboxHeadAtomically` and race-tested `TestSnapshotDoesNotPairJobWithInterveningHead` establish the C2 read transaction contract. Workbench GET, refresh, and cancel render DTOs from one job-and-head snapshot, rather than separately reading a job then stream state.
+
+## Remediation self-review
+
+- Reset URIs are bounded, opaque, no-query `snapshot` URIs with a safe identifier host. A raw filesystem path or credential-bearing URI is rejected before a partial SSE frame is written.
+- Query parsing happens before authorization credential-key detection and before dispatch, including malformed semicolon query forms.
+- Replay cache entries contain only validated request identity plus already-safe outcome fields; FIFO eviction remains bounded to 256.
+- Server shutdown first cancels `BaseContext`, which terminates SSE `Next` calls, then invokes `Shutdown`; ownership of C2 jobs/broker remains unchanged.
+- The C2 snapshot addition is read-only and uses no schema migration. Its SQLite transaction establishes one consistent job/head view.

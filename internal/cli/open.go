@@ -264,10 +264,13 @@ func startAndReap(command *exec.Cmd) (<-chan error, error) {
 }
 
 func serveWorkbenchHTTP(ctx context.Context, listener net.Listener, handler http.Handler) error {
+	requestContext, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
 	server := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return requestContext },
 	}
 	serveDone := make(chan struct{})
 	shutdownDone := make(chan struct{})
@@ -275,6 +278,7 @@ func serveWorkbenchHTTP(ctx context.Context, listener net.Listener, handler http
 		defer close(shutdownDone)
 		select {
 		case <-ctx.Done():
+			cancelRequests()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = server.Shutdown(shutdownCtx)

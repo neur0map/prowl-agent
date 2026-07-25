@@ -339,6 +339,47 @@ func TestServeWorkbenchHTTPStopsOnCancellation(t *testing.T) {
 	}
 }
 
+func TestServeWorkbenchHTTPCancelsActiveSSEOnShutdown(t *testing.T) {
+	listener, err := workbench.ListenLoopback(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		result <- serveWorkbenchHTTP(ctx, listener, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			response.Header().Set("Content-Type", "text/event-stream")
+			response.WriteHeader(http.StatusOK)
+			response.(http.Flusher).Flush()
+			close(started)
+			<-request.Context().Done()
+			close(stopped)
+		}))
+	}()
+	response, err := http.Get("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	<-started
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("active SSE context was not cancelled")
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("workbench server did not stop after SSE cancellation")
+	}
+}
+
 func TestStartAndReapWaitsForBrowserLauncher(t *testing.T) {
 	command := exec.Command(os.Args[0], "-test.run=^TestBrowserLauncherHelper$")
 	command.Env = append(os.Environ(), "PROWL_BROWSER_HELPER=1")

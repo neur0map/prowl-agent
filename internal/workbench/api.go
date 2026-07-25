@@ -445,7 +445,8 @@ func securityBoundary(next http.Handler, options APIOptions) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		setSecurityHeaders(response)
 		response.Header().Set("Cache-Control", "no-store")
-		if hasCredentialQuery(request.URL.Query()) {
+		query, err := url.ParseQuery(request.URL.RawQuery)
+		if err != nil || hasCredentialQuery(query) {
 			writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
 			return
 		}

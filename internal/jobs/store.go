@@ -188,7 +188,11 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	if err := s.checkOpen(); err != nil {
 		return Job{}, err
 	}
-	return scanJob(s.db.QueryRowContext(ctx, jobQuery+` WHERE id=?`, id))
+	job, err := scanJob(s.db.QueryRowContext(ctx, jobQuery+` WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, ErrUnknownJob
+	}
+	return job, err
 }
 
 func (s *Store) Cancel(ctx context.Context, id string, expectedVersion uint64) (Job, error) {
@@ -382,7 +386,45 @@ func (s *Store) State(ctx context.Context) (StreamState, error) {
 	var state StreamState
 	state.ScopeID = s.scopeID
 	err := s.db.QueryRowContext(ctx, `SELECT epoch, retention_floor, snapshot_uri, (SELECT COALESCE(MAX(sequence),0) FROM outbox) FROM authority WHERE id=1`).Scan(&state.Epoch, &state.RetentionFloor, &state.SnapshotURI, &state.Head)
+	if err == nil {
+		ensureSnapshotURI(&state)
+	}
 	return state, err
+}
+
+// Snapshot reads one job and its durable stream authority from one SQLite read
+// transaction, so an API response cannot pair an older job with a newer head.
+func (s *Store) Snapshot(ctx context.Context, id string) (Job, StreamState, error) {
+	if id == "" {
+		return Job{}, StreamState{}, ErrInvalidJob
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Job{}, StreamState{}, err
+	}
+	defer tx.Rollback()
+	job, err := scanJob(tx.QueryRowContext(ctx, jobQuery+` WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, StreamState{}, ErrUnknownJob
+	}
+	if err != nil {
+		return Job{}, StreamState{}, err
+	}
+	state := StreamState{ScopeID: s.scopeID}
+	if err := tx.QueryRowContext(ctx, `SELECT epoch, retention_floor, snapshot_uri, (SELECT COALESCE(MAX(sequence),0) FROM outbox) FROM authority WHERE id=1`).Scan(&state.Epoch, &state.RetentionFloor, &state.SnapshotURI, &state.Head); err != nil {
+		return Job{}, StreamState{}, err
+	}
+	ensureSnapshotURI(&state)
+	if err := tx.Commit(); err != nil {
+		return Job{}, StreamState{}, err
+	}
+	return job, state, nil
+}
+
+func ensureSnapshotURI(state *StreamState) {
+	if state != nil && state.SnapshotURI == "" && state.ScopeID != "" {
+		state.SnapshotURI = "snapshot://" + state.ScopeID
+	}
 }
 func (s *Store) Replay(ctx context.Context, after uint64, limit int) ([]OutboxRow, bool, error) {
 	if limit <= 0 {

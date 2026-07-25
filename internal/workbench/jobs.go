@@ -1,7 +1,6 @@
 package workbench
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -49,7 +48,14 @@ type jobReplayCache struct {
 type jobReplayEntry struct {
 	jobID   string
 	version uint64
-	job     jobResponse
+	outcome jobReplayOutcome
+}
+
+type jobReplayOutcome struct {
+	status  int
+	code    string
+	message string
+	job     *jobResponse
 }
 
 func serveJobRoute(response http.ResponseWriter, request *http.Request, service *Service) {
@@ -72,12 +78,12 @@ func serveJobRoute(response http.ResponseWriter, request *http.Request, service 
 		writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "service is unavailable", unavailableVersion)
 		return
 	}
-	job, err := live.jobs.Get(request.Context(), path)
+	job, state, err := live.jobs.Snapshot(request.Context(), path)
 	if err != nil {
 		writeJobError(response, request, err)
 		return
 	}
-	result, err := newJobResponse(request.Context(), live.jobs, job)
+	result, err := newJobResponse(job, state)
 	if err != nil {
 		writeError(response, request, http.StatusServiceUnavailable, "job_unavailable", "job is unavailable", unavailableVersion)
 		return
@@ -109,7 +115,12 @@ func serveRefresh(response http.ResponseWriter, request *http.Request, service *
 		writeJobError(response, request, err)
 		return
 	}
-	result, err := newJobResponse(request.Context(), live.jobs, job)
+	job, state, err := live.jobs.Snapshot(request.Context(), job.ID)
+	if err != nil {
+		writeJobError(response, request, err)
+		return
+	}
+	result, err := newJobResponse(job, state)
 	if err != nil {
 		writeError(response, request, http.StatusServiceUnavailable, "job_unavailable", "job is unavailable", unavailableVersion)
 		return
@@ -132,32 +143,46 @@ func serveJobCancel(response http.ResponseWriter, request *http.Request, service
 		writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
 		return
 	}
-	live, err := service.liveOperations()
-	if err != nil {
-		writeError(response, request, http.StatusServiceUnavailable, "service_unavailable", "service is unavailable", unavailableVersion)
-		return
-	}
 	service.replay.mu.Lock()
 	defer service.replay.mu.Unlock()
 	if prior, conflict := service.replay.lookupLocked(input.IdempotencyKey, id, input.ExpectedVersion); conflict {
 		writeError(response, request, http.StatusConflict, "idempotency_conflict", "request conflicts with prior request", unavailableVersion)
 		return
 	} else if prior != nil {
-		writeJobSuccess(response, request, http.StatusOK, *prior)
+		writeReplayOutcome(response, request, *prior)
+		return
+	}
+	live, err := service.liveOperations()
+	if err != nil {
+		outcome := jobUnavailableOutcome()
+		service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, outcome)
+		writeReplayOutcome(response, request, outcome)
 		return
 	}
 	job, err := live.jobs.Cancel(request.Context(), id, input.ExpectedVersion)
 	if err != nil {
-		writeJobError(response, request, err)
+		outcome := jobErrorOutcome(err)
+		service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, outcome)
+		writeReplayOutcome(response, request, outcome)
 		return
 	}
-	result, err := newJobResponse(request.Context(), live.jobs, job)
+	job, state, err := live.jobs.Snapshot(request.Context(), job.ID)
 	if err != nil {
-		writeError(response, request, http.StatusServiceUnavailable, "job_unavailable", "job is unavailable", unavailableVersion)
+		outcome := jobErrorOutcome(err)
+		service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, outcome)
+		writeReplayOutcome(response, request, outcome)
 		return
 	}
-	service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, result)
-	writeJobSuccess(response, request, http.StatusOK, result)
+	result, err := newJobResponse(job, state)
+	if err != nil {
+		outcome := jobUnavailableOutcome()
+		service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, outcome)
+		writeReplayOutcome(response, request, outcome)
+		return
+	}
+	outcome := jobReplayOutcome{status: http.StatusOK, job: &result}
+	service.replay.recordLocked(input.IdempotencyKey, id, input.ExpectedVersion, outcome)
+	writeReplayOutcome(response, request, outcome)
 }
 
 func decodeCancelRequest(response http.ResponseWriter, request *http.Request) (cancelRequest, error) {
@@ -176,7 +201,7 @@ func decodeCancelRequest(response http.ResponseWriter, request *http.Request) (c
 	return input, nil
 }
 
-func (cache *jobReplayCache) lookupLocked(key, id string, version uint64) (*jobResponse, bool) {
+func (cache *jobReplayCache) lookupLocked(key, id string, version uint64) (*jobReplayOutcome, bool) {
 	entry, found := cache.entries[key]
 	if !found {
 		return nil, false
@@ -184,11 +209,15 @@ func (cache *jobReplayCache) lookupLocked(key, id string, version uint64) (*jobR
 	if entry.jobID != id || entry.version != version {
 		return nil, true
 	}
-	copy := entry.job
+	copy := entry.outcome
+	if copy.job != nil {
+		job := *copy.job
+		copy.job = &job
+	}
 	return &copy, false
 }
 
-func (cache *jobReplayCache) recordLocked(key, id string, version uint64, job jobResponse) {
+func (cache *jobReplayCache) recordLocked(key, id string, version uint64, outcome jobReplayOutcome) {
 	if cache.entries == nil {
 		cache.entries = make(map[string]jobReplayEntry, maxReplayEntries)
 	}
@@ -199,15 +228,11 @@ func (cache *jobReplayCache) recordLocked(key, id string, version uint64, job jo
 		delete(cache.entries, cache.order[0])
 		cache.order = cache.order[1:]
 	}
-	cache.entries[key] = jobReplayEntry{jobID: id, version: version, job: job}
+	cache.entries[key] = jobReplayEntry{jobID: id, version: version, outcome: outcome}
 	cache.order = append(cache.order, key)
 }
 
-func newJobResponse(ctx context.Context, service *jobs.Service, job jobs.Job) (jobResponse, error) {
-	state, err := service.StreamState(ctx)
-	if err != nil {
-		return jobResponse{}, err
-	}
+func newJobResponse(job jobs.Job, state jobs.StreamState) (jobResponse, error) {
 	if !validJobID(job.ID) || !validJobKind(job.Kind) || !validJobStatus(job.Status) || job.Version == 0 || job.Progress < 0 || job.Progress > 100 || !safeJobText(job.Phase) || !safeJobText(job.Outcome) || !safeJobText(job.ErrorCode) {
 		return jobResponse{}, errors.New("invalid job")
 	}
@@ -262,19 +287,35 @@ func safeJobText(value string) bool {
 	return len(value) <= 128 && utf8.ValidString(value) && strings.IndexFunc(value, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-') }) < 0
 }
 
-func writeJobError(response http.ResponseWriter, request *http.Request, err error) {
+func jobErrorOutcome(err error) jobReplayOutcome {
 	switch {
 	case errors.Is(err, jobs.ErrUnknownJob):
-		writeError(response, request, http.StatusNotFound, "job_not_found", "job was not found", unavailableVersion)
+		return jobReplayOutcome{status: http.StatusNotFound, code: "job_not_found", message: "job was not found"}
 	case errors.Is(err, jobs.ErrStaleVersion):
-		writeError(response, request, http.StatusConflict, "job_version_conflict", "job version conflicts", unavailableVersion)
+		return jobReplayOutcome{status: http.StatusConflict, code: "job_version_conflict", message: "job version conflicts"}
 	case errors.Is(err, jobs.ErrInvalidTransition):
-		writeError(response, request, http.StatusConflict, "job_not_cancellable", "job cannot be cancelled", unavailableVersion)
+		return jobReplayOutcome{status: http.StatusConflict, code: "job_not_cancellable", message: "job cannot be cancelled"}
 	case errors.Is(err, jobs.ErrInvalidJob):
-		writeError(response, request, http.StatusBadRequest, "invalid_request", "request is invalid", unavailableVersion)
+		return jobReplayOutcome{status: http.StatusBadRequest, code: "invalid_request", message: "request is invalid"}
 	default:
-		writeError(response, request, http.StatusServiceUnavailable, "job_unavailable", "job is unavailable", unavailableVersion)
+		return jobUnavailableOutcome()
 	}
+}
+
+func jobUnavailableOutcome() jobReplayOutcome {
+	return jobReplayOutcome{status: http.StatusServiceUnavailable, code: "job_unavailable", message: "job is unavailable"}
+}
+
+func writeJobError(response http.ResponseWriter, request *http.Request, err error) {
+	writeReplayOutcome(response, request, jobErrorOutcome(err))
+}
+
+func writeReplayOutcome(response http.ResponseWriter, request *http.Request, outcome jobReplayOutcome) {
+	if outcome.job != nil {
+		writeJobSuccess(response, request, outcome.status, *outcome.job)
+		return
+	}
+	writeError(response, request, outcome.status, outcome.code, outcome.message, unavailableVersion)
 }
 
 func writeJobSuccess(response http.ResponseWriter, request *http.Request, status int, job jobResponse) {

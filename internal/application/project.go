@@ -94,6 +94,7 @@ type Project struct {
 	afterIndex            func()
 	jobService            *jobs.Service
 	startupRefreshPending bool
+	jobsMu                sync.Mutex
 }
 
 // OpenProject resolves a workspace, opens its derived store, loads strict
@@ -410,9 +411,12 @@ func (p *Project) Close() error {
 		return nil
 	}
 	p.closeOnce.Do(func() {
+		p.jobsMu.Lock()
 		p.closed.Store(true)
-		if p.jobService != nil {
-			p.closeErr = p.jobService.Close()
+		service := p.jobService
+		p.jobsMu.Unlock()
+		if service != nil {
+			p.closeErr = service.Close()
 		}
 		p.refreshGate <- struct{}{}
 		defer func() { <-p.refreshGate }()
@@ -443,11 +447,13 @@ func generationReadGuard(path string) store.ReadGuard {
 func (p *Project) StartupRefreshPending() bool { return p != nil && p.startupRefreshPending }
 
 func (p *Project) AttachJobsService(service *jobs.Service) error {
-	if p == nil || service == nil || p.closed.Load() {
+	if p == nil || service == nil {
 		return errors.New("invalid project jobs service")
 	}
-	if p.jobService != nil {
-		return errors.New("project jobs service already attached")
+	p.jobsMu.Lock()
+	defer p.jobsMu.Unlock()
+	if p.closed.Load() || p.jobService != nil {
+		return errors.New("invalid project jobs service")
 	}
 	p.jobService = service
 	return nil

@@ -477,6 +477,21 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 	if err := ctx.Err(); err != nil {
 		return o, err
 	}
+	if o.Docs == nil {
+		o.Docs = []string{}
+	}
+	if o.Entrypoints == nil {
+		o.Entrypoints = []string{}
+	}
+	if o.Clusters == nil {
+		o.Clusters = []ClusterSummary{}
+	}
+	if o.Palette == nil {
+		o.Palette = []store.ResourceRow{}
+	}
+	if o.Hotspots == nil {
+		o.Hotspots = []store.FanRow{}
+	}
 	return o, nil
 }
 

@@ -33,7 +33,18 @@ describe('BriefPage', () => {
   })
 
   it('explains when no source facts are indexed', async () => {
-    const empty = { ...populatedBrief, overview: { ...populatedBrief.overview, counts: { ...populatedBrief.overview.counts, files: 0 } } }
+    const empty: Brief = {
+      ...populatedBrief,
+      overview: {
+        ...populatedBrief.overview,
+        counts: { ...populatedBrief.overview.counts, files: 0, symbols: 0, edges: 0, resources: 0, langs: {} },
+        docs: [],
+        entrypoints: [],
+        clusters: [],
+        hotspots: [],
+      },
+      capabilities: [],
+    }
     render(<BriefPage load={() => Promise.resolve(empty)} />)
 
     expect(await screen.findByText('No indexed source facts yet.')).toBeTruthy()
@@ -41,6 +52,16 @@ describe('BriefPage', () => {
 
   it('reports an unavailable Brief without exposing transport details', async () => {
     render(<BriefPage load={() => Promise.reject(new Error('sensitive implementation detail'))} />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Project brief unavailable. Refresh to retry.')
+  })
+
+  it('reports an unavailable Brief when a loader returns a malformed collection', async () => {
+    const malformed = {
+      ...populatedBrief,
+      overview: { ...populatedBrief.overview, hotspots: null },
+    } as unknown as Brief
+    render(<BriefPage load={() => Promise.resolve(malformed)} />)
 
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Project brief unavailable. Refresh to retry.')
   })

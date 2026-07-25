@@ -45,7 +45,7 @@ export function BriefPage({ load = loadBrief }: { load?: BriefLoader }) {
     setState({ kind: 'loading' })
     void load().then(
       (brief) => {
-        if (current) setState({ kind: 'ready', brief })
+        if (current) setState(isBrief(brief) ? { kind: 'ready', brief } : { kind: 'error' })
       },
       () => {
         if (current) setState({ kind: 'error' })
@@ -192,7 +192,72 @@ function formatCount(value: number) {
 }
 
 function isBriefEnvelope(value: unknown): value is { data: Brief } {
-  if (typeof value !== 'object' || value === null || !('data' in value)) return false
-  const data = value.data
-  return typeof data === 'object' && data !== null && 'workspace' in data && 'overview' in data
+  return isRecord(value) && isBrief(value.data)
+}
+
+function isBrief(value: unknown): value is Brief {
+  if (!isRecord(value)) return false
+  return (
+    isRecord(value.workspace) &&
+    typeof value.workspace.name === 'string' &&
+    isOverview(value.overview) &&
+    isRecord(value.knowledge) &&
+    typeof value.knowledge.status === 'string' &&
+    typeof value.knowledge.documents === 'number' &&
+    isRecord(value.freshness) &&
+    typeof value.freshness.status === 'string' &&
+    (value.freshness.last_indexed === undefined || typeof value.freshness.last_indexed === 'string') &&
+    isArrayOf(value.capabilities, isCapability)
+  )
+}
+
+function isOverview(value: unknown): value is Brief['overview'] {
+  if (!isRecord(value) || !isRecord(value.counts)) return false
+  const { counts } = value
+  return (
+    typeof counts.files === 'number' &&
+    typeof counts.symbols === 'number' &&
+    typeof counts.edges === 'number' &&
+    typeof counts.resources === 'number' &&
+    isNumberRecord(counts.langs) &&
+    isStringArray(value.docs) &&
+    isStringArray(value.entrypoints) &&
+    isArrayOf(value.clusters, isCluster) &&
+    isArrayOf(value.hotspots, isHotspot)
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isNumberRecord(value: unknown): value is Record<string, number> {
+  return isRecord(value) && Object.values(value).every((item) => typeof item === 'number')
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return isArrayOf(value, (item): item is string => typeof item === 'string')
+}
+
+function isArrayOf<T>(value: unknown, isItem: (item: unknown) => item is T): value is T[] {
+  return Array.isArray(value) && value.every(isItem)
+}
+
+function isCluster(value: unknown): value is Brief['overview']['clusters'][number] {
+  return isRecord(value) && typeof value.label === 'string' && typeof value.lang === 'string' && typeof value.files === 'number'
+}
+
+function isHotspot(value: unknown): value is Brief['overview']['hotspots'][number] {
+  return isRecord(value) && typeof value.file === 'string' && typeof value.in === 'number'
+}
+
+function isCapability(value: unknown): value is Brief['capabilities'][number] {
+  return (
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    typeof value.title === 'string' &&
+    typeof value.description === 'string' &&
+    typeof value.privacy === 'string' &&
+    typeof value.version === 'string'
+  )
 }

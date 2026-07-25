@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -46,6 +47,32 @@ func indexed(t *testing.T) *Querier {
 		t.Fatal(err)
 	}
 	return New(s)
+}
+
+func TestOverviewContextMarshalsEmptyCollectionsAsArrays(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	overview, err := New(s).OverviewContext(context.Background(), DefaultOverviewLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(overview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"docs", "entrypoints", "clusters", "palette", "hotspots"} {
+		if got := string(payload[field]); got != "[]" {
+			t.Errorf("%s = %s, want []", field, got)
+		}
+	}
 }
 
 func TestOverviewContextEnforcesSQLRowBounds(t *testing.T) {

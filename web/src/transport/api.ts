@@ -1,5 +1,26 @@
 import { authenticatedBearer } from './auth'
 
+class APIResponseError extends Error {
+  constructor() {
+    super('workbench API response was unavailable')
+  }
+}
+
+function isEnvelope(value: unknown): value is { data: unknown; meta: Record<string, unknown> } {
+  return typeof value === 'object' && value !== null
+    && 'data' in value
+    && 'meta' in value
+    && typeof value.meta === 'object'
+    && value.meta !== null
+}
+
+export async function apiJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await apiFetch(path, init)
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok || !isEnvelope(payload)) throw new APIResponseError()
+  return payload.data as T
+}
+
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const target = new URL(path, window.location.origin)
   if (

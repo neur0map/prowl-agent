@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
 vi.mock('../../transport/api', () => ({ apiFetch }))
 
-import { KnowledgePage, type KnowledgeClient } from './KnowledgePage'
+import { KnowledgePage, loadKnowledgeDetail, loadKnowledgePage, type KnowledgeClient } from './KnowledgePage'
 
 const page = {
   items: [{
@@ -158,6 +158,16 @@ describe('KnowledgePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Accept proposal' }))
     expect((screen.getByRole('button', { name: 'Accept proposal' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: 'Reject proposal' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('normalizes nullable sequences in default page and detail loader results', async () => {
+    apiFetch.mockImplementation((path: string) => Promise.resolve(new Response(JSON.stringify({ data: path.includes('doc-1') ? { ...detail, tags: null, related: null } : { items: [{ ...page.items[0], tags: null, related: null }] }, meta: {} }), { status: 200 })))
+    const loadedPage = await loadKnowledgePage()
+    const loadedDetail = await loadKnowledgeDetail('doc-1')
+    expect(loadedPage.items[0].tags).toEqual([])
+    expect(loadedPage.items[0].related).toEqual([])
+    expect(loadedDetail.tags).toEqual([])
+    expect(loadedDetail.related).toEqual([])
   })
 })
 

@@ -33,17 +33,21 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   return payload.data
 }
 
+export async function loadKnowledgePage(cursor = ''): Promise<KnowledgePageData> {
+  const value = await request(`/api/v1/knowledge${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`)
+  if (!isKnowledgePage(value)) throw new ClientError()
+  return { items: value.items.map(normalizeSummary), next: value.next ?? '' }
+}
+
+export async function loadKnowledgeDetail(id: string): Promise<KnowledgeDetail> {
+  const value = await request(`/api/v1/knowledge/${encodeURIComponent(id)}`)
+  if (!isKnowledgeDetail(value)) throw new ClientError()
+  return { ...normalizeSummary(value), body: value.body, backlinks: value.backlinks }
+}
+
 const defaultClient: KnowledgeClient = {
-  async loadPage(cursor = '') {
-    const value = await request(`/api/v1/knowledge${cursor === '' ? '' : `?cursor=${encodeURIComponent(cursor)}`}`)
-    if (!isKnowledgePage(value)) throw new ClientError()
-    return { items: value.items.map(normalizeSummary), next: value.next ?? '' }
-  },
-  async loadDetail(id) {
-    const value = await request(`/api/v1/knowledge/${encodeURIComponent(id)}`)
-    if (!isKnowledgeDetail(value)) throw new ClientError()
-    return { ...value, tags: value.tags ?? [], related: value.related ?? [] }
-  },
+  loadPage: loadKnowledgePage,
+  loadDetail: loadKnowledgeDetail,
   async loadProposal(id) {
     const value = await request(`/api/v1/knowledge/proposals/${encodeURIComponent(id)}`)
     if (!isKnowledgeProposal(value)) throw new ClientError()

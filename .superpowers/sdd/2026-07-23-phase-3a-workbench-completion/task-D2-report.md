@@ -228,7 +228,7 @@ go test: 1 package ok
 cd web && npm run typecheck
 passed, no diagnostics
 
-git diff --check -- <seven D2-owned changed paths>
+git diff --check -- web/e2e/workbench.spec.ts internal/workbench/explore.go internal/workbench/explore_test.go internal/workbench/impact.go internal/workbench/impact_test.go docs/verification/phase-3a-requirements.md .superpowers/sdd/2026-07-23-phase-3a-workbench-completion/task-D2-report.md
 no output, exit 0
 ```
 
@@ -297,3 +297,89 @@ concerns:
 
 Until all three are complete, D2 remains an automated/evidence checkpoint and
 Phase 3A must not be marked accepted.
+
+## Review fix round 1
+
+The task review produced eight open findings. All eight were addressed on top of
+`f6ecf39`.
+
+### Tour bounds, cancellation, and distinct evidence
+
+The recovered partial fix introduced `Store.FirstChunksContext(ctx, limit)`.
+Its SQL joins `files` to the first `chunks` row before applying the deterministic
+file-path limit, so chunkless files cannot consume the bound. The query uses
+`QueryContext`; request cancellation reaches a blocked SQLite read. Tour facts
+use distinct file/line anchors from those chunks and additional distinct lines
+only when needed. Fewer than five distinct anchors returns no tour and
+`ErrTourNotFound`; no source step is copied or relabeled as padding.
+
+The original worker became unavailable after writing the tests and partial
+implementation, so no direct RED console transcript survived. The recovered
+tests explicitly cover twelve alphabetically earlier chunkless files,
+pre-cancelled context, duplicate-anchor rejection, and insufficient evidence.
+The controller observed:
+
+```text
+go test -race -tags sqlite_fts5 ./internal/store ./internal/workbench \
+  -run 'Test(FirstChunksContext|ExploreFiltersChunkless|ExploreDoesNotPad|ExploreProjectsDeterministic|Impact)' \
+  -count=1
+go test: 2 packages ok
+```
+
+Compiled fixture tours remained rooted and visible:
+
+```text
+cd web
+npx playwright test e2e/workbench.spec.ts --grep 'fixture journey'
+3 passed (4.6s)
+```
+
+### Expiry redaction and terminal cancellation
+
+The expiry oracle now attaches a separate 64 KiB bounded stdout/stderr collector
+before startup and keeps it attached through the expired bootstrap request and
+process `close`. Truncation fails the test. Nonce shape and absence assertions
+operate on booleans, so a failing matcher cannot print the nonce.
+
+The export/cancellation oracle also validates nonce/bearer shape and export
+absence through booleans. Cancellation now refetches the current version and
+retries only version conflicts with a fresh idempotency key. After a successful
+request or observed `cancelling` state, `expect.poll` refetches the same job until
+its terminal state is exactly `cancelled`; transitional acceptance alone cannot
+pass.
+
+```text
+cd web
+npx playwright test e2e/workbench.spec.ts --grep 'expired nonce|events jobs'
+2 passed (1.1m)
+```
+
+The only output noise was the workstation-provided Node warning that `NO_COLOR`
+is ignored because `FORCE_COLOR` is set. No application warning or secret value
+was printed.
+
+### Evidence corrections
+
+- The C4 row now credits F-BROWSER only for compiled HTTP/SSE server replay,
+  resume, reset, and terminal cancellation. Production `events.ts` and Job
+  Status recovery remain historical and pending final review.
+- The cleanup evidence now records the literal command:
+
+```text
+git diff --check -- web/e2e/workbench.spec.ts internal/workbench/explore.go internal/workbench/explore_test.go internal/workbench/impact.go internal/workbench/impact_test.go docs/verification/phase-3a-requirements.md .superpowers/sdd/2026-07-23-phase-3a-workbench-completion/task-D2-report.md
+no output, exit 0
+```
+
+### Fix-round changed paths
+
+- `internal/store/context.go`
+- `internal/store/queries_test.go`
+- `internal/workbench/explore.go`
+- `internal/workbench/explore_test.go`
+- `web/e2e/workbench.spec.ts`
+- `docs/verification/phase-3a-requirements.md`
+- `.superpowers/sdd/2026-07-23-phase-3a-workbench-completion/task-D2-report.md`
+
+TypeScript typecheck and gopls diagnostics for the amended Go store file were
+clean. Participant sessions, final independent reviews, and controller full
+gates on the post-fix commit remain pending.

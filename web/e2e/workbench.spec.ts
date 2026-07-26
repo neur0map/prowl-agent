@@ -140,6 +140,38 @@ function waitForStartup(process: ChildProcessWithoutNullStreams): Promise<Startu
   })
 }
 
+type BoundedProcessOutput = {
+  snapshot: () => { stdout: string; stderr: string; truncated: boolean }
+  stop: () => void
+}
+
+function collectBoundedProcessOutput(process: ChildProcessWithoutNullStreams, limit = 64 * 1024): BoundedProcessOutput {
+  let stdout = ''
+  let stderr = ''
+  let truncated = false
+  const append = (current: string, chunk: Buffer) => {
+    const next = current + chunk.toString('utf8')
+    if (next.length <= limit) return next
+    truncated = true
+    return next.slice(0, limit)
+  }
+  const onStdout = (chunk: Buffer) => {
+    stdout = append(stdout, chunk)
+  }
+  const onStderr = (chunk: Buffer) => {
+    stderr = append(stderr, chunk)
+  }
+  process.stdout.on('data', onStdout)
+  process.stderr.on('data', onStderr)
+  return {
+    snapshot: () => ({ stdout, stderr, truncated }),
+    stop: () => {
+      process.stdout.off('data', onStdout)
+      process.stderr.off('data', onStderr)
+    },
+  }
+}
+
 test.beforeAll(() => {
   temporaryRoot = mkdtempSync(join(tmpdir(), 'prowl-workbench-e2e-'))
   project = join(temporaryRoot, 'go-auth-service')
@@ -307,18 +339,19 @@ test('expired nonce: compiled workbench rejects expiry without process disclosur
     stdio: ['pipe', 'pipe', 'pipe'],
     env: childEnvironment,
   })
+  const output = collectBoundedProcessOutput(process)
+  let stopped = false
   try {
     const startup = await waitForStartup(process)
     const launchURL = readFileSync(startup.handoff, 'utf8').trim()
     const nonce = new URLSearchParams(new URL(launchURL).hash.slice(1)).get('nonce')
-    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(nonce !== null && /^[A-Za-z0-9_-]{43}$/.test(nonce)).toBe(true)
+    if (nonce === null) throw new Error('bootstrap handoff omitted nonce')
     const processMetadata = Buffer.concat([
       readFileSync(`/proc/${process.pid}/cmdline`),
       readFileSync(`/proc/${process.pid}/environ`),
     ]).toString('utf8')
-    expect(startup.stdout.includes(nonce!)).toBe(false)
-    expect(startup.stderr.includes(nonce!)).toBe(false)
-    expect(processMetadata.includes(nonce!)).toBe(false)
+    expect(processMetadata.includes(nonce)).toBe(false)
 
     await delay(61_000)
     const expired = await request.post(`${startup.origin}/api/v1/auth/bootstrap`, {
@@ -326,11 +359,20 @@ test('expired nonce: compiled workbench rejects expiry without process disclosur
       headers: { Origin: startup.origin },
     })
     expect(expired.status()).toBe(401)
+
+    process.kill('SIGTERM')
+    await once(process, 'close')
+    stopped = true
+    const captured = output.snapshot()
+    expect(captured.truncated).toBe(false)
+    expect(captured.stdout.includes(nonce)).toBe(false)
+    expect(captured.stderr.includes(nonce)).toBe(false)
   } finally {
-    if (process.exitCode === null && process.signalCode === null) {
+    if (!stopped && process.exitCode === null && process.signalCode === null) {
       process.kill('SIGTERM')
-      await once(process, 'exit')
+      await once(process, 'close')
     }
+    output.stop()
   }
 })
 
@@ -482,14 +524,15 @@ test('events jobs and offline export: compiled workbench snapshot renders withou
     const startup = await waitForStartup(process)
     const launchURL = readFileSync(startup.handoff, 'utf8').trim()
     const nonce = new URLSearchParams(new URL(launchURL).hash.slice(1)).get('nonce')
-    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(nonce !== null && /^[A-Za-z0-9_-]{43}$/.test(nonce)).toBe(true)
+    if (nonce === null) throw new Error('bootstrap handoff omitted nonce')
     const bootstrap = await request.post(`${startup.origin}/api/v1/auth/bootstrap`, {
       data: { nonce },
       headers: { Origin: startup.origin },
     })
     expect(bootstrap.status()).toBe(200)
     const payload = await bootstrap.json() as { bearer: string }
-    expect(payload.bearer).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(/^[A-Za-z0-9_-]{43}$/.test(payload.bearer)).toBe(true)
 
     const exported = await request.post(`${startup.origin}/api/v1/export`, {
       headers: { Authorization: `Bearer ${payload.bearer}` },
@@ -497,8 +540,8 @@ test('events jobs and offline export: compiled workbench snapshot renders withou
     expect(exported.status()).toBe(200)
     expect(exported.headers()['content-type']).toBe('text/html; charset=utf-8')
     const html = await exported.text()
-    for (const forbidden of [payload.bearer, nonce!, '/api/v1/', 'Bearer ', temporaryRoot, project]) {
-      expect(html).not.toContain(forbidden)
+    for (const forbidden of [payload.bearer, nonce, '/api/v1/', 'Bearer ', temporaryRoot, project]) {
+      expect(html.includes(forbidden)).toBe(false)
     }
     expect(html).toContain("default-src 'none'")
     expect(html).toContain("connect-src 'none'")
@@ -518,19 +561,47 @@ test('events jobs and offline export: compiled workbench snapshot renders withou
     }
     expect(refreshEnvelope.data.status).toBe('queued')
 
-    const currentJob = await request.get(`${startup.origin}/api/v1/jobs/${refreshEnvelope.data.id}`, {
-      headers: { Authorization: `Bearer ${payload.bearer}` },
-    })
-    expect(currentJob.status()).toBe(200)
-    const currentEnvelope = await currentJob.json() as { data: { status: string; version: number } }
-    expect(['queued', 'running']).toContain(currentEnvelope.data.status)
-    const cancelled = await request.post(`${startup.origin}/api/v1/jobs/${refreshEnvelope.data.id}/cancel`, {
-      data: { expected_version: currentEnvelope.data.version, idempotency_key: 'd2-compiled-cancellation' },
-      headers: { Authorization: `Bearer ${payload.bearer}` },
-    })
-    expect(cancelled.status()).toBe(200)
-    const cancelEnvelope = await cancelled.json() as { data: { status: string; stream: EventCursor } }
-    expect(['cancelling', 'cancelled']).toContain(cancelEnvelope.data.status)
+    let cancellationRequested = false
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const currentJob = await request.get(`${startup.origin}/api/v1/jobs/${refreshEnvelope.data.id}`, {
+        headers: { Authorization: `Bearer ${payload.bearer}` },
+      })
+      expect(currentJob.status()).toBe(200)
+      const currentEnvelope = await currentJob.json() as { data: { status: string; version: number } }
+      if (currentEnvelope.data.status === 'cancelled') {
+        cancellationRequested = true
+        break
+      }
+      expect(['queued', 'running', 'cancelling']).toContain(currentEnvelope.data.status)
+      if (currentEnvelope.data.status === 'cancelling') {
+        cancellationRequested = true
+        break
+      }
+      const cancelled = await request.post(`${startup.origin}/api/v1/jobs/${refreshEnvelope.data.id}/cancel`, {
+        data: { expected_version: currentEnvelope.data.version, idempotency_key: `d2-compiled-cancellation-${attempt}` },
+        headers: { Authorization: `Bearer ${payload.bearer}` },
+      })
+      if (cancelled.status() === 200) {
+        const cancelEnvelope = await cancelled.json() as { data: { status: string } }
+        expect(['cancelling', 'cancelled']).toContain(cancelEnvelope.data.status)
+        cancellationRequested = true
+        break
+      }
+      expect(cancelled.status()).toBe(409)
+    }
+    expect(cancellationRequested).toBe(true)
+    await expect.poll(async () => {
+      const currentJob = await request.get(`${startup.origin}/api/v1/jobs/${refreshEnvelope.data.id}`, {
+        headers: { Authorization: `Bearer ${payload.bearer}` },
+      })
+      if (currentJob.status() !== 200) return `http-${currentJob.status()}`
+      const currentEnvelope = await currentJob.json() as { data: { status: string } }
+      return currentEnvelope.data.status
+    }, {
+      message: 'index refresh job reaches terminal cancelled state',
+      timeout: 15_000,
+      intervals: [50, 100, 250, 500],
+    }).toBe('cancelled')
 
     const replay = await readSSEMessage(startup.origin, payload.bearer, {
       ...refreshEnvelope.data.stream,

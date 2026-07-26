@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -109,5 +111,45 @@ func TestImmediateGraphNeighborsEnforcesSQLLimit(t *testing.T) {
 	}
 	if neighbors, err := s.ImmediateGraphNeighbors(source, 0); err != nil || len(neighbors) != 0 {
 		t.Fatalf("zero-limit neighbors=%+v err=%v", neighbors, err)
+	}
+}
+
+func TestFirstChunksContextFiltersBeforeLimitAndHonorsCancellation(t *testing.T) {
+	s := openTmp(t)
+	for index := range 12 {
+		path := fmt.Sprintf("a-empty-%02d.go", index)
+		if _, err := s.UpsertFile(File{RelPath: path, Lang: "go", Hash: path, Size: 0, MTime: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := range 5 {
+		path := fmt.Sprintf("z-source-%02d.go", index)
+		id, err := s.UpsertFile(File{RelPath: path, Lang: "go", Hash: path, Size: 16, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(id, nil, nil, nil, []Chunk{{StartLine: 1, EndLine: 1, Text: "package source"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	chunks, err := s.FirstChunksContext(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 5 {
+		t.Fatalf("chunks=%+v", chunks)
+	}
+	for index, chunk := range chunks {
+		want := fmt.Sprintf("z-source-%02d.go", index)
+		if chunk.File != want {
+			t.Fatalf("chunk[%d].File=%q want %q", index, chunk.File, want)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.FirstChunksContext(ctx, 5); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled query error=%v want context.Canceled", err)
 	}
 }

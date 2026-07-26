@@ -3,6 +3,8 @@ package workbench
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -77,6 +79,56 @@ func TestExploreProjectsDeterministicSectionsAndTours(t *testing.T) {
 	}
 }
 
+func TestExploreFiltersChunklessFilesBeforeTourBound(t *testing.T) {
+	files := map[string]string{
+		"z-source.go": "package source\n\nfunc One() {}\nfunc Two() {}\nfunc Three() {}\n",
+	}
+	for index := range 12 {
+		files[fmt.Sprintf("a-empty-%02d.go", index)] = ""
+	}
+	service, err := NewService(openWorkbenchProject(t, files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	explore, err := service.Explore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(explore.Tours) != 3 || explore.Tours[0].Steps != 5 {
+		t.Fatalf("chunk-backed tour summaries=%+v", explore.Tours)
+	}
+	tour, err := service.GuidedTour(context.Background(), "onboarding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]struct{}, len(tour.Steps))
+	for _, step := range tour.Steps {
+		anchor := step.Facts[0].Anchor
+		key := fmt.Sprintf("%s:%d:%d", anchor.Path, anchor.LineStart, anchor.LineEnd)
+		if _, duplicate := seen[key]; duplicate {
+			t.Fatalf("duplicate tour anchor %s", key)
+		}
+		seen[key] = struct{}{}
+	}
+}
+
+func TestExploreDoesNotPadInsufficientEvidenceWithDuplicateSteps(t *testing.T) {
+	service, err := NewService(openWorkbenchProject(t, map[string]string{"main.go": "package main\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	explore, err := service.Explore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(explore.Tours) != 0 {
+		t.Fatalf("insufficient evidence fabricated tours: %+v", explore.Tours)
+	}
+	if _, err := service.GuidedTour(context.Background(), "onboarding"); !errors.Is(err, ErrTourNotFound) {
+		t.Fatalf("onboarding error=%v want ErrTourNotFound", err)
+	}
+}
+
 func TestGuidedTourRejectsUnknownID(t *testing.T) {
 	service, err := NewService(openWorkbenchProject(t, map[string]string{"main.go": "package main\n"}))
 	if err != nil {
@@ -91,7 +143,7 @@ func TestGuidedTourRejectsUnknownID(t *testing.T) {
 }
 
 func TestExploreAndTourAPIRoutesRequireBoundedReadRequests(t *testing.T) {
-	service, err := NewService(openWorkbenchProject(t, map[string]string{"README.md": "# Example\n", "cmd/server/main.go": "package main\nfunc main() {}\n"}))
+	service, err := NewService(openWorkbenchProject(t, map[string]string{"README.md": "# Example\n", "cmd/server/main.go": "package main\n\nfunc main() {}\nfunc health() {}\nfunc stop() {}\n"}))
 	if err != nil {
 		t.Fatal(err)
 	}

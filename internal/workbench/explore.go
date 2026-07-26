@@ -86,7 +86,10 @@ func (service *Service) Explore(ctx context.Context) (Explore, error) {
 	if err != nil {
 		return Explore{}, err
 	}
-	tours := guidedTours(tourFacts)
+	tours := []GuidedTour{}
+	if len(tourFacts) >= 5 {
+		tours = guidedTours(tourFacts)
+	}
 	summaries := make([]TourSummary, len(tours))
 	for index, tour := range tours {
 		summaries[index] = TourSummary{ID: tour.ID, Title: tour.Title, Steps: len(tour.Steps)}
@@ -110,6 +113,9 @@ func (service *Service) GuidedTour(ctx context.Context, id string) (GuidedTour, 
 	explore, err := service.Explore(ctx)
 	if err != nil {
 		return GuidedTour{}, err
+	}
+	if len(explore.tourFacts) < 5 {
+		return GuidedTour{}, ErrTourNotFound
 	}
 	for _, tour := range guidedTours(explore.tourFacts) {
 		if tour.ID == id {
@@ -165,38 +171,31 @@ func (service *Service) guidedTourFacts(ctx context.Context) ([]ExploreFact, err
 		minSteps = 5
 		maxSteps = 12
 	)
-	files, err := service.project.Store.AllFilesContext(ctx, maxSteps)
+	chunks, err := service.project.Store.FirstChunksContext(ctx, maxSteps)
 	if err != nil {
 		return nil, err
 	}
 	facts := make([]ExploreFact, 0, maxSteps)
 	extras := make([]ExploreFact, 0, minSteps)
-	for _, file := range files {
+	for _, chunk := range chunks {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if validateRelativePath(file.RelPath, service.workspaceRoots()...) != nil {
+		if validateRelativePath(chunk.File, service.workspaceRoots()...) != nil {
 			return nil, ErrInvalidDerivedData
-		}
-		chunk, found, err := service.project.Store.FirstChunk(file.RelPath)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			continue
 		}
 		lines := strings.Split(strings.TrimSuffix(chunk.Text, "\n"), "\n")
 		for index := range lines {
 			line := chunk.StartLine + index
 			fact := ExploreFact{
-				ID:     fmt.Sprintf("source:%s:%d", file.RelPath, line),
-				Label:  file.RelPath,
-				Detail: fmt.Sprintf("%s source evidence at line %d", file.Lang, line),
-				Anchor: &SourceAnchor{Path: file.RelPath, LineStart: line, LineEnd: line},
+				ID:     fmt.Sprintf("source:%s:%d", chunk.File, line),
+				Label:  chunk.File,
+				Detail: fmt.Sprintf("Indexed source evidence at line %d", line),
+				Anchor: &SourceAnchor{Path: chunk.File, LineStart: line, LineEnd: line},
 			}
 			if index == 0 {
 				facts = append(facts, fact)
-			} else {
+			} else if len(extras) < minSteps {
 				extras = append(extras, fact)
 			}
 		}
@@ -204,15 +203,6 @@ func (service *Service) guidedTourFacts(ctx context.Context) ([]ExploreFact, err
 	for len(facts) < minSteps && len(extras) > 0 {
 		facts = append(facts, extras[0])
 		extras = extras[1:]
-	}
-	seedCount := len(facts)
-	for len(facts) < minSteps && seedCount > 0 {
-		duplicate := facts[len(facts)%seedCount]
-		duplicate.ID = fmt.Sprintf("%s:step-%d", duplicate.ID, len(facts)+1)
-		facts = append(facts, duplicate)
-	}
-	if len(facts) < minSteps {
-		return nil, errors.New("guided tour requires indexed source evidence")
 	}
 	if len(facts) > maxSteps {
 		facts = facts[:maxSteps]

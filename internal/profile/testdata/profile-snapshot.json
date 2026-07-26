@@ -1,0 +1,172 @@
+{
+  "schema_version": "prowl.profile-snapshot/v1",
+  "provider": {
+    "provider_id": "fake",
+    "model_id": "model-a",
+    "max_input_tokens": 8192,
+    "max_output_tokens": 1024
+  },
+  "core_prompt_version": "core/v1",
+  "principal_id": "principal-local",
+  "profile": {
+    "identity": "local",
+    "soul": "A careful local project agent.",
+    "surface_policy": "Operate only on explicitly exposed local surfaces.",
+    "hash": "793b23c97305f3ce511bef9856e074461ed4f482363b6d2f7235973d68865229",
+    "provenance": "builtin",
+    "scope": "profile",
+    "precedence": "profile",
+    "trust": "profile"
+  },
+  "policy": {
+    "permission": "read-only",
+    "approval": "explicit",
+    "readiness": "ready",
+    "hash": "b8f4a5ee8cd29b1696b886232b3374f2aac0bd0aa5864226d0b40058b865fc63",
+    "provenance": "builtin",
+    "scope": "session",
+    "precedence": "executable_system",
+    "trust": "executable"
+  },
+  "tool_schema_generation": "tools-7",
+  "sources": [
+    {
+      "id": "system-security",
+      "kind": "system_policy",
+      "body": "Never reveal secrets.",
+      "hash": "dd6352ff286323929af706b2ac7eea97739b703c40b728b78e89aeba90cc6a0a",
+      "provenance": "builtin",
+      "scope": "global",
+      "precedence": "executable_system",
+      "trust": "executable",
+      "included": true,
+      "reason": "required"
+    },
+    {
+      "id": "secret:provider",
+      "kind": "secret_reference",
+      "hash": "ac2e4696c77ef44b174b7e8c419a129e754e6f2f76a620eacb008be041e41a1c",
+      "provenance": "environment",
+      "scope": "session",
+      "precedence": "profile",
+      "trust": "secret_reference",
+      "secret_reference": "OPENAI_API_KEY",
+      "included": true,
+      "reason": "provider credential reference"
+    },
+    {
+      "id": "user-profile:concise",
+      "kind": "user_profile",
+      "body": "Prefer concise answers.",
+      "hash": "6bece44bc8beb1c63d54c4839a6f3b42fe0a55977b2f87aabfc941990d0fa373",
+      "provenance": "user_selected",
+      "scope": "user",
+      "precedence": "user_profile",
+      "trust": "user",
+      "included": true,
+      "reason": "selected"
+    },
+    {
+      "id": "memory:project-tone",
+      "kind": "durable_memory",
+      "body": "Use repository terminology.",
+      "hash": "68f72e6fac7953c9234215e72875c96c242687dd3c74091a58c608dceba75a90",
+      "provenance": "durable_memory",
+      "scope": "workspace",
+      "precedence": "durable_memory",
+      "trust": "durable",
+      "included": true,
+      "reason": "selected"
+    },
+    {
+      "id": "project:AGENTS.md",
+      "kind": "project_instruction",
+      "body": "Run focused tests.",
+      "hash": "08c10fb4235b682d1b08d1ad9d76a4976534d96f04d7c6527c3e6207b943a627",
+      "provenance": "rooted_project",
+      "scope": "workspace",
+      "precedence": "rooted_project",
+      "trust": "rooted_project",
+      "included": true,
+      "reason": "rooted"
+    },
+    {
+      "id": "task:brief",
+      "kind": "task_instruction",
+      "body": "Implement the assigned slice.",
+      "hash": "80aeaf4a289fb880b58fee5c3645a3f108d8089001697e98bc1b9dded773dcc1",
+      "provenance": "task",
+      "scope": "task",
+      "precedence": "task_worker",
+      "trust": "task",
+      "included": true,
+      "reason": "assigned"
+    },
+    {
+      "id": "web:result-1",
+      "kind": "untrusted_content",
+      "hash": "41dfa5f8c5770d56db1bd56bce6a62127a3df10e80ce3d8969d715a68466a2d4",
+      "provenance": "web",
+      "scope": "turn",
+      "precedence": "untrusted_content",
+      "trust": "untrusted",
+      "included": false,
+      "reason": "untrusted content not preloaded"
+    }
+  ],
+  "tools": [
+    {
+      "id": "read",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "hash": "39b714704935190561ed407980480b9a4a0b346b97346e0bff71fb9ace820194"
+    },
+    {
+      "id": "search",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "hash": "10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26"
+    }
+  ],
+  "skills": [
+    {
+      "id": "skill:discover",
+      "name": "discover",
+      "description": "Find relevant skills.",
+      "hash": "3e5ec47754496841de30e4b22bdb9301d33136b448ccbeff31834fda5f078c7c"
+    },
+    {
+      "id": "skill:test",
+      "name": "test-driven-development",
+      "description": "Write a failing test first.",
+      "hash": "0931e0f863c81680797ea06af32f922f6ea2ed26941a5749bf1999a435f66c9b"
+    }
+  ],
+  "preloaded_skills": [
+    {
+      "id": "skill:test",
+      "body": "RED then GREEN.",
+      "hash": "28f192afc26d59b0d03d78f04fdee94bfd8baa5438addcc6912c3451b8f52922"
+    }
+  ]
+}

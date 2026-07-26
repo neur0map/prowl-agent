@@ -561,3 +561,37 @@ This is the only operational resume procedure. Earlier checkpoint commands and â
    ```
 
 8. Update the relevant verification ledger with exact command output, fixture, excluded volatile fields, thresholds/sample evidence, changed paths, migration/rollback evidence, and independent review disposition. Never claim phase completion from subjective prose, mock-only tests, or a route count.
+
+## Live resume checkpoint - 2026-07-26
+
+This section is the authoritative live resume point and supersedes the stale
+state assumptions in steps 1-5 above. The architecture and execution-order
+contracts in those steps remain binding.
+
+Repository state:
+
+- Active isolated worktree:
+  `/home/nero/Work/prowl-agent/.worktrees/prowl-full-evolution`
+- Branch: `prowl-full-evolution`
+- Phase 3A final implementation/security checkpoint: `84499f4`
+- Phase 3A acceptance-evidence checkpoint: `ec4fa76`
+- Worktree was clean immediately after `ec4fa76`
+
+Phase 3A A1-D2 is complete and accepted. The final controller gate passed 25
+tagged Go packages plus 2 without tests, vet, the 6-package race suite, locked
+dependency install/audit, 102 frontend tests, production build, 13 compiled
+Chromium tests, bundle parity, and whitespace. Three independent participants
+scored 40/45 overall; every fixture journey scored at least 4/5 and completed
+in under 36 seconds. `ReviewD2` returned requirements/security PASS and
+`SecurityD2Final` returned a scoped security-fix re-review PASS. The disclosed
+visible browser-relay deviation and all 45 anonymized rows are recorded in
+`docs/verification/phase-3a-requirements.md`.
+
+The next exact task is Hermes-port **B0.1**, followed strictly by
+**B0.2 -> B0.3 -> B0.4 -> B0.5 -> B0.6a -> B0.6b -> B0.6c -> B0.6d**, then
+**C0.1 -> C0.2 -> C0.3 -> C0.4 -> C0.5a -> C0.5b -> C0.5c**. Use
+`docs/plans/2026-07-23-hermes-inspired-agent-operations-port.md` as the
+canonical implementation/parity contract and the existing SDD briefs under
+`.superpowers/sdd/2026-07-23-hermes-inspired-agent-operations-port/` as
+task-local execution records. Do not begin Phase 3B/3C breadth until both
+tracer-slice compiled kill/restart oracles pass.

@@ -40,6 +40,12 @@ test.describe('accessible responsive workbench', () => {
         await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused()
         await page.keyboard.press('Enter')
         await expect(page.locator('#main-content')).toBeFocused()
+        const navigation = page.getByRole('navigation', { name: 'Primary' })
+        if (viewport.width <= 768) {
+          await expect(navigation).toBeVisible()
+          await expect(navigation).toBeInViewport()
+        }
+
 
         const reload = page.getByRole('button', { name: 'Reload current view' })
         const accessibility = await new AxeBuilder({ page }).analyze()
@@ -66,6 +72,17 @@ test.describe('accessible responsive workbench', () => {
         await page.keyboard.press('Enter')
         await expect(page.locator('#main-content')).toBeFocused()
         await expect(page.getByRole('heading', { name: 'ts-checkout' })).toBeVisible()
+        if (viewport.width <= 768) {
+          const setup = page.getByRole('link', { name: 'Setup' })
+          await page.keyboard.press('Shift+Tab')
+          await expect(setup).toBeFocused()
+          await expect(setup).toBeVisible()
+          await expect(setup).toBeInViewport()
+          await page.keyboard.press('Enter')
+          await expect(page).toHaveURL(/#\/setup$/)
+          await expect(page.getByRole('heading', { name: 'Setup' })).toBeVisible()
+          await expect(page.locator('#main-content')).toBeFocused()
+        }
       } finally {
         await stopWorkbench(process)
         removeFixture(workspace)

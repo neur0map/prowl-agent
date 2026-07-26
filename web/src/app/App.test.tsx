@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 
 import { bootstrapWorkbenchSession, resetBearerForTests } from '../transport/auth'
 import { App } from './App'
@@ -69,6 +70,20 @@ describe('workbench shell', () => {
 
     expect(await screen.findByRole('heading', { name: 'Timeline' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Timeline' }).getAttribute('aria-current')).toBe('page')
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('main')))
+  })
+
+  it('keeps responsive feature navigation in keyboard order and activates a route', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    for (let press = 0; press < 8; press += 1) await user.tab()
+    const setup = screen.getByRole('link', { name: 'Setup' })
+    expect(document.activeElement).toBe(setup)
+
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('heading', { name: 'Setup' })).toBeTruthy()
+    expect(window.location.hash).toBe('#/setup')
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('main')))
   })
 

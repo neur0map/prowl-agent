@@ -242,7 +242,7 @@ test('brief vertical slice: compiled workbench is secure, accessible, and source
     const parsed = new URL(launchURL)
     const nonce = new URLSearchParams(parsed.hash.slice(1)).get('nonce')
     expect(parsed.origin).toBe(startup.origin)
-    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(typeof nonce === 'string' && /^[A-Za-z0-9_-]{43}$/.test(nonce)).toBe(true)
 
     const unauthenticated = await request.get(`${parsed.origin}/api/v1/brief`)
     expect(unauthenticated.status()).toBe(401)

@@ -122,6 +122,19 @@ func TestAPISecurityRejectsMalformedCredentialQuery(t *testing.T) {
 	}
 }
 
+func TestAPISecurityRejectsBootstrapNonceQuery(t *testing.T) {
+	handler, err := NewAPI(APIOptions{Bootstrap: testBootstrap(t), AllowedOrigin: "http://127.0.0.1:43117"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authorizedAPIRequest("/api/v1/health?nonce=secret", "nonce-query")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
 func TestAPISecurityRejectsUnsafeConfiguration(t *testing.T) {
 	bootstrap := testBootstrap(t)
 	tests := []APIOptions{

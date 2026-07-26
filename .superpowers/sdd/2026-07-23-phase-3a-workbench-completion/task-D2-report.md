@@ -421,3 +421,61 @@ Changed paths:
 - `web/src/i18n/en.ts`
 - regenerated `web/dist/index.html`
 - regenerated `web/dist/assets/index-BAhK0EzZ.js`
+
+## Review fix round 2 -- complete selected-context evidence and URL-secret denial
+
+Final requirements review found that three browser-relay captures had reached
+the selected-context route but recorded its loading state before navigating
+away. The controller reran the complete P2 TypeScript, P2 configuration, and P3
+configuration journeys with an explicit loaded-state condition. All nine final
+transcripts now contain bounded selected-context content; none contains
+`Loading bounded context selection`. The affected participants independently
+re-answered all five questions under fresh timers:
+
+| Participant | Fixture | Credited elapsed | Score |
+| --- | --- | ---: | ---: |
+| P2 | `ts-checkout` | 20.686 s | 5/5 |
+| P2 | `rice-config` | 19.610 s | 4/5 |
+| P3 | `rice-config` | 25.940 s | 4/5 |
+
+Independent cross-scoring confirmed that the loading blocker is closed. The
+other six credited journeys remain unchanged.
+
+The same review found two security-oracle gaps. First,
+`hasCredentialQuery` rejected bearer-like query keys but not the actual
+bootstrap credential name `nonce`. A new regression reproduced the defect:
+
+```text
+go test -tags sqlite_fts5 ./internal/workbench \
+  -run TestAPISecurityRejectsBootstrapNonceQuery -count=1
+FAIL: status=503, want URL-boundary rejection
+```
+
+`nonce` is now part of the closed credential-query denylist. Second, the
+compiled Brief oracle passed the live nonce directly to Playwright's `toMatch`,
+which could print it on failure. The shape assertion now reduces the value to a
+boolean before matching.
+
+GREEN:
+
+```text
+go test -race -tags sqlite_fts5 ./internal/workbench \
+  -run 'TestAPISecurityRejects(BootstrapNonceQuery|MalformedCredentialQuery)' \
+  -count=1
+go test: 1 package ok
+
+cd web
+npx playwright test e2e/workbench.spec.ts --grep 'brief vertical slice'
+1 passed (3.1s)
+```
+
+Changed paths:
+
+- `internal/workbench/api.go`
+- `internal/workbench/api_test.go`
+- `web/e2e/workbench.spec.ts`
+- `.superpowers/sdd/2026-07-23-phase-3a-workbench-completion/task-D2-report.md`
+
+The complete controller gate must be rerun after this fix commit. Final
+requirements/security dispositions remain pending that post-fix verification
+and scoped re-review.

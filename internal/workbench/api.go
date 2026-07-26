@@ -498,7 +498,7 @@ func securityBoundary(next http.Handler, options APIOptions) http.Handler {
 func hasCredentialQuery(values url.Values) bool {
 	for key := range values {
 		switch strings.ToLower(key) {
-		case "access_token", "token", "bearer", "authorization", "api_key":
+		case "access_token", "token", "bearer", "authorization", "api_key", "nonce":
 			return true
 		}
 	}

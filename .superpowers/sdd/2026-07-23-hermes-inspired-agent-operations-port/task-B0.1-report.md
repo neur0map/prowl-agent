@@ -121,3 +121,68 @@ mutation.
 - Backups, broad repair, event publication, retention sweeps, session CRUD, and
   runtime lifecycle are intentionally deferred to their named later tasks.
 - No project-wide suite was run for this scoped task.
+
+## Independent review fix round 1
+
+The specification review found two open requirements: event input still exposed
+authoritative identity fields, and raw bounded JSON could retain private
+content. The code-quality review found four Important issues: retention could
+pass unpublished rows and manufacture the watermark, Replay could race
+retention between two reads, metadata was not redacted by construction, and
+View exposed a mutation-capable transaction.
+
+Regression tests were written before the fixes:
+
+```text
+go test -tags sqlite_fts5 ./internal/operations \
+  -run 'Test(ClientActorRejected|PrincipalOutbox|PrincipalReplay)' -count=1
+FAIL (build): LocalAttribution, opaque Attribution, typed EventMetadata, and
+the replay coordination seam were undefined
+```
+
+The fixes make attribution and metadata closed by construction:
+
+- `EventInput` now contains only resource/event/correlation fields and typed
+  lifecycle metadata;
+- `LocalAttribution` returns an opaque store-issued capability with local
+  principal/profile/owner/scope and one fixed trusted surface;
+- zero, cross-store, or altered attribution is rejected before persistence;
+- `EventMetadata` has only enum state and bounded numeric counts; unknown JSON
+  fields, arbitrary text, credentials, prompts, and source bodies cannot be
+  represented;
+- View now supplies a read-only transaction wrapper with no Exec or event
+  append methods;
+- Replay checks retention and reads rows in one SQLite read transaction;
+- retention may advance only through the durable publisher watermark and no
+  longer changes that watermark.
+
+Post-fix evidence:
+
+```text
+go test -race -tags sqlite_fts5 ./internal/operations \
+  -run 'Test(ClientActorRejected|PrincipalOutbox|PrincipalReplay)' -count=1
+go test: 1 package ok
+
+go test -race -tags sqlite_fts5 ./internal/operations \
+  -run 'Test(MigrationV1|Principal|ClientActorRejected)' -count=1
+go test: 1 package ok
+
+go test -race -tags sqlite_fts5 ./internal/operations -count=1
+go test: 1 package ok
+
+go vet -tags sqlite_fts5 ./internal/operations
+no output; exit 0
+```
+
+The replay/retention interleaving also passed ten race-instrumented repetitions:
+
+```text
+go test -race -tags sqlite_fts5 ./internal/operations \
+  -run TestPrincipalReplayIsAtomicWithRetention -count=10
+go test: 1 package ok
+```
+
+The full package gate includes a deterministic connected replay/retention
+interleaving, unpublished-retention rejection, actor-capability forgery,
+unknown secret-bearing metadata rejection, bounded counts, and immutable
+outbox mutation rejection. Scoped independent re-review remains pending.

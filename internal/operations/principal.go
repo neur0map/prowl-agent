@@ -13,15 +13,25 @@ type PrincipalKind string
 
 type PrincipalSource string
 
+type Surface string
+
 const (
 	PrincipalLocalOperator PrincipalKind = "local-operator"
 	PrincipalDelegated     PrincipalKind = "delegated"
 
 	PrincipalSourceServerLocal     PrincipalSource = "server-local"
 	PrincipalSourceServerDelegated PrincipalSource = "server-delegated"
+
+	SurfaceCLI       Surface = "cli"
+	SurfaceMCP       Surface = "mcp"
+	SurfaceWorkbench Surface = "workbench"
+	SurfaceWorker    Surface = "worker"
 )
 
-var ErrAuthorityConflict = errors.New("operations authority conflict")
+var (
+	ErrAuthorityConflict  = errors.New("operations authority conflict")
+	ErrInvalidAttribution = errors.New("invalid server attribution")
+)
 
 type Principal struct {
 	ID        string
@@ -29,6 +39,68 @@ type Principal struct {
 	Source    PrincipalSource
 	ParentID  string
 	CreatedAt time.Time
+}
+
+// Attribution is an opaque, store-issued server authority. Callers can inspect
+// persisted dimensions but cannot construct or alter them.
+type Attribution struct {
+	store                *Store
+	principalID          string
+	requestedProfileID   string
+	resolvedProfileID    string
+	surfaceID            Surface
+	delegatedPrincipalID string
+	ownerPrincipalID     string
+	authorizationScope   string
+}
+
+func (a Attribution) PrincipalID() string          { return a.principalID }
+func (a Attribution) RequestedProfileID() string   { return a.requestedProfileID }
+func (a Attribution) ResolvedProfileID() string    { return a.resolvedProfileID }
+func (a Attribution) SurfaceID() Surface           { return a.surfaceID }
+func (a Attribution) DelegatedPrincipalID() string { return a.delegatedPrincipalID }
+func (a Attribution) OwnerPrincipalID() string     { return a.ownerPrincipalID }
+func (a Attribution) AuthorizationScope() string   { return a.authorizationScope }
+
+// LocalAttribution derives all authoritative identity fields from the durable
+// local principal and the trusted server surface.
+func (s *Store) LocalAttribution(ctx context.Context, surface Surface) (Attribution, error) {
+	if !validSurface(surface) {
+		return Attribution{}, ErrInvalidAttribution
+	}
+	principal, err := s.ResolveLocalPrincipal(ctx)
+	if err != nil {
+		return Attribution{}, err
+	}
+	return Attribution{
+		store:              s,
+		principalID:        principal.ID,
+		requestedProfileID: "local",
+		resolvedProfileID:  "local",
+		surfaceID:          surface,
+		ownerPrincipalID:   principal.ID,
+		authorizationScope: "local",
+	}, nil
+}
+
+func (a Attribution) validFor(store *Store) bool {
+	return a.store == store &&
+		validID(a.principalID) &&
+		a.requestedProfileID == "local" &&
+		a.resolvedProfileID == "local" &&
+		validSurface(a.surfaceID) &&
+		a.delegatedPrincipalID == "" &&
+		a.ownerPrincipalID == a.principalID &&
+		a.authorizationScope == "local"
+}
+
+func validSurface(surface Surface) bool {
+	switch surface {
+	case SurfaceCLI, SurfaceMCP, SurfaceWorkbench, SurfaceWorker:
+		return true
+	default:
+		return false
+	}
 }
 
 // ResolveLocalPrincipal returns the one server-generated local operator. The

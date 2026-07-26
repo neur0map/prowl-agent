@@ -28,6 +28,7 @@ var migrationV1 string
 const (
 	EventSchemaVersion    = "prowl.operations.event/v1"
 	MaxEventMetadataBytes = 4096
+	MaxEventCount         = 1_000_000
 )
 
 var (
@@ -42,12 +43,16 @@ type Store struct {
 	path   string
 	mu     sync.Mutex
 	closed bool
+
+	// beforeReplayRows is a package-private deterministic test seam.
+	beforeReplayRows func()
 }
 
-// Tx is a short-lived operations transaction. It is valid only inside the
-// callback passed to View or Update.
+// Tx is a short-lived operations write transaction. It is valid only inside
+// the callback passed to Update.
 type Tx struct {
-	tx *sql.Tx
+	tx    *sql.Tx
+	store *Store
 }
 
 func (tx *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -62,6 +67,19 @@ func (tx *Tx) QueryRowContext(ctx context.Context, query string, args ...any) *s
 	return tx.tx.QueryRowContext(ctx, query, args...)
 }
 
+// ReadTx deliberately exposes no mutation or event-append capability.
+type ReadTx struct {
+	tx *sql.Tx
+}
+
+func (tx *ReadTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return tx.tx.QueryContext(ctx, query, args...)
+}
+
+func (tx *ReadTx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return tx.tx.QueryRowContext(ctx, query, args...)
+}
+
 type StreamState struct {
 	StreamScope        string
 	ScopeID            string
@@ -72,29 +90,78 @@ type StreamState struct {
 	PublisherWatermark uint64
 }
 
+type EventState string
+
+const (
+	EventStateActive    EventState = "active"
+	EventStateQueued    EventState = "queued"
+	EventStateRunning   EventState = "running"
+	EventStateCompleted EventState = "completed"
+	EventStateSucceeded EventState = "succeeded"
+	EventStateFailed    EventState = "failed"
+	EventStateCancelled EventState = "cancelled"
+	EventStateBlocked   EventState = "blocked"
+	EventStateReview    EventState = "review"
+)
+
+// EventMetadata is an allowlisted lifecycle summary. It cannot represent
+// prompts, source bodies, credentials, or arbitrary private content.
+type EventMetadata struct {
+	State         EventState `json:"state,omitempty"`
+	MessageCount  uint32     `json:"message_count,omitempty"`
+	ToolCallCount uint32     `json:"tool_call_count,omitempty"`
+}
+
+func (metadata *EventMetadata) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return ErrInvalidEvent
+	}
+	for field := range fields {
+		switch field {
+		case "state", "message_count", "tool_call_count":
+		default:
+			return ErrInvalidEvent
+		}
+	}
+	type wire EventMetadata
+	var value wire
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if !validEventMetadata(EventMetadata(value)) {
+		return ErrInvalidEvent
+	}
+	*metadata = EventMetadata(value)
+	return nil
+}
+
 type EventInput struct {
-	ResourceKind         string
-	ResourceID           string
-	ResourceVersion      uint64
-	Kind                 string
-	PrincipalID          string
-	RequestedProfileID   string
-	ResolvedProfileID    string
-	SurfaceID            string
-	DelegatedPrincipalID string
-	ParentEventID        string
-	OwnerPrincipalID     string
-	AuthorizationScope   string
-	CorrelationID        string
-	CausationID          string
-	Metadata             []byte
+	ResourceKind    string
+	ResourceID      string
+	ResourceVersion uint64
+	Kind            string
+	ParentEventID   string
+	CorrelationID   string
+	CausationID     string
+	Metadata        EventMetadata
 }
 
 type Event struct {
-	Sequence      uint64
-	ID            string
-	OccurredAt    time.Time
-	SchemaVersion string
+	Sequence             uint64
+	ID                   string
+	OccurredAt           time.Time
+	SchemaVersion        string
+	PrincipalID          string
+	RequestedProfileID   string
+	ResolvedProfileID    string
+	SurfaceID            Surface
+	DelegatedPrincipalID string
+	OwnerPrincipalID     string
+	AuthorizationScope   string
 	EventInput
 }
 
@@ -224,14 +291,14 @@ func (s *Store) Update(ctx context.Context, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrInvalidTransition
 	}
-	if err := fn(&Tx{tx: tx}); err != nil {
+	if err := fn(&Tx{tx: tx, store: s}); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 // View executes one consistent read transaction.
-func (s *Store) View(ctx context.Context, fn func(*Tx) error) error {
+func (s *Store) View(ctx context.Context, fn func(*ReadTx) error) error {
 	tx, err := s.begin(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return err
@@ -240,14 +307,21 @@ func (s *Store) View(ctx context.Context, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrInvalidTransition
 	}
-	if err := fn(&Tx{tx: tx}); err != nil {
+	if err := fn(&ReadTx{tx: tx}); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (tx *Tx) AppendEvent(ctx context.Context, input EventInput) (Event, error) {
+func (tx *Tx) AppendEvent(ctx context.Context, attribution Attribution, input EventInput) (Event, error) {
+	if !attribution.validFor(tx.store) {
+		return Event{}, ErrInvalidAttribution
+	}
 	if !validEventInput(input) {
+		return Event{}, ErrInvalidEvent
+	}
+	metadata, err := json.Marshal(input.Metadata)
+	if err != nil || len(metadata) > MaxEventMetadataBytes {
 		return Event{}, ErrInvalidEvent
 	}
 	id, err := newID()
@@ -259,8 +333,8 @@ func (tx *Tx) AppendEvent(ctx context.Context, input EventInput) (Event, error) 
 	if err := tx.tx.QueryRowContext(ctx, `SELECT scope_id FROM authority WHERE id=1`).Scan(&scopeID); err != nil {
 		return Event{}, err
 	}
-	if scopeID == "" || input.OwnerPrincipalID != scopeID {
-		return Event{}, ErrInvalidEvent
+	if scopeID == "" || attribution.ownerPrincipalID != scopeID {
+		return Event{}, ErrInvalidAttribution
 	}
 	result, err := tx.tx.ExecContext(ctx, `INSERT INTO outbox(stream_scope,scope_id,event_id,occurred_at,schema_version,resource_kind,resource_id,resource_version,event_kind,principal_id,requested_profile_id,resolved_profile_id,surface_id,delegated_principal_id,parent_event_id,owner_principal_id,authorization_scope,correlation_id,causation_id,metadata) VALUES('operations',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		scopeID,
@@ -271,17 +345,17 @@ func (tx *Tx) AppendEvent(ctx context.Context, input EventInput) (Event, error) 
 		input.ResourceID,
 		input.ResourceVersion,
 		input.Kind,
-		input.PrincipalID,
-		input.RequestedProfileID,
-		input.ResolvedProfileID,
-		input.SurfaceID,
-		nullableString(input.DelegatedPrincipalID),
+		attribution.principalID,
+		attribution.requestedProfileID,
+		attribution.resolvedProfileID,
+		string(attribution.surfaceID),
+		nullableString(attribution.delegatedPrincipalID),
 		nullableString(input.ParentEventID),
-		input.OwnerPrincipalID,
-		input.AuthorizationScope,
+		attribution.ownerPrincipalID,
+		attribution.authorizationScope,
 		input.CorrelationID,
 		input.CausationID,
-		[]byte(input.Metadata),
+		metadata,
 	)
 	if err != nil {
 		return Event{}, err
@@ -290,37 +364,51 @@ func (tx *Tx) AppendEvent(ctx context.Context, input EventInput) (Event, error) 
 	if err != nil {
 		return Event{}, err
 	}
-	event := Event{
-		Sequence:      uint64(sequence),
-		ID:            id,
-		OccurredAt:    occurredAt,
-		SchemaVersion: EventSchemaVersion,
-		EventInput:    input,
-	}
-	event.Metadata = append([]byte(nil), input.Metadata...)
-	return event, nil
+	return Event{
+		Sequence:             uint64(sequence),
+		ID:                   id,
+		OccurredAt:           occurredAt,
+		SchemaVersion:        EventSchemaVersion,
+		PrincipalID:          attribution.principalID,
+		RequestedProfileID:   attribution.requestedProfileID,
+		ResolvedProfileID:    attribution.resolvedProfileID,
+		SurfaceID:            attribution.surfaceID,
+		DelegatedPrincipalID: attribution.delegatedPrincipalID,
+		OwnerPrincipalID:     attribution.ownerPrincipalID,
+		AuthorizationScope:   attribution.authorizationScope,
+		EventInput:           input,
+	}, nil
 }
 
 func (s *Store) Replay(ctx context.Context, after uint64, limit int) ([]Event, bool, error) {
 	if limit <= 0 || limit > 1000 {
 		return nil, false, ErrInvalidEvent
 	}
-	state, err := s.State(ctx)
+	tx, err := s.begin(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, false, err
 	}
-	if after < state.RetentionFloor {
+	defer tx.Rollback()
+	var retentionFloor uint64
+	if err := tx.QueryRowContext(ctx, `SELECT retention_floor FROM authority WHERE id=1`).Scan(&retentionFloor); err != nil {
+		return nil, false, err
+	}
+	if after < retentionFloor {
 		return nil, false, ErrCursorExpired
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT sequence,event_id,occurred_at,schema_version,resource_kind,resource_id,resource_version,event_kind,principal_id,requested_profile_id,resolved_profile_id,surface_id,COALESCE(delegated_principal_id,''),COALESCE(parent_event_id,''),owner_principal_id,authorization_scope,correlation_id,causation_id,metadata FROM outbox WHERE sequence>? ORDER BY sequence LIMIT ?`, after, limit+1)
+	if s.beforeReplayRows != nil {
+		s.beforeReplayRows()
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT sequence,event_id,occurred_at,schema_version,resource_kind,resource_id,resource_version,event_kind,principal_id,requested_profile_id,resolved_profile_id,surface_id,COALESCE(delegated_principal_id,''),COALESCE(parent_event_id,''),owner_principal_id,authorization_scope,correlation_id,causation_id,metadata FROM outbox WHERE sequence>? ORDER BY sequence LIMIT ?`, after, limit+1)
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
-	events := make([]Event, 0, limit)
+	events := make([]Event, 0, limit+1)
 	for rows.Next() {
 		var event Event
 		var occurredAt int64
+		var surface string
+		var metadata []byte
 		if err := rows.Scan(
 			&event.Sequence,
 			&event.ID,
@@ -333,21 +421,34 @@ func (s *Store) Replay(ctx context.Context, after uint64, limit int) ([]Event, b
 			&event.PrincipalID,
 			&event.RequestedProfileID,
 			&event.ResolvedProfileID,
-			&event.SurfaceID,
+			&surface,
 			&event.DelegatedPrincipalID,
 			&event.ParentEventID,
 			&event.OwnerPrincipalID,
 			&event.AuthorizationScope,
 			&event.CorrelationID,
 			&event.CausationID,
-			&event.Metadata,
+			&metadata,
 		); err != nil {
+			_ = rows.Close()
 			return nil, false, err
 		}
+		if err := json.Unmarshal(metadata, &event.Metadata); err != nil {
+			_ = rows.Close()
+			return nil, false, err
+		}
+		event.SurfaceID = Surface(surface)
 		event.OccurredAt = time.Unix(0, occurredAt).UTC()
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, false, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
 	more := len(events) > limit
@@ -381,20 +482,22 @@ func (s *Store) AdvanceRetention(ctx context.Context, floor uint64, snapshotURI 
 		return err
 	}
 	defer tx.Rollback()
-	var previous, head uint64
-	if err := tx.QueryRowContext(ctx, `SELECT retention_floor FROM authority WHERE id=1`).Scan(&previous); err != nil {
+	var previous, watermark, head uint64
+	if err := tx.QueryRowContext(ctx, `SELECT retention_floor,publisher_watermark,(SELECT COALESCE(MAX(sequence),0) FROM outbox) FROM authority WHERE id=1`).Scan(&previous, &watermark, &head); err != nil {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM outbox`).Scan(&head); err != nil {
-		return err
-	}
-	if floor < previous || floor > head || !utf8.ValidString(snapshotURI) || len(snapshotURI) > 1024 {
+	if floor < previous ||
+		floor > watermark ||
+		floor > head ||
+		!utf8.ValidString(snapshotURI) ||
+		len(snapshotURI) > 1024 ||
+		floor > 0 && snapshotURI == "" {
 		return ErrInvalidTransition
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE sequence < ?`, floor); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE authority SET retention_floor=?,snapshot_uri=?,publisher_watermark=CASE WHEN publisher_watermark<? THEN ? ELSE publisher_watermark END WHERE id=1`, floor, snapshotURI, floor, floor); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE authority SET retention_floor=?,snapshot_uri=? WHERE id=1`, floor, snapshotURI); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -408,29 +511,26 @@ func (s *Store) begin(ctx context.Context, options *sql.TxOptions) (*sql.Tx, err
 }
 
 func validEventInput(input EventInput) bool {
-	if input.ResourceVersion == 0 ||
-		!validBoundedField(input.ResourceKind, 128) ||
-		!validBoundedField(input.ResourceID, 256) ||
-		!validBoundedField(input.Kind, 128) ||
-		!validID(input.PrincipalID) ||
-		!validBoundedField(input.RequestedProfileID, 256) ||
-		!validBoundedField(input.ResolvedProfileID, 256) ||
-		!validBoundedField(input.SurfaceID, 128) ||
-		!validID(input.OwnerPrincipalID) ||
-		!validBoundedField(input.AuthorizationScope, 256) ||
-		len(input.CorrelationID) > 256 ||
-		len(input.CausationID) > 256 ||
-		!utf8.ValidString(input.CorrelationID) ||
-		!utf8.ValidString(input.CausationID) ||
-		input.DelegatedPrincipalID != "" && !validID(input.DelegatedPrincipalID) ||
-		input.ParentEventID != "" && !validID(input.ParentEventID) ||
-		len(input.Metadata) == 0 ||
-		len(input.Metadata) > MaxEventMetadataBytes ||
-		!utf8.Valid(input.Metadata) {
+	return input.ResourceVersion > 0 &&
+		validBoundedField(input.ResourceKind, 128) &&
+		validBoundedField(input.ResourceID, 256) &&
+		validBoundedField(input.Kind, 128) &&
+		len(input.CorrelationID) <= 256 &&
+		len(input.CausationID) <= 256 &&
+		utf8.ValidString(input.CorrelationID) &&
+		utf8.ValidString(input.CausationID) &&
+		(input.ParentEventID == "" || validID(input.ParentEventID)) &&
+		validEventMetadata(input.Metadata)
+}
+
+func validEventMetadata(metadata EventMetadata) bool {
+	switch metadata.State {
+	case "", EventStateActive, EventStateQueued, EventStateRunning, EventStateCompleted,
+		EventStateSucceeded, EventStateFailed, EventStateCancelled, EventStateBlocked, EventStateReview:
+	default:
 		return false
 	}
-	var metadata map[string]json.RawMessage
-	return json.Unmarshal(input.Metadata, &metadata) == nil && metadata != nil
+	return metadata.MessageCount <= MaxEventCount && metadata.ToolCallCount <= MaxEventCount
 }
 
 func validBoundedField(value string, limit int) bool {

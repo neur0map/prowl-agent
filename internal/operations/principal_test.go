@@ -2,10 +2,11 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPrincipalGeneratedDurableAcrossReopen(t *testing.T) {
@@ -110,6 +111,27 @@ func TestClientActorRejectedByAuthorityConstraints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attribution, err := store.LocalAttribution(context.Background(), SurfaceWorkbench)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientInput := EventInput{ResourceKind: "session", ResourceID: "session-client", ResourceVersion: 1, Kind: "session.created", Metadata: EventMetadata{State: EventStateActive}}
+	err = store.Update(context.Background(), func(tx *Tx) error {
+		_, err := tx.AppendEvent(context.Background(), Attribution{}, clientInput)
+		return err
+	})
+	if !errors.Is(err, ErrInvalidAttribution) {
+		t.Fatalf("zero client attribution error=%v", err)
+	}
+	forged := attribution
+	forged.authorizationScope = "client-admin"
+	err = store.Update(context.Background(), func(tx *Tx) error {
+		_, err := tx.AppendEvent(context.Background(), forged, clientInput)
+		return err
+	})
+	if !errors.Is(err, ErrInvalidAttribution) {
+		t.Fatalf("forged client attribution error=%v", err)
+	}
 
 	err = store.Update(context.Background(), func(tx *Tx) error {
 		_, err := tx.ExecContext(context.Background(), `INSERT INTO principals(principal_id,kind,source,parent_principal_id,created_at) VALUES(?,?,?,?,?)`, "client-actor", "delegated", "client", nil, 1)
@@ -155,26 +177,24 @@ func TestPrincipalOutboxTransactionAndCursorAreDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attribution, err := store.LocalAttribution(context.Background(), SurfaceCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
 	input := EventInput{
-		ResourceKind:       "session",
-		ResourceID:         "session-1",
-		ResourceVersion:    1,
-		Kind:               "session.created",
-		PrincipalID:        principal.ID,
-		RequestedProfileID: "local",
-		ResolvedProfileID:  "local",
-		SurfaceID:          "cli",
-		OwnerPrincipalID:   principal.ID,
-		AuthorizationScope: "local",
-		CorrelationID:      "correlation-1",
-		Metadata:           []byte(`{"status":"active"}`),
+		ResourceKind:    "session",
+		ResourceID:      "session-1",
+		ResourceVersion: 1,
+		Kind:            "session.created",
+		CorrelationID:   "correlation-1",
+		Metadata:        EventMetadata{State: EventStateActive},
 	}
 	injected := errors.New("rollback")
 	err = store.Update(context.Background(), func(tx *Tx) error {
 		if err := insertTestSession(context.Background(), tx, principal, "session-1"); err != nil {
 			return err
 		}
-		if _, err := tx.AppendEvent(context.Background(), input); err != nil {
+		if _, err := tx.AppendEvent(context.Background(), attribution, input); err != nil {
 			return err
 		}
 		return injected
@@ -202,7 +222,7 @@ func TestPrincipalOutboxTransactionAndCursorAreDurable(t *testing.T) {
 		if err := insertTestSession(context.Background(), tx, principal, "session-1"); err != nil {
 			return err
 		}
-		created, err := tx.AppendEvent(context.Background(), input)
+		created, err := tx.AppendEvent(context.Background(), attribution, input)
 		event = created
 		return err
 	}); err != nil {
@@ -221,8 +241,15 @@ func TestPrincipalOutboxTransactionAndCursorAreDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if more || len(rows) != 1 || rows[0].ID != event.ID || string(rows[0].Metadata) != `{"status":"active"}` {
+	if more || len(rows) != 1 || rows[0].ID != event.ID || rows[0].Metadata.State != EventStateActive {
 		t.Fatalf("rows=%+v more=%v", rows, more)
+	}
+	if err := store.AdvanceRetention(context.Background(), event.Sequence, "snapshot://operations/"+principal.ID); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("unpublished retention error=%v", err)
+	}
+	rows, more, err = store.Replay(context.Background(), 0, 10)
+	if err != nil || more || len(rows) != 1 {
+		t.Fatalf("unpublished event lost: rows=%+v more=%v err=%v", rows, more, err)
 	}
 	if err := store.SetPublisherWatermark(context.Background(), event.Sequence); err != nil {
 		t.Fatal(err)
@@ -251,29 +278,45 @@ func TestPrincipalOutboxTransactionAndCursorAreDurable(t *testing.T) {
 	}
 }
 
-func TestPrincipalOutboxRejectsUnboundedMetadataAndMutation(t *testing.T) {
+func TestPrincipalOutboxRejectsPrivateMetadataAndMutation(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	store, err := Open(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := store.ResolveLocalPrincipal(context.Background())
+	attribution, err := store.LocalAttribution(context.Background(), SurfaceCLI)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := EventInput{ResourceKind: "session", ResourceID: "session-1", ResourceVersion: 1, Kind: "session.created", PrincipalID: principal.ID, RequestedProfileID: "local", ResolvedProfileID: "local", SurfaceID: "cli", OwnerPrincipalID: principal.ID, AuthorizationScope: "local", Metadata: []byte(`{}`)}
-	input.Metadata = []byte(`{"value":"` + strings.Repeat("x", MaxEventMetadataBytes) + `"}`)
+	input := EventInput{
+		ResourceKind:    "session",
+		ResourceID:      "session-1",
+		ResourceVersion: 1,
+		Kind:            "session.created",
+		Metadata:        EventMetadata{State: EventState("Bearer-secret")},
+	}
 	if err := store.Update(context.Background(), func(tx *Tx) error {
-		_, err := tx.AppendEvent(context.Background(), input)
+		_, err := tx.AppendEvent(context.Background(), attribution, input)
 		return err
 	}); !errors.Is(err, ErrInvalidEvent) {
-		t.Fatalf("oversize metadata error=%v", err)
+		t.Fatalf("private metadata error=%v", err)
 	}
-	input.Metadata = []byte(`{}`)
+	var decoded EventMetadata
+	if err := json.Unmarshal([]byte(`{"bearer":"secret"}`), &decoded); err == nil {
+		t.Fatal("unknown secret-bearing metadata field was accepted")
+	}
+	input.Metadata = EventMetadata{State: EventStateActive, MessageCount: MaxEventCount + 1}
+	if err := store.Update(context.Background(), func(tx *Tx) error {
+		_, err := tx.AppendEvent(context.Background(), attribution, input)
+		return err
+	}); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatalf("unbounded metadata count error=%v", err)
+	}
+	input.Metadata = EventMetadata{State: EventStateActive}
 	var event Event
 	if err := store.Update(context.Background(), func(tx *Tx) error {
-		created, err := tx.AppendEvent(context.Background(), input)
+		created, err := tx.AppendEvent(context.Background(), attribution, input)
 		event = created
 		return err
 	}); err != nil {
@@ -284,6 +327,81 @@ func TestPrincipalOutboxRejectsUnboundedMetadataAndMutation(t *testing.T) {
 		return err
 	}); err == nil {
 		t.Fatal("immutable outbox event was updated")
+	}
+}
+
+func TestPrincipalReplayIsAtomicWithRetention(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	first, err := Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	attribution, err := first.LocalAttribution(context.Background(), SurfaceCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var head uint64
+	for index := 1; index <= 2; index++ {
+		input := EventInput{ResourceKind: "session", ResourceID: "session-" + string(rune('0'+index)), ResourceVersion: 1, Kind: "session.changed", Metadata: EventMetadata{State: EventStateActive}}
+		if err := first.Update(context.Background(), func(tx *Tx) error {
+			event, err := tx.AppendEvent(context.Background(), attribution, input)
+			head = event.Sequence
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := first.SetPublisherWatermark(context.Background(), head); err != nil {
+		t.Fatal(err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	first.beforeReplayRows = func() {
+		close(entered)
+		<-release
+	}
+	type replayResult struct {
+		events []Event
+		more   bool
+		err    error
+	}
+	replayed := make(chan replayResult, 1)
+	go func() {
+		events, more, err := first.Replay(context.Background(), 0, 10)
+		replayed <- replayResult{events: events, more: more, err: err}
+	}()
+	<-entered
+	retained := make(chan error, 1)
+	go func() {
+		retained <- second.AdvanceRetention(context.Background(), head, "snapshot://operations/"+attribution.PrincipalID())
+	}()
+	var retentionErr error
+	retentionFinished := false
+	select {
+	case retentionErr = <-retained:
+		retentionFinished = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	result := <-replayed
+	if result.err != nil || result.more || len(result.events) != 2 {
+		t.Fatalf("replay=%+v", result)
+	}
+	if !retentionFinished {
+		retentionErr = <-retained
+	}
+	if retentionErr != nil {
+		t.Fatal(retentionErr)
+	}
+	if _, _, err := first.Replay(context.Background(), 0, 10); !errors.Is(err, ErrCursorExpired) {
+		t.Fatalf("post-retention replay error=%v", err)
 	}
 }
 

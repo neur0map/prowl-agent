@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
+import { useI18n } from '../../i18n'
 
-const countFormatter = new Intl.NumberFormat('en-US')
 
 export type Brief = {
   workspace: { name: string }
@@ -38,6 +38,7 @@ export async function loadBrief(): Promise<Brief> {
 }
 
 export function BriefPage({ load = loadBrief }: { load?: BriefLoader }) {
+  const { t } = useI18n()
   const [state, setState] = useState<BriefState>({ kind: 'loading' })
 
   useEffect(() => {
@@ -58,20 +59,20 @@ export function BriefPage({ load = loadBrief }: { load?: BriefLoader }) {
 
   if (state.kind === 'loading') {
     return (
-      <section class="brief-state" aria-label="Project brief" aria-busy="true">
-        <span class="eyebrow">Home / Brief</span>
-        <h1>Project brief</h1>
-        <p role="status">Loading project brief…</p>
+      <section class="brief-state" aria-label={t('brief.aria')} aria-busy="true">
+        <span class="eyebrow">{t('brief.eyebrow')}</span>
+        <h1>{t('brief.heading')}</h1>
+        <p role="status">{t('brief.loading')}</p>
       </section>
     )
   }
 
   if (state.kind === 'error') {
     return (
-      <section class="brief-state" aria-label="Project brief">
-        <span class="eyebrow">Home / Brief</span>
-        <h1>Project brief</h1>
-        <p role="alert">Project brief unavailable. Refresh to retry.</p>
+      <section class="brief-state" aria-label={t('brief.aria')}>
+        <span class="eyebrow">{t('brief.eyebrow')}</span>
+        <h1>{t('brief.heading')}</h1>
+        <p role="alert">{t('brief.unavailable')}</p>
       </section>
     )
   }
@@ -80,66 +81,67 @@ export function BriefPage({ load = loadBrief }: { load?: BriefLoader }) {
 }
 
 function BriefReady({ brief }: { brief: Brief }) {
+  const { t, formatNumber } = useI18n()
   const { counts, docs, entrypoints, clusters, hotspots } = brief.overview
   const indexed = brief.freshness.last_indexed
   const sourceIsEmpty = counts.files === 0
 
   if (sourceIsEmpty) {
     return (
-      <section class="brief-page" aria-label="Project brief">
+      <section class="brief-page" aria-label={t('brief.aria')}>
         <header class="page-header">
           <div>
-            <span class="eyebrow">Home / Brief</span>
+            <span class="eyebrow">{t('brief.eyebrow')}</span>
             <h1>{brief.workspace.name}</h1>
           </div>
-          <span class="status-pill">Index {brief.freshness.status}</span>
+          <span class="status-pill">{t('brief.indexStatus', { status: brief.freshness.status })}</span>
         </header>
         <article class="empty-brief">
-          <h2>No indexed source facts yet.</h2>
-          <p>Index this workspace, then refresh this page to build its source-backed brief.</p>
+          <h2>{t('brief.noFacts')}</h2>
+          <p>{t('brief.emptyDetail')}</p>
         </article>
       </section>
     )
   }
 
   return (
-    <section class="brief-page" aria-label="Project brief">
+    <section class="brief-page" aria-label={t('brief.aria')}>
       <header class="page-header">
         <div>
-          <span class="eyebrow">Home / Brief</span>
+          <span class="eyebrow">{t('brief.eyebrow')}</span>
           <h1>{brief.workspace.name}</h1>
-          <p>{formatCount(counts.files)} indexed source files · {formatCount(counts.symbols)} symbols · {formatCount(counts.edges)} relationships</p>
+          <p>{t('brief.summary', { files: formatNumber(counts.files), symbols: formatNumber(counts.symbols), edges: formatNumber(counts.edges) })}</p>
         </div>
         <div class="brief-statuses">
-          <span class="status-pill">Index {brief.freshness.status}</span>
-          <span class="brief-indexed">{indexed ? `Indexed ${indexed}` : 'Index time unavailable'}</span>
+          <span class="status-pill">{t('brief.indexStatus', { status: brief.freshness.status })}</span>
+          <span class="brief-indexed">{indexed ? t('brief.indexed', { date: indexed }) : t('brief.indexTimeUnavailable')}</span>
         </div>
       </header>
 
-      <section class="brief-metrics" aria-label="Project metrics">
-        <article class="metric-card"><span class="eyebrow">Source files</span><strong>{formatCount(counts.files)}</strong></article>
-        <article class="metric-card"><span class="eyebrow">Symbols</span><strong>{formatCount(counts.symbols)}</strong></article>
-        <article class="metric-card"><span class="eyebrow">Accepted knowledge</span><strong>{formatCount(brief.knowledge.documents)}</strong></article>
-        <article class="metric-card"><span class="eyebrow">Capabilities</span><strong>{formatCount(brief.capabilities.length)}</strong></article>
+      <section class="brief-metrics" aria-label={t('brief.metricsAria')}>
+        <article class="metric-card"><span class="eyebrow">{t('brief.sourceFiles')}</span><strong>{formatNumber(counts.files)}</strong></article>
+        <article class="metric-card"><span class="eyebrow">{t('brief.symbols')}</span><strong>{formatNumber(counts.symbols)}</strong></article>
+        <article class="metric-card"><span class="eyebrow">{t('brief.knowledgeAccepted')}</span><strong>{formatNumber(brief.knowledge.documents)}</strong></article>
+        <article class="metric-card"><span class="eyebrow">{t('brief.capabilities')}</span><strong>{formatNumber(brief.capabilities.length)}</strong></article>
       </section>
 
-      <section class="brief-columns" aria-label="Project map">
+      <section class="brief-columns" aria-label={t('brief.projectMapAria')}>
         <article class="brief-card evidence-card">
-          <span class="eyebrow">Onboarding</span>
-          <h2>Start with evidence</h2>
-          <FactList title="Guides" items={docs} empty="No guide documents were identified." />
-          <FactList title="Entrypoints" items={entrypoints} empty="No entrypoints were identified." />
+          <span class="eyebrow">{t('brief.onboarding')}</span>
+          <h2>{t('brief.startEvidence')}</h2>
+          <FactList title={t('brief.guides')} items={docs} empty={t('brief.noGuides')} />
+          <FactList title={t('brief.entrypoints')} items={entrypoints} empty={t('brief.noEntrypoints')} />
         </article>
 
         <article class="brief-card">
-          <span class="eyebrow">Architecture</span>
-          <h2>Subsystem map</h2>
-          {clusters.length === 0 ? <p class="empty-list">No connected subsystems were identified.</p> : (
+          <span class="eyebrow">{t('brief.architecture')}</span>
+          <h2>{t('brief.subsystemMap')}</h2>
+          {clusters.length === 0 ? <p class="empty-list">{t('brief.noSubsystems')}</p> : (
             <ul class="cluster-list">
               {clusters.map((cluster) => (
                 <li key={`${cluster.label}:${cluster.lang}`}>
                   <code>{cluster.label}</code>
-                  <span>{cluster.lang} · {formatCount(cluster.files)} files</span>
+                  <span>{t('brief.clusterMeta', { language: cluster.lang, files: formatNumber(cluster.files) })}</span>
                 </li>
               ))}
             </ul>
@@ -147,21 +149,21 @@ function BriefReady({ brief }: { brief: Brief }) {
         </article>
       </section>
 
-      <section class="brief-columns brief-secondary" aria-label="Review context">
+      <section class="brief-columns brief-secondary" aria-label={t('brief.reviewContextAria')}>
         <article class="brief-card">
-          <span class="eyebrow">Review focus</span>
-          <h2>Dependency hotspots</h2>
-          {hotspots.length === 0 ? <p class="empty-list">No dependency hotspots were identified.</p> : (
+          <span class="eyebrow">{t('brief.reviewFocus')}</span>
+          <h2>{t('brief.dependencyHotspots')}</h2>
+          {hotspots.length === 0 ? <p class="empty-list">{t('brief.noHotspots')}</p> : (
             <ul class="fact-list">
-              {hotspots.map((hotspot) => <li key={hotspot.file}><code>{hotspot.file}</code><span>{formatCount(hotspot.in)} incoming links</span></li>)}
+              {hotspots.map((hotspot) => <li key={hotspot.file}><code>{hotspot.file}</code><span>{t('brief.incomingLinks', { count: formatNumber(hotspot.in) })}</span></li>)}
             </ul>
           )}
         </article>
 
         <article class="brief-card">
-          <span class="eyebrow">Available workflows</span>
-          <h2>Capabilities</h2>
-          {brief.capabilities.length === 0 ? <p class="empty-list">No local capabilities were discovered.</p> : (
+          <span class="eyebrow">{t('brief.availableWorkflows')}</span>
+          <h2>{t('brief.capabilities')}</h2>
+          {brief.capabilities.length === 0 ? <p class="empty-list">{t('brief.noCapabilitiesDiscovered')}</p> : (
             <ul class="capability-list">
               {brief.capabilities.map((capability) => (
                 <li key={capability.name}>
@@ -187,9 +189,6 @@ function FactList({ title, items, empty }: { title: string; items: string[]; emp
   )
 }
 
-function formatCount(value: number) {
-  return countFormatter.format(value)
-}
 
 function isBriefEnvelope(value: unknown): value is { data: Brief } {
   return isRecord(value) && isBrief(value.data)

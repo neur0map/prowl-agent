@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ExplorePage } from './ExplorePage'
 import { sourceLink, type Explore } from '../../transport/contracts'
+import { I18nProvider } from '../../i18n'
 
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
 vi.mock('../../transport/api', () => ({ apiFetch }))
@@ -63,6 +64,17 @@ describe('ExplorePage', () => {
     expect(document.activeElement).toBe(link)
     link.click()
     await waitFor(() => expect(window.location.hash).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20&preview_end=20'))
+  })
+
+
+  it('pseudo-localizes the source-link template without changing source evidence', async () => {
+    render(<I18nProvider locale="en-XA"><ExplorePage load={() => Promise.resolve(populatedExplore)} /></I18nProvider>)
+
+    const link = await screen.findByRole('link', { name: /cmd\/server\/main\.go/ })
+    expect(link.textContent).toContain('cmd/server/main.go')
+    expect(link.textContent).toContain('8–20')
+    expect(link.textContent).not.toContain(' lines ')
+    expect(link.getAttribute('href')).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20&preview_end=20')
   })
 
   it('bounds source navigation to the maximum source preview range', () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 
 import { APIResponseError, apiJSON } from '../../transport/api'
 import { isEventCursor, watchProjectJobEvents, type EventCursor, type WatchOptions } from '../../transport/events'
+import { useI18n, type I18n } from '../../i18n'
 
 const refetchDebounceMilliseconds = 200
 const jobIDPattern = /^[a-f0-9]{32}$/
@@ -77,10 +78,11 @@ export function createIdempotencyKey(): string {
 }
 
 export function JobStatus({ onInvalidate, client = defaultClient, watch = watchProjectJobEvents, createIdempotencyKey: newKey = createIdempotencyKey }: JobStatusProps) {
+  const { t, formatNumber } = useI18n()
   const [job, setJob] = useState<ProjectJob | null>(null)
   const [action, setAction] = useState<Action>(null)
   const [connection, setConnection] = useState<'connecting' | 'live' | 'retrying' | 'offline' | null>(null)
-  const [message, setMessage] = useState('Index is ready to refresh.')
+  const [message, setMessage] = useState(() => t('jobs.ready'))
   const mounted = useRef(true)
   const jobRef = useRef<ProjectJob | null>(null)
   const clientRef = useRef(client)
@@ -112,7 +114,7 @@ export function JobStatus({ onInvalidate, client = defaultClient, watch = watchP
     void clientRef.current.get(current.id, controller.signal).then(
       (next) => {
         if (!isProjectJob(next) || jobRef.current?.id !== current.id || controller.signal.aborted) {
-          if (!controller.signal.aborted && mounted.current) setMessage('Index status could not be verified.')
+          if (!controller.signal.aborted && mounted.current) setMessage(t('jobs.verifyFailed'))
           return
         }
         applyCanonicalJob(next, true)
@@ -120,7 +122,7 @@ export function JobStatus({ onInvalidate, client = defaultClient, watch = watchP
       () => {
         if (!controller.signal.aborted && mounted.current) {
           setConnection('offline')
-          setMessage('Connection unavailable. Retrying when available.')
+          setMessage(t('jobs.connectionUnavailable'))
         }
       },
     ).finally(() => {
@@ -173,22 +175,22 @@ export function JobStatus({ onInvalidate, client = defaultClient, watch = watchP
     actionController.current?.abort()
     actionController.current = controller
     setAction('refreshing')
-    setMessage('Starting index refresh…')
+    setMessage(t('jobs.starting'))
     void clientRef.current.refresh(controller.signal).then(
       (next) => {
         if (!isProjectJob(next)) {
-          if (!controller.signal.aborted) setMessage('Index response could not be verified.')
+          if (!controller.signal.aborted) setMessage(t('jobs.responseVerifyFailed'))
           return
         }
         if (!controller.signal.aborted) {
           applyCanonicalJob(next)
-          setMessage('Index refresh started.')
+          setMessage(t('jobs.started'))
         }
       },
       () => {
         if (!controller.signal.aborted) {
           setConnection('offline')
-          setMessage('Index refresh is unavailable. Retry when the connection is available.')
+          setMessage(t('jobs.refreshUnavailable'))
         }
       },
     ).finally(() => {
@@ -201,34 +203,34 @@ export function JobStatus({ onInvalidate, client = defaultClient, watch = watchP
     if (current === null || (current.status !== 'queued' && current.status !== 'running')) return
     const idempotencyKey = newKey()
     if (!isPrintableKey(idempotencyKey)) {
-      setMessage('Cancel request could not be prepared. Retry the action.')
+      setMessage(t('jobs.cancelInvalid'))
       return
     }
     const controller = new AbortController()
     actionController.current?.abort()
     actionController.current = controller
     setAction('cancelling')
-    setMessage('Requesting index cancellation…')
+    setMessage(t('jobs.cancellationRequesting'))
     void clientRef.current.cancel(current.id, current.version, idempotencyKey, controller.signal).then(
       (next) => {
         if (!isProjectJob(next)) {
-          if (!controller.signal.aborted) setMessage('Index response could not be verified.')
+          if (!controller.signal.aborted) setMessage(t('jobs.responseVerifyFailed'))
           return
         }
         if (!controller.signal.aborted) {
           applyCanonicalJob(next)
-          setMessage('Index cancellation requested.')
+          setMessage(t('jobs.cancellationRequested'))
         }
       },
       (error: unknown) => {
         if (controller.signal.aborted) return
         if (error instanceof APIResponseError && error.status === 409 && error.code === 'job_version_conflict') {
-          setMessage('Index state changed; reloaded current status.')
+          setMessage(t('jobs.stateChanged'))
           scheduleRefetch.current(0)
           return
         }
         setConnection('offline')
-        setMessage('Connection unavailable. Retrying when available.')
+        setMessage(t('jobs.connectionUnavailable'))
       },
     ).finally(() => {
       if (!controller.signal.aborted && mounted.current) setAction(null)
@@ -238,31 +240,33 @@ export function JobStatus({ onInvalidate, client = defaultClient, watch = watchP
   const terminal = job !== null && isTerminal(job)
   const actionDisabled = action !== null
   const liveJob = job !== null && isActive(job)
-  const connectionText = connection === 'connecting' ? 'Connecting to live updates.'
-    : connection === 'live' ? 'Live updates connected.'
-      : connection === 'retrying' ? 'Reconnecting to live updates.'
-        : connection === 'offline' ? 'Live updates unavailable; retrying when available.'
+  const connectionText = connection === 'connecting' ? t('jobs.connecting')
+    : connection === 'live' ? t('jobs.live')
+      : connection === 'retrying' ? t('jobs.retrying')
+        : connection === 'offline' ? t('jobs.offline')
           : ''
-  const announce = job !== null || action !== null || connection !== null || message !== 'Index is ready to refresh.'
+  const announce = job !== null || action !== null || connection !== null || message !== t('jobs.ready')
+
+  const progressText = liveJob && job !== null ? t('jobs.indexProgress', { progress: formatNumber(job.progress) }) : ''
 
 
   return (
-    <section class="job-status" aria-label="Index status" data-state={job?.status ?? 'idle'} aria-busy={action !== null ? 'true' : undefined}>
+    <section class="job-status" aria-label={t('jobs.statusAria')} data-state={job?.status ?? 'idle'} aria-busy={action !== null ? 'true' : undefined}>
       <div class="job-status-heading">
-        <span class="eyebrow">Workspace index</span>
-        <strong>{job === null ? 'Index ready' : `Index ${job.status}`}</strong>
+        <span class="eyebrow">{t('jobs.workspaceIndex')}</span>
+        <strong>{job === null ? t('jobs.indexReady') : t('jobs.indexWithStatus', { status: job.status })}</strong>
       </div>
       {liveJob ? <div class="job-status-detail">
         <span>{job.phase}</span>
         <label>
-          <span>Index progress: {job.progress}%</span>
-          <progress aria-label={`Index progress: ${job.progress}%`} value={job.progress} max="100">{job.progress}%</progress>
+          <span>{progressText}</span>
+          <progress aria-label={progressText} value={job.progress} max="100">{progressText}</progress>
         </label>
       </div> : null}
-      {terminal && job !== null ? <p class="job-outcome">{terminalOutcome(job)}</p> : null}
+      {terminal && job !== null ? <p class="job-outcome">{terminalOutcome(job, t)}</p> : null}
       <div class="job-status-actions">
-        {job === null || terminal ? <button type="button" onClick={refreshIndex} disabled={actionDisabled}>{action === 'refreshing' ? 'Refreshing index…' : 'Refresh index'}</button> : null}
-        {job !== null && (job.status === 'queued' || job.status === 'running' || job.status === 'cancelling') ? <button type="button" onClick={cancelIndex} disabled={actionDisabled || job.status === 'cancelling'}>{action === 'cancelling' || job.status === 'cancelling' ? 'Cancelling index…' : 'Cancel index'}</button> : null}
+        {job === null || terminal ? <button type="button" onClick={refreshIndex} disabled={actionDisabled}>{action === 'refreshing' ? t('jobs.refreshing') : t('jobs.refresh')}</button> : null}
+        {job !== null && (job.status === 'queued' || job.status === 'running' || job.status === 'cancelling') ? <button type="button" onClick={cancelIndex} disabled={actionDisabled || job.status === 'cancelling'}>{action === 'cancelling' || job.status === 'cancelling' ? t('jobs.cancellingAction') : t('jobs.cancel')}</button> : null}
       </div>
       <p class="job-status-message" role={announce ? 'status' : undefined} aria-live={announce ? 'polite' : undefined}>{message}{connectionText ? ` ${connectionText}` : ''}</p>
     </section>
@@ -309,10 +313,12 @@ function isTerminal(job: ProjectJob): boolean {
   return job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled'
 }
 
-function terminalOutcome(job: ProjectJob): string {
-  if (job.status === 'succeeded') return `Index completed${job.outcome ? `: ${job.outcome}.` : '.'}`
-  if (job.status === 'cancelled') return `Index cancelled${job.outcome ? `: ${job.outcome}.` : '.'}`
-  return `Index failed${job.error_code ? `: ${job.error_code}.` : '.'}`
+function terminalOutcome(job: ProjectJob, t: I18n['t']): string {
+  const detail = job.status === 'failed' ? job.error_code : job.outcome
+  const suffix = detail ? t('jobs.outcomeDetail', { detail }) : t('jobs.outcomePeriod')
+  if (job.status === 'succeeded') return t('jobs.completedOutcome', { detail: suffix })
+  if (job.status === 'cancelled') return t('jobs.cancelledOutcome', { detail: suffix })
+  return t('jobs.failedOutcome', { detail: suffix })
 }
 
 function isPrintableKey(value: string): boolean {

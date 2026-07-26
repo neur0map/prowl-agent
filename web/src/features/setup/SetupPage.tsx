@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
+import { useI18n } from '../../i18n'
 
 type SetupDetection = { integrations: string[]; project_config_version: string }
 type SetupPlan = { integrations: string[]; actions: Array<{ integration: string; path: string; description: string }>; project_config_version: string; hash: string }
@@ -33,6 +34,7 @@ const defaultClient: SetupClient = {
 export function createIdempotencyKey(): string { return crypto.randomUUID() }
 
 export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey = createIdempotencyKey }: { client?: SetupClient; createIdempotencyKey?: () => string }) {
+  const { t, formatNumber } = useI18n()
   const [detection, setDetection] = useState<DetectState>({ kind: 'loading' })
   const [selected, setSelected] = useState<string[]>([])
   const [plan, setPlan] = useState<SetupPlan | null>(null)
@@ -93,7 +95,7 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
     setStatus('')
     setOutcome(null)
     void client.apply({ integrations: plan.integrations, plan_hash: plan.hash, expected_project_config_version: plan.project_config_version, approved: true, idempotency_key: newKey() }).then(
-      (value) => { if (planRequest.current === generation) { setApplying(false); setOutcome(value); setStatus(value.verified ? 'Setup applied and verified.' : 'Setup applied.') } },
+      (value) => { if (planRequest.current === generation) { setApplying(false); setOutcome(value); setStatus(value.verified ? t('setup.appliedVerified') : t('setup.applied')) } },
       (error: unknown) => { if (planRequest.current === generation) { setApplying(false); if (isSetupConflict(errorCode(error))) setConflict(true); else setOperationError(true) } },
     )
   }
@@ -105,23 +107,23 @@ export function SetupPage({ client = defaultClient, createIdempotencyKey: newKey
     setOperationError(false)
     setStatus('')
     void client.verify(plan.integrations).then(
-      (value) => { if (planRequest.current === generation) { setVerifying(false); setStatus(value.verified ? 'Selected integrations verified.' : 'Selected integrations could not be verified.') } },
+      (value) => { if (planRequest.current === generation) { setVerifying(false); setStatus(value.verified ? t('setup.selectedVerified') : t('setup.selectedUnverified')) } },
       () => { if (planRequest.current === generation) { setVerifying(false); setOperationError(true) } },
     )
   }
 
-  return <section aria-label="Setup">
-    <header><h1>Setup</h1><p>Review server-provided integration actions before applying them.</p></header>
-    {detection.kind === 'loading' ? <p role="status">Detecting setup…</p> : null}
-    {detection.kind === 'error' ? <p role="alert">Setup is unavailable. Try again.</p> : null}
-    {detection.kind === 'ready' && detection.value.integrations.length === 0 ? <p>No supported integrations were detected.</p> : null}
-    {detection.kind === 'ready' && detection.value.integrations.length > 0 ? <fieldset><legend>Select integrations</legend>{detection.value.integrations.map((integration) => <label key={integration}><input type="checkbox" checked={selected.includes(integration)} onInput={(event) => toggle(integration, event.currentTarget.checked)} />{integration}</label>)}</fieldset> : null}
-    {detection.kind === 'ready' && detection.value.integrations.length > 0 ? <button type="button" disabled={selected.length === 0} onClick={reviewPlan}>Review setup plan</button> : null}
-    {plan ? <section aria-label="Reviewed setup plan"><h2>Reviewed setup plan</h2><ul>{plan.actions.map((action) => <li key={`${action.integration}:${action.path}`}><strong>{action.integration}</strong><code>{action.path}</code><span>{action.description}</span></li>)}</ul><label><input type="checkbox" checked={approved} onInput={(event) => setApproved(event.currentTarget.checked)} />I approve this setup plan</label><div><button type="button" disabled={!approved || applying} onClick={apply}>Apply reviewed setup plan</button><button type="button" disabled={verifying} onClick={verify}>Verify reviewed setup</button></div></section> : null}
+  return <section aria-label={t('setup.aria')}>
+    <header><h1>{t('setup.heading')}</h1><p>{t('setup.description')}</p></header>
+    {detection.kind === 'loading' ? <p role="status">{t('setup.detecting')}</p> : null}
+    {detection.kind === 'error' ? <p role="alert">{t('setup.unavailable')}</p> : null}
+    {detection.kind === 'ready' && detection.value.integrations.length === 0 ? <p>{t('setup.empty')}</p> : null}
+    {detection.kind === 'ready' && detection.value.integrations.length > 0 ? <fieldset><legend>{t('setup.select')}</legend>{detection.value.integrations.map((integration) => <label key={integration}><input type="checkbox" checked={selected.includes(integration)} onInput={(event) => toggle(integration, event.currentTarget.checked)} />{integration}</label>)}</fieldset> : null}
+    {detection.kind === 'ready' && detection.value.integrations.length > 0 ? <button type="button" disabled={selected.length === 0} onClick={reviewPlan}>{t('setup.review')}</button> : null}
+    {plan ? <section aria-label={t('setup.reviewedAria')}><h2>{t('setup.reviewedHeading')}</h2><ul>{plan.actions.map((action) => <li key={`${action.integration}:${action.path}`}><strong>{action.integration}</strong><code>{action.path}</code><span>{action.description}</span></li>)}</ul><label><input type="checkbox" checked={approved} onInput={(event) => setApproved(event.currentTarget.checked)} />{t('setup.approve')}</label><div><button type="button" disabled={!approved || applying} onClick={apply}>{t('setup.apply')}</button><button type="button" disabled={verifying} onClick={verify}>{t('setup.verifyReviewed')}</button></div></section> : null}
     {status ? <p role="status">{status}</p> : null}
-    {outcome ? <dl aria-label="Setup outcome"><dt>Plan hash</dt><dd>{outcome.plan_hash}</dd><dt>Project configuration version</dt><dd>{outcome.project_config_version}</dd><dt>Idempotency key</dt><dd>{outcome.idempotency_key}</dd><dt>Verified</dt><dd>{String(outcome.verified)}</dd><dt>Rollback entries</dt><dd>{outcome.rollback_manifest.length}</dd></dl> : null}
-    {operationError ? <p role="alert">Setup operation is unavailable. Try again.</p> : null}
-    {conflict ? <p ref={conflictAlert} role="alert" tabIndex={-1}>The setup plan changed before it could be applied. Review the displayed plan and try again.</p> : null}
+    {outcome ? <dl aria-label={t('setup.outcomeAria')}><dt>{t('setup.planHash')}</dt><dd>{outcome.plan_hash}</dd><dt>{t('setup.configVersion')}</dt><dd>{outcome.project_config_version}</dd><dt>{t('setup.idempotencyKey')}</dt><dd>{outcome.idempotency_key}</dd><dt>{t('setup.verified')}</dt><dd>{String(outcome.verified)}</dd><dt>{t('setup.rollbackEntries')}</dt><dd>{formatNumber(outcome.rollback_manifest.length)}</dd></dl> : null}
+    {operationError ? <p role="alert">{t('setup.operationUnavailable')}</p> : null}
+    {conflict ? <p ref={conflictAlert} role="alert" tabIndex={-1}>{t('setup.conflictDetail')}</p> : null}
   </section>
 }
 

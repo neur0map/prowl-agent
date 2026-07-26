@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
 import { sourceLink, type APIEnvelope, type Explore } from '../../transport/contracts'
+import { useI18n } from '../../i18n'
 
 export type ExploreLoader = () => Promise<Explore>
 
@@ -20,6 +21,7 @@ export async function loadExplore(): Promise<Explore> {
 }
 
 export function ExplorePage({ load = loadExplore }: { load?: ExploreLoader }) {
+  const { t, formatNumber } = useI18n()
   const [state, setState] = useState<ExploreState>({ kind: 'loading' })
 
   useEffect(() => {
@@ -33,40 +35,40 @@ export function ExplorePage({ load = loadExplore }: { load?: ExploreLoader }) {
   }, [load])
 
   if (state.kind === 'loading') {
-    return <section aria-label="Project exploration" aria-busy="true"><span class="eyebrow">Explore</span><h1>Explore project</h1><p role="status">Loading project map…</p></section>
+    return <section aria-label={t('explore.aria')} aria-busy="true"><span class="eyebrow">{t('explore.eyebrow')}</span><h1>{t('explore.heading')}</h1><p role="status">{t('explore.loading')}</p></section>
   }
 
   if (state.kind === 'error') {
-    return <section aria-label="Project exploration"><span class="eyebrow">Explore</span><h1>Explore project</h1><p role="alert">Project exploration unavailable. Refresh to retry.</p></section>
+    return <section aria-label={t('explore.aria')}><span class="eyebrow">{t('explore.eyebrow')}</span><h1>{t('explore.heading')}</h1><p role="alert">{t('explore.unavailable')}</p></section>
   }
 
   if (state.explore.sections.length === 0) {
-    return <section aria-label="Project exploration"><span class="eyebrow">Explore</span><h1>{state.explore.workspace.name}</h1><article><h2>No source-backed project facts yet.</h2><p>Index this workspace, then refresh to explore its project map.</p></article></section>
+    return <section aria-label={t('explore.aria')}><span class="eyebrow">{t('explore.eyebrow')}</span><h1>{state.explore.workspace.name}</h1><article><h2>{t('explore.noFacts')}</h2><p>{t('explore.noFactsDetail')}</p></article></section>
   }
 
   return (
-    <section aria-label="Project exploration">
-      <header class="page-header"><div><span class="eyebrow">Explore</span><h1>{state.explore.workspace.name}</h1><p>Source-backed project map</p></div></header>
-      <section aria-label="Project map">
+    <section aria-label={t('explore.aria')}>
+      <header class="page-header"><div><span class="eyebrow">{t('explore.eyebrow')}</span><h1>{state.explore.workspace.name}</h1><p>{t('explore.projectMap')}</p></div></header>
+      <section aria-label={t('explore.projectMapAria')}>
         {state.explore.sections.map((section) => (
           <article key={section.id}>
             <h2>{section.title}</h2>
             <p>{section.description}</p>
-            {section.facts.length === 0 ? <p>No source-backed facts in this section.</p> : <ul>
-              {section.facts.map((fact) => (
-                <li key={fact.id}>
-                  <strong>{fact.label}</strong><span>{fact.detail}</span>
-                  {fact.anchor ? (() => {
-                    const link = sourceLink(fact.anchor)
-                    return <a href={link.href}>{link.label}</a>
-                  })() : null}
-                </li>
-              ))}
+            {section.facts.length === 0 ? <p>{t('explore.emptySection')}</p> : <ul>
+              {section.facts.map((fact) => {
+                const link = fact.anchor ? sourceLink(fact.anchor) : null
+                return (
+                  <li key={fact.id}>
+                    <strong>{fact.label}</strong><span>{fact.detail}</span>
+                    {link ? <a href={link.href}>{t('app.sourceLink', { path: link.target.path, start: link.target.line_start, end: link.target.line_end })}</a> : null}
+                  </li>
+                )
+              })}
             </ul>}
           </article>
         ))}
       </section>
-      {state.explore.tours.length > 0 ? <section aria-label="Guided tours"><h2>Guided tours</h2><ul>{state.explore.tours.map((tour) => <li key={tour.id}><strong>{tour.title}</strong><span>{tour.steps} steps</span></li>)}</ul></section> : null}
+      {state.explore.tours.length > 0 ? <section aria-label={t('explore.guidedToursAria')}><h2>{t('explore.guidedTours')}</h2><ul>{state.explore.tours.map((tour) => <li key={tour.id}><a href={`#/explore?tour=${encodeURIComponent(tour.id)}`}>{tour.title}</a><span>{t('explore.steps', { count: formatNumber(tour.steps) })}</span></li>)}</ul></section> : null}
     </section>
   )
 }

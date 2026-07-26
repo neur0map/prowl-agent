@@ -3,6 +3,7 @@ import type { JSX } from 'preact'
 
 import { apiFetch } from '../../transport/api'
 import { sourceLink, type APIEnvelope, type ContextLens, type ContextSearchRequest } from '../../transport/contracts'
+import { useI18n } from '../../i18n'
 
 export type ContextSearchClient = (request: ContextSearchRequest) => Promise<ContextLens>
 
@@ -26,6 +27,7 @@ export async function searchContext(request: ContextSearchRequest): Promise<Cont
 }
 
 export function ContextLensPage({ search = searchContext }: { search?: ContextSearchClient }) {
+  const { t } = useI18n()
   const [question, setQuestion] = useState('')
   const [state, setState] = useState<ContextState>({ kind: 'empty' })
   const requestID = useRef(0)
@@ -44,39 +46,40 @@ export function ContextLensPage({ search = searchContext }: { search?: ContextSe
   }
 
   return (
-    <section aria-label="Context lens">
-      <header class="page-header"><div><span class="eyebrow">Context</span><h1>Context lens</h1><p>Request bounded, source-backed project context.</p></div></header>
-      <form aria-label="Search project context" onSubmit={submit}>
+    <section aria-label={t('context.aria')}>
+      <header class="page-header"><div><span class="eyebrow">{t('context.eyebrow')}</span><h1>{t('context.heading')}</h1><p>{t('context.description')}</p></div></header>
+      <form aria-label={t('context.formAria')} onSubmit={submit}>
         <label>
-          Question
+          {t('context.question')}
           <input value={question} onInput={(event) => setQuestion(event.currentTarget.value)} required />
         </label>
-        <button type="submit">Search context</button>
+        <button type="submit">{t('context.search')}</button>
       </form>
-      {state.kind === 'empty' ? <article><h2>Ask a project question</h2><p>Search for a source-backed answer without reconstructing project context in the browser.</p></article> : null}
-      {state.kind === 'loading' ? <p role="status">Searching source-backed context…</p> : null}
-      {state.kind === 'error' ? <p role="alert">Project context unavailable. Try another question.</p> : null}
+      {state.kind === 'empty' ? <article><h2>{t('context.emptyHeading')}</h2><p>{t('context.emptyDetail')}</p></article> : null}
+      {state.kind === 'loading' ? <p role="status">{t('context.loading')}</p> : null}
+      {state.kind === 'error' ? <p role="alert">{t('context.projectUnavailable')}</p> : null}
       {state.kind === 'ready' ? <ContextResult context={state.context} /> : null}
     </section>
   )
 }
 
 function ContextResult({ context }: { context: ContextLens }) {
+  const { t } = useI18n()
   return (
-    <section aria-label="Context results">
-      <h2>Source-backed context</h2>
+    <section aria-label={t('context.resultsAria')}>
+      <h2>{t('context.sourceBacked')}</h2>
       <p>{context.summary}</p>
-      {context.items.length === 0 ? <p>No source-backed context matched this question.</p> : <ul>
+      {context.items.length === 0 ? <p>{t('context.emptyResult')}</p> : <ul>
         {context.items.map((item) => (
           <li key={item.id}>
             <article>
               <h3>{item.title}</h3>
               {item.summary ? <p>{item.summary}</p> : null}
-              {item.citations.length > 0 ? <ul aria-label={`${item.title} citations`}>
+              {item.citations.length > 0 ? <ul aria-label={t('context.citationsAria', { title: item.title })}>
                 {item.citations.map((citation) => {
                   if (!citation.path || citation.line_start === undefined || citation.line_end === undefined || citation.line_start < 1 || citation.line_end < citation.line_start) return <li key={citation.uri}><code>{citation.uri}</code></li>
                   const link = sourceLink({ path: citation.path, line_start: citation.line_start, line_end: citation.line_end })
-                  return <li key={citation.uri}><a href={link.href}>{link.label}</a></li>
+                  return <li key={citation.uri}><a href={link.href}>{t('app.sourceLink', { path: link.target.path, start: link.target.line_start, end: link.target.line_end })}</a></li>
                 })}
               </ul> : null}
             </article>

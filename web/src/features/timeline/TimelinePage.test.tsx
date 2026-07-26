@@ -5,6 +5,7 @@ const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }))
 vi.mock('../../transport/api', () => ({ apiFetch }))
 
 import { TimelinePage, type TimelineClient } from './TimelinePage'
+import { I18nProvider } from '../../i18n'
 
 const events = [
   { id: 'git-1', occurred_at: '2026-07-24T12:00:00Z', kind: 'commit', provenance: 'git', git: { commit: 'abc123', subject: 'Add timeline' } },
@@ -46,6 +47,18 @@ describe('TimelinePage', () => {
     ])
     expect(screen.getByText('hash')).toBeTruthy()
     expect(screen.getAllByText('10')).toHaveLength(2)
+  })
+
+
+  it('formats rendered numeric evidence with the active locale', async () => {
+    const localizedEvent = {
+      ...events[2],
+      context: { ...events[2].context!, budget_tokens: 12_345 },
+    }
+    render(<I18nProvider locale="en-XA"><TimelinePage client={client({ loadPage: vi.fn().mockResolvedValue({ events: [localizedEvent], next: '' }) })} /></I18nProvider>)
+
+    expect(await screen.findByText('12,345')).toBeTruthy()
+    expect(screen.getByText('run-1')).toBeTruthy()
   })
 
   it('requests the next server page through its injected client', async () => {

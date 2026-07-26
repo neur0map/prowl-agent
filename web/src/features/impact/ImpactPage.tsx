@@ -3,6 +3,7 @@ import type { JSX } from 'preact'
 
 import { apiFetch } from '../../transport/api'
 import { sourceLink, type APIEnvelope, type Impact } from '../../transport/contracts'
+import { useI18n } from '../../i18n'
 
 export type ImpactLoader = (path: string) => Promise<Impact>
 
@@ -26,6 +27,7 @@ export async function loadImpact(path: string): Promise<Impact> {
 }
 
 export function ImpactPage({ load = loadImpact }: { load?: ImpactLoader }) {
+  const { t } = useI18n()
   const [path, setPath] = useState('')
   const [state, setState] = useState<ImpactState>({ kind: 'empty' })
   const requestID = useRef(0)
@@ -44,34 +46,35 @@ export function ImpactPage({ load = loadImpact }: { load?: ImpactLoader }) {
   }
 
   return (
-    <section aria-label="Impact analysis">
-      <header class="page-header"><div><span class="eyebrow">Impact</span><h1>Source impact</h1><p>Inspect server-computed evidence for one project source file.</p></div></header>
-      <form aria-label="Inspect source impact" onSubmit={submit}>
+    <section aria-label={t('impact.aria')}>
+      <header class="page-header"><div><span class="eyebrow">{t('impact.eyebrow')}</span><h1>{t('impact.heading')}</h1><p>{t('impact.description')}</p></div></header>
+      <form aria-label={t('impact.formAria')} onSubmit={submit}>
         <label>
-          Source path
+          {t('impact.sourcePath')}
           <input value={path} onInput={(event) => setPath(event.currentTarget.value)} required />
         </label>
-        <button type="submit">Inspect impact</button>
+        <button type="submit">{t('impact.inspect')}</button>
       </form>
-      {state.kind === 'empty' ? <article><h2>Enter a project-relative source path</h2><p>Inspect graph, test, entrypoint, and knowledge evidence without recomputing it in the browser.</p></article> : null}
-      {state.kind === 'loading' ? <p role="status">Loading source-backed impact…</p> : null}
-      {state.kind === 'error' ? <p role="alert">Impact evidence unavailable. Try another source path.</p> : null}
+      {state.kind === 'empty' ? <article><h2>{t('impact.emptyHeading')}</h2><p>{t('impact.emptyDetail')}</p></article> : null}
+      {state.kind === 'loading' ? <p role="status">{t('impact.loading')}</p> : null}
+      {state.kind === 'error' ? <p role="alert">{t('impact.evidenceUnavailable')}</p> : null}
       {state.kind === 'ready' ? <ImpactEvidence impact={state.impact} /> : null}
     </section>
   )
 }
 
 function ImpactEvidence({ impact }: { impact: Impact }) {
+  const { t, formatNumber } = useI18n()
   return (
-    <section aria-label="Impact evidence">
-      <h2>Impact: {impact.path}</h2>
-      <section><h3>Dependency radius</h3><p>{impact.blast.total} transitive dependents</p><p>{impact.blast.direct} direct dependents</p></section>
-      <section><h3>Tests</h3>{impact.tests.tests && impact.tests.tests.length > 0 ? <ul>{impact.tests.tests.map((test) => <li key={test}><code>{test}</code></li>)}</ul> : <p>No test evidence was identified.</p>}</section>
-      <section><h3>Entrypoints</h3>{impact.entrypoints.entrypoints.length > 0 ? <ul>{impact.entrypoints.entrypoints.map((entrypoint) => <li key={entrypoint}><code>{entrypoint}</code></li>)}</ul> : <p>No entrypoint evidence was identified.</p>}</section>
-      <section><h3>Knowledge evidence</h3>{impact.knowledge.length > 0 ? <ul>{impact.knowledge.map((evidence) => {
+    <section aria-label={t('impact.evidenceAria')}>
+      <h2>{t('impact.evidenceHeading', { path: impact.path })}</h2>
+      <section><h3>{t('impact.dependencyRadius')}</h3><p>{t('impact.transitiveDependents', { count: formatNumber(impact.blast.total) })}</p><p>{t('impact.directDependentsCount', { count: formatNumber(impact.blast.direct) })}</p></section>
+      <section><h3>{t('impact.tests')}</h3>{impact.tests.tests && impact.tests.tests.length > 0 ? <ul>{impact.tests.tests.map((test) => <li key={test}><code>{test}</code></li>)}</ul> : <p>{t('impact.noTests')}</p>}</section>
+      <section><h3>{t('impact.entrypoints')}</h3>{impact.entrypoints.entrypoints.length > 0 ? <ul>{impact.entrypoints.entrypoints.map((entrypoint) => <li key={entrypoint}><code>{entrypoint}</code></li>)}</ul> : <p>{t('impact.noEntrypoints')}</p>}</section>
+      <section><h3>{t('impact.knowledgeEvidence')}</h3>{impact.knowledge.length > 0 ? <ul>{impact.knowledge.map((evidence) => {
         const link = sourceLink(evidence.anchor)
-        return <li key={evidence.id}><strong>{evidence.title}</strong><a href={link.href}>{link.label}</a></li>
-      })}</ul> : <p>No knowledge evidence was identified.</p>}</section>
+        return <li key={evidence.id}><strong>{evidence.title}</strong><a href={link.href}>{t('app.sourceLink', { path: link.target.path, start: link.target.line_start, end: link.target.line_end })}</a></li>
+      })}</ul> : <p>{t('impact.noKnowledge')}</p>}</section>
     </section>
   )
 }

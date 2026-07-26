@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
+import { useI18n } from '../../i18n'
 
 type TimelineGitCommit = { commit: string; subject: string }
 type TimelineKnowledgeLog = { action: string; path: string }
@@ -21,6 +22,7 @@ async function loadTimeline(cursor = ''): Promise<TimelineData> {
 const defaultClient: TimelineClient = { loadPage: loadTimeline }
 
 export function TimelinePage({ client = defaultClient }: { client?: TimelineClient }) {
+  const { t, formatNumber } = useI18n()
   const [state, setState] = useState<TimelineState>({ kind: 'loading', events: [] })
 
   useEffect(() => {
@@ -43,13 +45,13 @@ export function TimelinePage({ client = defaultClient }: { client?: TimelineClie
     )
   }
 
-  return <section aria-label="Timeline">
-    <header><h1>Timeline</h1><p>Server-supplied provenance events, newest first.</p></header>
-    {state.kind === 'loading' ? <p role="status">Loading timeline…</p> : null}
-    {state.kind === 'error' ? <p role="alert">Timeline is unavailable. Try again.</p> : null}
-    {state.kind === 'ready' && state.events.length === 0 ? <p>No timeline events are available.</p> : null}
-    {state.events.length > 0 ? <ol>{state.events.map((event) => <li key={event.id}><strong>{event.provenance}</strong><time dateTime={event.occurred_at}>{event.occurred_at}</time>{event.git ? <><span>{event.git.subject}</span><code>{event.git.commit}</code></> : null}{event.knowledge ? <><span>{event.knowledge.action}</span><code>{event.knowledge.path}</code></> : null}{event.context ? <dl><dt>Run ID</dt><dd>{event.context.run_id}</dd><dt>Query hash</dt><dd>{event.context.query_hash}</dd><dt>Hash version</dt><dd>{event.context.hash_version}</dd><dt>Mode</dt><dd>{event.context.mode}</dd><dt>Token budget</dt><dd>{event.context.budget_tokens}</dd><dt>Byte budget</dt><dd>{event.context.budget_bytes}</dd><dt>Estimated tokens</dt><dd>{event.context.estimated_tokens}</dd><dt>Estimated bytes</dt><dd>{event.context.estimated_bytes}</dd><dt>Strategy version</dt><dd>{event.context.strategy_version}</dd><dt>Status</dt><dd>{event.context.status}</dd>{event.context.error_code ? <><dt>Error code</dt><dd>{event.context.error_code}</dd></> : null}</dl> : null}</li>)}</ol> : null}
-    {state.kind === 'ready' && state.next !== '' ? <button type="button" onClick={loadNext}>Load more timeline events</button> : null}
+  return <section aria-label={t('timeline.aria')}>
+    <header><h1>{t('timeline.heading')}</h1><p>{t('timeline.description')}</p></header>
+    {state.kind === 'loading' ? <p role="status">{t('timeline.loading')}</p> : null}
+    {state.kind === 'error' ? <p role="alert">{t('timeline.unavailable')}</p> : null}
+    {state.kind === 'ready' && state.events.length === 0 ? <p>{t('timeline.empty')}</p> : null}
+    {state.events.length > 0 ? <ol>{state.events.map((event) => <li key={event.id}><strong>{event.provenance}</strong><time dateTime={event.occurred_at}>{event.occurred_at}</time>{event.git ? <><span>{event.git.subject}</span><code>{event.git.commit}</code></> : null}{event.knowledge ? <><span>{event.knowledge.action}</span><code>{event.knowledge.path}</code></> : null}{event.context ? <dl><dt>{t('timeline.runID')}</dt><dd>{event.context.run_id}</dd><dt>{t('timeline.queryHash')}</dt><dd>{event.context.query_hash}</dd><dt>{t('timeline.hashVersion')}</dt><dd>{event.context.hash_version}</dd><dt>{t('timeline.mode')}</dt><dd>{event.context.mode}</dd><dt>{t('timeline.tokenBudget')}</dt><dd>{formatNumber(event.context.budget_tokens)}</dd><dt>{t('timeline.byteBudget')}</dt><dd>{formatNumber(event.context.budget_bytes)}</dd><dt>{t('timeline.estimatedTokens')}</dt><dd>{formatNumber(event.context.estimated_tokens)}</dd><dt>{t('timeline.estimatedBytes')}</dt><dd>{formatNumber(event.context.estimated_bytes)}</dd><dt>{t('timeline.strategyVersion')}</dt><dd>{event.context.strategy_version}</dd><dt>{t('timeline.status')}</dt><dd>{event.context.status}</dd>{event.context.error_code ? <><dt>{t('timeline.errorCode')}</dt><dd>{event.context.error_code}</dd></> : null}</dl> : null}</li>)}</ol> : null}
+    {state.kind === 'ready' && state.next !== '' ? <button type="button" onClick={loadNext}>{t('timeline.loadMore')}</button> : null}
   </section>
 }
 

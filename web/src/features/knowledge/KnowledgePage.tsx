@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 
 import { apiFetch } from '../../transport/api'
 import { sourceLink } from '../../transport/contracts'
+import { useI18n } from '../../i18n'
 
 type KnowledgeAnchor = { path: string; line_start: number; line_end: number; content_hash?: string; symbol?: string }
 type KnowledgeSummary = { id: string; path: string; type: string; title: string; description?: string; resource?: string; tags: string[]; timestamp?: string; status?: string; confidence?: string; related: string[]; anchors: KnowledgeAnchor[] }
@@ -65,6 +66,7 @@ export function createIdempotencyKey(): string {
 }
 
 export function KnowledgePage({ client = defaultClient, proposalID, createIdempotencyKey: newKey = createIdempotencyKey }: { client?: KnowledgeClient; proposalID?: string; createIdempotencyKey?: () => string }) {
+  const { t } = useI18n()
   const [page, setPage] = useState<LoadState<KnowledgePageData>>({ kind: 'loading' })
   const [detail, setDetail] = useState<LoadState<KnowledgeDetail> | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -128,26 +130,26 @@ export function KnowledgePage({ client = defaultClient, proposalID, createIdempo
     setDecisionError(false)
     setOutcome('')
     void client.decide(proposalID ?? proposal.value.proposal.id, action, { expected_version: proposal.value.version, idempotency_key: newKey(), confirm: true }).then(
-      () => { if (proposalRequest.current === generation) { setDecisionPending(false); setOutcome(`Proposal ${action === 'accept' ? 'accepted' : 'rejected'}.`) } },
+      () => { if (proposalRequest.current === generation) { setDecisionPending(false); setOutcome(action === 'accept' ? t('knowledge.decisionAccepted') : t('knowledge.decisionRejected')) } },
       (error: unknown) => { if (proposalRequest.current === generation) { setDecisionPending(false); if (isKnowledgeConflict(errorCode(error))) setConflict(true); else setDecisionError(true) } },
     )
   }
 
-  return <section aria-label="Knowledge">
-    <header><h1>Knowledge</h1><p>Browse canonical knowledge and review server-provided proposals.</p></header>
-    {page.kind === 'loading' ? <p role="status">Loading knowledge…</p> : null}
-    {page.kind === 'error' ? <p role="alert">Knowledge is unavailable. Try again.</p> : null}
-    {page.kind === 'ready' && page.value.items.length === 0 ? <p>No knowledge documents are available.</p> : null}
-    {page.kind === 'ready' && page.value.items.length > 0 ? <><ul aria-label="Knowledge documents">{page.value.items.map((item) => <li key={item.id}><button type="button" onClick={() => selectDetail(item.id)}>{item.title}</button><p>{item.description}</p></li>)}</ul>{page.value.next !== '' ? <button type="button" disabled={loadingMore} onClick={loadMore}>Load more knowledge</button> : null}</> : null}
-    {detail?.kind === 'loading' ? <p role="status">Loading document…</p> : null}
-    {detail?.kind === 'error' ? <p role="alert">Document details are unavailable. Try again.</p> : null}
-    {detail?.kind === 'ready' ? <article aria-label="Knowledge detail"><h2>{detail.value.title}</h2><pre>{detail.value.body}</pre>{detail.value.anchors.map((anchor) => { const link = sourceLink(anchor); return <a key={`${anchor.path}:${anchor.line_start}`} href={link.href}>{link.label}</a> })}</article> : null}
-    {proposal.kind === 'loading' ? <p role="status">Loading proposal…</p> : null}
-    {proposal.kind === 'error' ? <p role="alert">Proposal is unavailable. Try again.</p> : null}
-    {proposal.kind === 'ready' ? <section aria-label="Proposal review"><h2>Knowledge proposal</h2><pre>{proposal.value.diff}</pre><label><input type="checkbox" checked={reviewed} onInput={(event) => setReviewed(event.currentTarget.checked)} />I have reviewed this proposal diff</label><div><button type="button" disabled={!reviewed || decisionPending} onClick={() => decide('accept')}>Accept proposal</button><button type="button" disabled={!reviewed || decisionPending} onClick={() => decide('reject')}>Reject proposal</button></div></section> : null}
+  return <section aria-label={t('knowledge.aria')}>
+    <header><h1>{t('knowledge.heading')}</h1><p>{t('knowledge.description')}</p></header>
+    {page.kind === 'loading' ? <p role="status">{t('knowledge.loading')}</p> : null}
+    {page.kind === 'error' ? <p role="alert">{t('knowledge.unavailable')}</p> : null}
+    {page.kind === 'ready' && page.value.items.length === 0 ? <p>{t('knowledge.empty')}</p> : null}
+    {page.kind === 'ready' && page.value.items.length > 0 ? <><ul aria-label={t('knowledge.documentsAria')}>{page.value.items.map((item) => <li key={item.id}><button type="button" onClick={() => selectDetail(item.id)}>{item.title}</button><p>{item.description}</p></li>)}</ul>{page.value.next !== '' ? <button type="button" disabled={loadingMore} onClick={loadMore}>{t('knowledge.loadMore')}</button> : null}</> : null}
+    {detail?.kind === 'loading' ? <p role="status">{t('knowledge.detailLoading')}</p> : null}
+    {detail?.kind === 'error' ? <p role="alert">{t('knowledge.detailUnavailable')}</p> : null}
+    {detail?.kind === 'ready' ? <article aria-label={t('knowledge.detailAria')}><h2>{detail.value.title}</h2><pre>{detail.value.body}</pre>{detail.value.anchors.map((anchor) => { const link = sourceLink(anchor); return <a key={`${anchor.path}:${anchor.line_start}`} href={link.href}>{t('app.sourceLink', { path: link.target.path, start: link.target.line_start, end: link.target.line_end })}</a> })}</article> : null}
+    {proposal.kind === 'loading' ? <p role="status">{t('knowledge.proposalLoading')}</p> : null}
+    {proposal.kind === 'error' ? <p role="alert">{t('knowledge.proposalUnavailable')}</p> : null}
+    {proposal.kind === 'ready' ? <section aria-label={t('knowledge.proposalReviewAria')}><h2>{t('knowledge.proposal')}</h2><pre>{proposal.value.diff}</pre><label><input type="checkbox" checked={reviewed} onInput={(event) => setReviewed(event.currentTarget.checked)} />{t('knowledge.reviewConfirmation')}</label><div><button type="button" disabled={!reviewed || decisionPending} onClick={() => decide('accept')}>{t('knowledge.accept')}</button><button type="button" disabled={!reviewed || decisionPending} onClick={() => decide('reject')}>{t('knowledge.reject')}</button></div></section> : null}
     {outcome ? <p role="status">{outcome}</p> : null}
-    {decisionError ? <p role="alert">Proposal decision is unavailable. Try again.</p> : null}
-    {conflict ? <p ref={conflictAlert} role="alert" tabIndex={-1}>The proposal changed before your decision. Review the displayed diff and try again.</p> : null}
+    {decisionError ? <p role="alert">{t('knowledge.decisionUnavailable')}</p> : null}
+    {conflict ? <p ref={conflictAlert} role="alert" tabIndex={-1}>{t('knowledge.conflict')}</p> : null}
   </section>
 }
 

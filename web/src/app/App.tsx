@@ -10,16 +10,17 @@ import { JobStatus } from '../features/jobs/JobStatus'
 import { TimelinePage } from '../features/timeline/TimelinePage'
 import { apiJSON } from '../transport/api'
 import { sourceLink, type ContextLens, type GuidedTour } from '../transport/contracts'
+import { useI18n, type MessageKey } from '../i18n'
 
 const views = [
-  ['Home', '#/'],
-  ['Explore', '#/explore'],
-  ['Context Lens', '#/context'],
-  ['Impact', '#/impact'],
-  ['Knowledge', '#/knowledge'],
-  ['Timeline', '#/timeline'],
-  ['Setup', '#/setup'],
-] as const
+  ['nav.home', '#/'],
+  ['nav.explore', '#/explore'],
+  ['nav.context', '#/context'],
+  ['nav.impact', '#/impact'],
+  ['nav.knowledge', '#/knowledge'],
+  ['nav.timeline', '#/timeline'],
+  ['nav.setup', '#/setup'],
+] as const satisfies ReadonlyArray<readonly [MessageKey, string]>
 
 type AppProps = {
   sessionError?: boolean
@@ -170,6 +171,7 @@ function isContextLens(value: unknown): value is ContextLens {
 }
 
 function SourcePreviewPage({ request }: { request: SourceRequest | null }) {
+  const { t } = useI18n()
   const [state, setState] = useState<LocalState<SourcePreview>>(request === null ? { kind: 'error' } : { kind: 'loading' })
 
   useEffect(() => {
@@ -187,18 +189,19 @@ function SourcePreviewPage({ request }: { request: SourceRequest | null }) {
     return () => { active = false }
   }, [request?.path, request?.lineStart, request?.previewEnd])
 
-  return <section class="local-route" aria-label="Source preview">
-    <span class="eyebrow">Source evidence</span>
-    <h1>Source preview</h1>
-    {request !== null ? <p class="route-anchor">Full source anchor: lines {request.lineStart}–{request.lineEnd}</p> : null}
-    {state.kind === 'loading' ? <p role="status">Loading bounded source preview…</p> : null}
-    {state.kind === 'error' ? <p role="alert">Source preview unavailable. Check the selected source link and try again.</p> : null}
-    {state.kind === 'ready' && state.value.lines.length === 0 ? <p>No source lines were returned for this bounded preview.</p> : null}
-    {state.kind === 'ready' && state.value.lines.length > 0 ? <pre aria-label={`Source preview for ${state.value.path}`}>{state.value.lines.map((line) => `${line.number}  ${line.text}`).join('\n')}</pre> : null}
+  return <section class="local-route" aria-label={t('app.sourcePreviewAria')}>
+    <span class="eyebrow">{t('app.sourceEvidence')}</span>
+    <h1>{t('app.sourcePreview')}</h1>
+    {request !== null ? <p class="route-anchor">{t('app.sourceAnchor', { start: request.lineStart, end: request.lineEnd })}</p> : null}
+    {state.kind === 'loading' ? <p role="status">{t('app.sourceLoading')}</p> : null}
+    {state.kind === 'error' ? <p role="alert">{t('app.sourceUnavailable')}</p> : null}
+    {state.kind === 'ready' && state.value.lines.length === 0 ? <p>{t('app.sourceEmpty')}</p> : null}
+    {state.kind === 'ready' && state.value.lines.length > 0 ? <pre aria-label={t('app.sourcePreviewFor', { path: state.value.path })}>{state.value.lines.map((line) => `${line.number}  ${line.text}`).join('\n')}</pre> : null}
   </section>
 }
 
 function GuidedTourPage({ tourID }: { tourID: string | null }) {
+  const { t } = useI18n()
   const [state, setState] = useState<LocalState<GuidedTour>>(tourID === null ? { kind: 'error' } : { kind: 'loading' })
 
   useEffect(() => {
@@ -215,24 +218,25 @@ function GuidedTourPage({ tourID }: { tourID: string | null }) {
     return () => { active = false }
   }, [tourID])
 
-  if (state.kind === 'loading') return <section class="local-route" aria-label="Guided tour" aria-busy="true"><span class="eyebrow">Guided tour</span><h1>Guided tour</h1><p role="status">Loading source-backed guided tour…</p></section>
-  if (state.kind === 'error') return <section class="local-route" aria-label="Guided tour"><span class="eyebrow">Guided tour</span><h1>Guided tour</h1><p role="alert">Guided tour unavailable. Check the selected tour and try again.</p></section>
-  if (state.value.steps.length === 0) return <section class="local-route" aria-label="Guided tour"><span class="eyebrow">Guided tour</span><h1>{state.value.title}</h1><p>No source-backed steps are available for this tour.</p></section>
-  return <section class="local-route" aria-label="Guided tour">
-    <span class="eyebrow">Guided tour</span>
+  if (state.kind === 'loading') return <section class="local-route" aria-label={t('app.guidedTour')} aria-busy="true"><span class="eyebrow">{t('app.guidedTour')}</span><h1>{t('app.guidedTour')}</h1><p role="status">{t('app.guidedTourLoading')}</p></section>
+  if (state.kind === 'error') return <section class="local-route" aria-label={t('app.guidedTour')}><span class="eyebrow">{t('app.guidedTour')}</span><h1>{t('app.guidedTour')}</h1><p role="alert">{t('app.guidedTourUnavailable')}</p></section>
+  if (state.value.steps.length === 0) return <section class="local-route" aria-label={t('app.guidedTour')}><span class="eyebrow">{t('app.guidedTour')}</span><h1>{state.value.title}</h1><p>{t('app.guidedTourEmpty')}</p></section>
+  return <section class="local-route" aria-label={t('app.guidedTour')}>
+    <span class="eyebrow">{t('app.guidedTour')}</span>
     <h1>{state.value.title}</h1>
     <p>{state.value.description}</p>
     <ol class="tour-steps">
       {state.value.steps.map((step) => <li key={`${step.number}-${step.section_id}`}>
         <h2>{step.number}. {step.title}</h2>
         <p>{step.description}</p>
-        <ul>{step.facts.map((fact) => { const link = fact.anchor ? sourceLink(fact.anchor) : null; return <li key={fact.id}><strong>{fact.label}</strong><span>{fact.detail}</span>{link ? <a href={link.href}>{link.label}</a> : null}</li> })}</ul>
+        <ul>{step.facts.map((fact) => { const link = fact.anchor ? sourceLink(fact.anchor) : null; return <li key={fact.id}><strong>{fact.label}</strong><span>{fact.detail}</span>{link ? <a href={link.href}>{t('app.sourceLink', { path: link.target.path, start: link.target.line_start, end: link.target.line_end })}</a> : null}</li> })}</ul>
       </li>)}
     </ol>
   </section>
 }
 
 function ContextSelectionPage({ ids }: { ids: string[] | null }) {
+  const { t, formatNumber } = useI18n()
   const [state, setState] = useState<LocalState<ContextLens>>(ids === null ? { kind: 'error' } : { kind: 'loading' })
 
   useEffect(() => {
@@ -253,18 +257,19 @@ function ContextSelectionPage({ ids }: { ids: string[] | null }) {
     return () => { active = false }
   }, [ids?.join(',')])
 
-  if (state.kind === 'loading') return <section class="local-route" aria-label="Context selection" aria-busy="true"><span class="eyebrow">Context selection</span><h1>Selected context</h1><p role="status">Loading bounded context selection…</p></section>
-  if (state.kind === 'error') return <section class="local-route" aria-label="Context selection"><span class="eyebrow">Context selection</span><h1>Selected context</h1><p role="alert">Selected context unavailable. Check the selected items and try again.</p></section>
-  if (state.value.items.length === 0) return <section class="local-route" aria-label="Context selection"><span class="eyebrow">Context selection</span><h1>Selected context</h1><p>{state.value.summary}</p><p>No context items were returned for this selection.</p></section>
-  return <section class="local-route" aria-label="Context selection">
-    <span class="eyebrow">Context selection</span>
-    <h1>Selected context</h1>
+  if (state.kind === 'loading') return <section class="local-route" aria-label={t('app.contextSelection')} aria-busy="true"><span class="eyebrow">{t('app.contextSelection')}</span><h1>{t('app.selectedContext')}</h1><p role="status">{t('app.contextSelectionLoading')}</p></section>
+  if (state.kind === 'error') return <section class="local-route" aria-label={t('app.contextSelection')}><span class="eyebrow">{t('app.contextSelection')}</span><h1>{t('app.selectedContext')}</h1><p role="alert">{t('app.contextSelectionUnavailable')}</p></section>
+  if (state.value.items.length === 0) return <section class="local-route" aria-label={t('app.contextSelection')}><span class="eyebrow">{t('app.contextSelection')}</span><h1>{t('app.selectedContext')}</h1><p>{state.value.summary}</p><p>{t('app.contextSelectionEmpty')}</p></section>
+  return <section class="local-route" aria-label={t('app.contextSelection')}>
+    <span class="eyebrow">{t('app.contextSelection')}</span>
+    <h1>{t('app.selectedContext')}</h1>
     <p>{state.value.summary}</p>
-    <ul class="context-packet">{state.value.items.map((item) => <li key={item.id}><h2>{item.title}</h2><p>{item.kind} · {item.estimated_tokens} estimated tokens</p><ul>{item.why_selected.map((reason) => <li key={reason}>{reason}</li>)}</ul></li>)}</ul>
+    <ul class="context-packet">{state.value.items.map((item) => <li key={item.id}><h2>{item.title}</h2><p>{t('app.contextItemMeta', { kind: item.kind, tokens: formatNumber(item.estimated_tokens) })}</p><ul>{item.why_selected.map((reason) => <li key={reason}>{reason}</li>)}</ul></li>)}</ul>
   </section>
 }
 
 export function App({ sessionError = false }: AppProps) {
+  const { t } = useI18n()
   const [route, setRoute] = useState(readRoute)
   const [reloadKey, setReloadKey] = useState(0)
   const main = useRef<HTMLElement>(null)
@@ -285,7 +290,7 @@ export function App({ sessionError = false }: AppProps) {
   }, [route.key, reloadKey])
 
   const activeHref = views.find(([, href]) => href.slice(1) === route.path)?.[1]
-  const reloadLabel = route.path === '/source' ? 'Retry source preview' : route.path === '/explore' && route.params.has('tour') ? 'Retry guided tour' : route.path === '/context' && route.params.has('ids') ? 'Retry context selection' : 'Reload current view'
+  const reloadLabel = route.path === '/source' ? t('app.retrySourcePreview') : route.path === '/explore' && route.params.has('tour') ? t('app.retryGuidedTour') : route.path === '/context' && route.params.has('ids') ? t('app.retryContextSelection') : t('app.reloadCurrentView')
   let view = <BriefPage />
   if (route.path === '/explore') view = route.params.has('tour') ? <GuidedTourPage tourID={validIdentifier(route.params.get('tour'))} /> : <ExplorePage />
   else if (route.path === '/context') view = route.params.has('ids') ? <ContextSelectionPage ids={parseContextIDs(route.params)} /> : <ContextLensPage />
@@ -297,29 +302,29 @@ export function App({ sessionError = false }: AppProps) {
 
   return (
     <div class="workbench-shell">
-      <a class="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus() }}>Skip to content</a>
-      <aside class="sidebar" aria-label="Workbench navigation">
+      <a class="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus() }}>{t('app.skipToContent')}</a>
+      <aside class="sidebar" aria-label={t('app.navigation')}>
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">P</span>
           <div>
-            <span class="eyebrow">Local workspace</span>
-            <strong>Prowl Workbench</strong>
+            <span class="eyebrow">{t('app.localWorkspace')}</span>
+            <strong>{t('app.workbench')}</strong>
           </div>
         </div>
-        <nav aria-label="Primary">
+        <nav aria-label={t('app.primaryNavigation')}>
           <ul>
-            {views.map(([label, href]) => <li key={href}><a href={href} aria-current={href === activeHref ? 'page' : undefined}>{label}</a></li>)}
+            {views.map(([label, href]) => <li key={href}><a href={href} aria-current={href === activeHref ? 'page' : undefined}>{t(label)}</a></li>)}
           </ul>
         </nav>
-        <p class="privacy-note">Loopback only</p>
+        <p class="privacy-note">{t('app.loopbackOnly')}</p>
       </aside>
 
       <main id="main-content" tabIndex={-1} ref={main}>
         {sessionError ? (
-          <section class="brief-state" aria-label="Secure workbench session">
-            <span class="eyebrow">Session security</span>
-            <h1>Secure workbench session unavailable</h1>
-            <p role="alert">Secure workbench session unavailable. Reopen Prowl from your terminal.</p>
+          <section class="brief-state" aria-label={t('app.secureSessionUnavailable')}>
+            <span class="eyebrow">{t('app.sessionSecurity')}</span>
+            <h1>{t('app.secureSessionUnavailable')}</h1>
+            <p role="alert">{t('app.secureSessionUnavailableDetail')}</p>
           </section>
         ) : <><JobStatus onInvalidate={() => setReloadKey((key) => key + 1)} /><div key={reloadKey}>{view}<p class="route-reload"><button type="button" onClick={() => setReloadKey((key) => key + 1)}>{reloadLabel}</button></p></div></>}
       </main>

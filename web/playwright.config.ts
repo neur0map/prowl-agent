@@ -5,6 +5,7 @@ export default defineConfig({
   timeout: 45_000,
   fullyParallel: false,
   workers: 1,
+  snapshotPathTemplate: '{testDir}/snapshots/{testFilePath}/{arg}{ext}',
   use: {
     ...devices['Desktop Chrome'],
     colorScheme: 'dark',

@@ -72,6 +72,8 @@ describe('ContextLensPage', () => {
     expect(screen.getByRole('heading', { name: 'HTTP server' })).toBeTruthy()
     const citation = screen.getByRole('link', { name: 'cmd/server/main.go lines 8–20' })
     expect(citation.getAttribute('href')).toBe('#/source?path=cmd%2Fserver%2Fmain.go&line_start=8&line_end=20&preview_end=20')
+    const selectedContext = screen.getByRole('link', { name: 'Open selected context' })
+    expect(selectedContext.getAttribute('href')).toBe('#/context?ids=entrypoint')
   })
 
   it('ignores a context result superseded by a later search', async () => {

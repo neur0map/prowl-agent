@@ -383,3 +383,41 @@ no output, exit 0
 TypeScript typecheck and gopls diagnostics for the amended Go store file were
 clean. Participant sessions, final independent reviews, and controller full
 gates on the post-fix commit remain pending.
+
+## Participant-protocol fix -- visible selected-context navigation
+
+The first browser-relay rehearsal found that Context Lens search results exposed
+only source-preview links. The automated D2 journey used the response item ID to
+set `#/context?ids=...` directly, so a newcomer using visible controls could not
+complete the required selected-context step.
+
+RED:
+
+```text
+cd web
+npm test -- --run src/features/context/ContextLensPage.test.tsx
+FAIL: no accessible link named "Open selected context"
+```
+
+The result card now exposes a localized visible link to the canonical selected
+context route using the server-provided item ID. English and en-XA catalogs stay
+key-identical.
+
+GREEN:
+
+```text
+cd web
+npm test -- --run src/features/context/ContextLensPage.test.tsx src/i18n/index.test.ts
+2 test files passed; 11 tests passed
+
+npm run build
+24 modules transformed; production bundle built
+```
+
+Changed paths:
+
+- `web/src/features/context/ContextLensPage.tsx`
+- `web/src/features/context/ContextLensPage.test.tsx`
+- `web/src/i18n/en.ts`
+- regenerated `web/dist/index.html`
+- regenerated `web/dist/assets/index-BAhK0EzZ.js`

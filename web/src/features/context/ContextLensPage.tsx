@@ -75,6 +75,7 @@ function ContextResult({ context }: { context: ContextLens }) {
             <article>
               <h3>{item.title}</h3>
               {item.summary ? <p>{item.summary}</p> : null}
+              <p><a href={`#/context?ids=${encodeURIComponent(item.id)}`}>{t('context.openSelected')}</a></p>
               {item.citations.length > 0 ? <ul aria-label={t('context.citationsAria', { title: item.title })}>
                 {item.citations.map((citation) => {
                   if (!citation.path || citation.line_start === undefined || citation.line_end === undefined || citation.line_start < 1 || citation.line_end < citation.line_start) return <li key={citation.uri}><code>{citation.uri}</code></li>

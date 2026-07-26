@@ -129,6 +129,7 @@ const en = {
   'context.estimatedTokens': 'Estimated tokens',
   'context.exactBytes': 'Exact bytes',
   'context.whySelected': 'Why this was selected',
+  'context.openSelected': 'Open selected context',
   'context.citations': 'Citations',
 
   'impact.aria': 'Impact analysis',

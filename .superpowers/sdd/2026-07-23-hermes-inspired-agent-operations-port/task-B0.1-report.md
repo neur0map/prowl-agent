@@ -185,4 +185,11 @@ go test: 1 package ok
 The full package gate includes a deterministic connected replay/retention
 interleaving, unpublished-retention rejection, actor-capability forgery,
 unknown secret-bearing metadata rejection, bounded counts, and immutable
-outbox mutation rejection. Scoped independent re-review remains pending.
+outbox mutation rejection.
+
+Scoped independent re-review of `4bcb069..6c6353e` is clean:
+
+- specification: PASS; both original findings ADDRESSED and no new
+  Critical/Important specification breakage;
+- code quality/security: PASS; all four original findings ADDRESSED and no new
+  Critical/Important issue.

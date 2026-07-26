@@ -479,3 +479,100 @@ Changed paths:
 The complete controller gate must be rerun after this fix commit. Final
 requirements/security dispositions remain pending that post-fix verification
 and scoped re-review.
+
+## Final independent newcomer study
+
+All nine credited compiled-binary journeys completed within the ten-minute
+limit and independently answered all five fixed questions. Cross-scoring was
+performed by a participant who did not score their own answers.
+
+| Participant | Fixture | Elapsed | Score |
+| --- | --- | ---: | ---: |
+| P1 | `go-auth-service` | 35.094 s | 5/5 |
+| P1 | `ts-checkout` | 27.359 s | 5/5 |
+| P1 | `rice-config` | 33.549 s | 4/5 |
+| P2 | `go-auth-service` | 30.948 s | 4/5 |
+| P2 | `ts-checkout` | 21.683 s | 5/5 |
+| P2 | `rice-config` | 20.622 s | 4/5 |
+| P3 | `go-auth-service` | 35.737 s | 4/5 |
+| P3 | `ts-checkout` | 22.231 s | 5/5 |
+| P3 | `rice-config` | 27.053 s | 4/5 |
+
+Participant totals are P1 14/15, P2 13/15, and P3 13/15: **40/45
+overall**, with every journey at least 4/5. The three configuration-fixture
+risky-area answers correctly received zero because Workbench displayed no
+dependency hotspot or positive Impact evidence. P2 and P3 also received zero
+for the Go evidence-location answer because line 1 established only package
+membership, not exact behavioral evidence.
+
+### Disclosed relay deviation
+
+Participant agents did not have the browser device mounted. The controller
+therefore acted only as a blind input relay in each participant's dedicated
+compiled session and recorded rendered `document.body.innerText` plus visible
+anchor labels/targets after every required screen. Captures excluded API
+payloads, hidden DOM, repository reads, bearer/nonce values, and external
+sources. Participants read only their fixture-specific visible transcripts and
+answered independently. Credited elapsed combines the separately recorded
+navigation and answer intervals. Every selected-context capture was fully
+loaded. The final requirements
+review classified this disclosed deviation as non-blocking because it preserved
+the visible-evidence boundary and made only the mechanical clicks controller
+owned.
+
+The exact anonymized answer/evidence rows, elapsed times, independent scores,
+and dispositions are recorded in
+`docs/verification/phase-3a-requirements.md`.
+
+## Final post-fix controller gate at `84499f4`
+
+```text
+CGO_ENABLED=1 go test -tags sqlite_fts5 ./... -count=1
+25 packages passed; 2 packages had no tests
+
+CGO_ENABLED=1 go vet -tags sqlite_fts5 ./...
+no output; exit 0
+
+CGO_ENABLED=1 go test -race -tags sqlite_fts5 \
+  ./internal/application ./internal/workbench ./internal/events \
+  ./internal/jobs ./internal/cli ./internal/mcp -count=1
+6 packages passed
+
+cd web
+npm ci
+259 packages installed from the lockfile
+
+npm audit --audit-level=low
+OK
+
+npm run check
+13 unit test files passed; 102 tests passed
+24 modules transformed; production bundle built
+13 compiled-browser tests passed
+
+cd ..
+git diff --exit-code -- web/dist
+no output; exit 0
+
+git diff --check
+no output; exit 0
+
+git status --short --branch
+clean tree; branch prowl-full-evolution
+```
+
+The only process output noise was the workstation-provided Node warning that
+`NO_COLOR` is ignored because `FORCE_COLOR` is set.
+
+## Final independent dispositions
+
+- `ReviewD2`: **requirements PASS** and **security PASS** at `84499f4`;
+  no remaining product/spec/security finding. It independently verified the
+  corrected selected-context captures, 40/45 arithmetic, every 4/5 minimum,
+  query-nonce rejection, and boolean-only secret assertions.
+- `SecurityD2Final`: **security fix re-review PASS** for
+  `1b65669..84499f4`; both URL-secret findings addressed and no new
+  Critical/Important security issue.
+
+Task D2 and Phase 3A are accepted. The two deferred Minor observations remain
+recorded above; neither changes an acceptance threshold or security contract.

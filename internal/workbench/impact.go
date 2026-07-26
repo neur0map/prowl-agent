@@ -95,6 +95,12 @@ func (service *Service) Impact(ctx context.Context, filePath string) (Impact, er
 	if err != nil {
 		return fail(err)
 	}
+	if blast.BySubsystem == nil {
+		blast.BySubsystem = []query.SubsystemCount{}
+	}
+	if blast.DirectFiles == nil {
+		blast.DirectFiles = []string{}
+	}
 	relations, err := service.project.Query.FileRelations(filePath)
 	if err != nil {
 		return fail(err)

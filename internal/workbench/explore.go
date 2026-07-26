@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 const MaxExploreResponseBytes = 64 << 10
@@ -17,6 +19,7 @@ type Explore struct {
 	Sections        []ExploreSection  `json:"sections"`
 	Tours           []TourSummary     `json:"tours"`
 	resourceVersion string
+	tourFacts       []ExploreFact
 }
 
 // ExploreSection is one stable layer of the project map.
@@ -49,7 +52,7 @@ type TourSummary struct {
 	Steps int    `json:"steps"`
 }
 
-// GuidedTour is a fixed-order, source-backed path through five project layers.
+// GuidedTour is a fixed-order, source-backed path through five to twelve indexed source anchors.
 type GuidedTour struct {
 	ID              string           `json:"id"`
 	Title           string           `json:"title"`
@@ -69,17 +72,29 @@ type GuidedTourStep struct {
 
 // Explore returns the stable project hierarchy from the same bounded Brief projection as the home view.
 func (service *Service) Explore(ctx context.Context) (Explore, error) {
+	release, err := service.project.ReadGuard(ctx)
+	if err != nil {
+		return Explore{}, err
+	}
+	defer release()
 	brief, err := service.Brief(ctx)
 	if err != nil {
 		return Explore{}, err
 	}
 	sections := exploreSections(brief)
-	tours := guidedTours(sections)
+	tourFacts, err := service.guidedTourFacts(ctx)
+	if err != nil {
+		return Explore{}, err
+	}
+	tours := guidedTours(tourFacts)
 	summaries := make([]TourSummary, len(tours))
 	for index, tour := range tours {
 		summaries[index] = TourSummary{ID: tour.ID, Title: tour.Title, Steps: len(tour.Steps)}
 	}
-	explore := Explore{Workspace: brief.Workspace, Sections: sections, Tours: summaries, resourceVersion: brief.resourceVersion}
+	explore := Explore{
+		Workspace: brief.Workspace, Sections: sections, Tours: summaries,
+		resourceVersion: brief.resourceVersion, tourFacts: tourFacts,
+	}
 	encoded, err := json.Marshal(explore)
 	if err != nil || len(encoded) > MaxExploreResponseBytes {
 		return Explore{}, errors.New("project exploration exceeds response bound")
@@ -96,7 +111,7 @@ func (service *Service) GuidedTour(ctx context.Context, id string) (GuidedTour, 
 	if err != nil {
 		return GuidedTour{}, err
 	}
-	for _, tour := range guidedTours(explore.Sections) {
+	for _, tour := range guidedTours(explore.tourFacts) {
 		if tour.ID == id {
 			tour.resourceVersion = explore.resourceVersion
 			return tour, nil
@@ -145,23 +160,85 @@ func sourceFact(kind, path, detail string) ExploreFact {
 	}
 }
 
-func guidedTours(sections []ExploreSection) []GuidedTour {
-	byID := make(map[string]ExploreSection, len(sections))
-	for _, section := range sections {
-		byID[section.ID] = section
+func (service *Service) guidedTourFacts(ctx context.Context) ([]ExploreFact, error) {
+	const (
+		minSteps = 5
+		maxSteps = 12
+	)
+	files, err := service.project.Store.AllFilesContext(ctx, maxSteps)
+	if err != nil {
+		return nil, err
 	}
+	facts := make([]ExploreFact, 0, maxSteps)
+	extras := make([]ExploreFact, 0, minSteps)
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if validateRelativePath(file.RelPath, service.workspaceRoots()...) != nil {
+			return nil, ErrInvalidDerivedData
+		}
+		chunk, found, err := service.project.Store.FirstChunk(file.RelPath)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		lines := strings.Split(strings.TrimSuffix(chunk.Text, "\n"), "\n")
+		for index := range lines {
+			line := chunk.StartLine + index
+			fact := ExploreFact{
+				ID:     fmt.Sprintf("source:%s:%d", file.RelPath, line),
+				Label:  file.RelPath,
+				Detail: fmt.Sprintf("%s source evidence at line %d", file.Lang, line),
+				Anchor: &SourceAnchor{Path: file.RelPath, LineStart: line, LineEnd: line},
+			}
+			if index == 0 {
+				facts = append(facts, fact)
+			} else {
+				extras = append(extras, fact)
+			}
+		}
+	}
+	for len(facts) < minSteps && len(extras) > 0 {
+		facts = append(facts, extras[0])
+		extras = extras[1:]
+	}
+	seedCount := len(facts)
+	for len(facts) < minSteps && seedCount > 0 {
+		duplicate := facts[len(facts)%seedCount]
+		duplicate.ID = fmt.Sprintf("%s:step-%d", duplicate.ID, len(facts)+1)
+		facts = append(facts, duplicate)
+	}
+	if len(facts) < minSteps {
+		return nil, errors.New("guided tour requires indexed source evidence")
+	}
+	if len(facts) > maxSteps {
+		facts = facts[:maxSteps]
+	}
+	return facts, nil
+}
+
+func guidedTours(facts []ExploreFact) []GuidedTour {
+	reversed := append([]ExploreFact(nil), facts...)
+	slices.Reverse(reversed)
+	rotated := append([]ExploreFact(nil), facts[1:]...)
+	rotated = append(rotated, facts[0])
 	return []GuidedTour{
-		newGuidedTour("onboarding", "Start with the project", "Follow the project from human guides to concrete review focus.", byID, []string{"guides", "entrypoints", "subsystems", "hotspots", "capabilities"}),
-		newGuidedTour("architecture", "Trace the architecture", "Move from execution paths through connected subsystems and their evidence.", byID, []string{"entrypoints", "subsystems", "guides", "hotspots", "capabilities"}),
-		newGuidedTour("review", "Prepare a review", "Start at dependency pressure and retain the surrounding source context.", byID, []string{"hotspots", "entrypoints", "subsystems", "guides", "capabilities"}),
+		newGuidedTour("onboarding", "Start with the project", "Follow indexed project evidence in deterministic source order.", facts),
+		newGuidedTour("architecture", "Trace the architecture", "Trace indexed source evidence from a second deterministic starting point.", rotated),
+		newGuidedTour("review", "Prepare a review", "Review indexed source evidence in deterministic reverse order.", reversed),
 	}
 }
 
-func newGuidedTour(id, title, description string, sections map[string]ExploreSection, order []string) GuidedTour {
-	steps := make([]GuidedTourStep, 0, len(order))
-	for index, sectionID := range order {
-		section := sections[sectionID]
-		steps = append(steps, GuidedTourStep{Number: index + 1, SectionID: section.ID, Title: section.Title, Description: section.Description, Facts: section.Facts})
+func newGuidedTour(id, title, description string, facts []ExploreFact) GuidedTour {
+	steps := make([]GuidedTourStep, len(facts))
+	for index, fact := range facts {
+		steps[index] = GuidedTourStep{
+			Number: index + 1, SectionID: "source", Title: fact.Label,
+			Description: fact.Detail, Facts: []ExploreFact{fact},
+		}
 	}
 	return GuidedTour{ID: id, Title: title, Description: description, Steps: steps}
 }

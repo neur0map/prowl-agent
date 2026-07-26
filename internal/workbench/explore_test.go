@@ -49,6 +49,24 @@ func TestExploreProjectsDeterministicSectionsAndTours(t *testing.T) {
 		if len(tour.Steps) != summary.Steps {
 			t.Fatalf("tour %q=%+v", summary.ID, tour)
 		}
+		for _, step := range tour.Steps {
+			var rooted bool
+			for _, fact := range step.Facts {
+				if fact.Anchor == nil {
+					continue
+				}
+				rooted = true
+				preview, err := service.SourcePreview(context.Background(), SourcePreviewRequest{
+					Path: fact.Anchor.Path, LineStart: fact.Anchor.LineStart, LineEnd: fact.Anchor.LineEnd,
+				})
+				if err != nil || len(preview.Lines) == 0 {
+					t.Fatalf("tour %q step %d anchor %+v did not resolve: preview=%+v err=%v", summary.ID, step.Number, fact.Anchor, preview, err)
+				}
+			}
+			if !rooted {
+				t.Fatalf("tour %q step %d is not rooted in source evidence", summary.ID, step.Number)
+			}
+		}
 	}
 	encoded, err := json.Marshal(explore)
 	if err != nil {

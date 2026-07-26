@@ -67,6 +67,30 @@ func TestImpactReturnsCitedProjectEvidence(t *testing.T) {
 	}
 }
 
+func TestImpactNormalizesEmptyRelationshipCollections(t *testing.T) {
+	project := openWorkbenchProject(t, map[string]string{
+		"README.md": "# Small project\n\nNo dependency edges.\n",
+	})
+	service, err := NewService(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impact, err := service.Impact(context.Background(), "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if impact.Blast.BySubsystem == nil || impact.Blast.DirectFiles == nil {
+		t.Fatalf("empty blast collections must be canonical arrays: %+v", impact.Blast)
+	}
+	encoded, err := json.Marshal(impact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"by_subsystem":[]`) || !strings.Contains(string(encoded), `"direct_files":[]`) {
+		t.Fatalf("empty blast collections did not serialize as arrays: %s", encoded)
+	}
+}
+
 func TestImpactRejectsUnsafeOrUnknownPath(t *testing.T) {
 	project := openWorkbenchProject(t, map[string]string{"safe.go": "package safe\n"})
 	service, err := NewService(project)

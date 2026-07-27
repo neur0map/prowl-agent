@@ -1,0 +1,71 @@
+{
+  "id": "9f2c1ab34d5e6f7089a1b2c3d4e5f601",
+  "version": 2,
+  "status": "active",
+  "principal_id": "3b9a7c2e1d4f5068a9b0c1d2e3f40512",
+  "owner_principal_id": "3b9a7c2e1d4f5068a9b0c1d2e3f40512",
+  "surface_id": "cli",
+  "requested_profile_id": "local",
+  "resolved_profile_id": "local",
+  "authorization_scope": "local",
+  "snapshot_id": "1c0ffee0d1e2f3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c",
+  "exposure_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "created_at": "2026-07-23T12:00:00Z",
+  "updated_at": "2026-07-23T12:05:00Z",
+  "turns": [
+    {
+      "id": "7a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "session_id": "9f2c1ab34d5e6f7089a1b2c3d4e5f601",
+      "ordinal": 1,
+      "idempotency_key": "turn-2026-07-23-0001",
+      "expected_version": 1,
+      "resulting_version": 2,
+      "run_id": "run-01hxyz2c3d4e5f60718293a4b5c6d",
+      "status": "succeeded",
+      "principal_id": "3b9a7c2e1d4f5068a9b0c1d2e3f40512",
+      "owner_principal_id": "3b9a7c2e1d4f5068a9b0c1d2e3f40512",
+      "surface_id": "cli",
+      "usage": {
+        "input_tokens": 128,
+        "output_tokens": 64,
+        "total_tokens": 192
+      },
+      "created_at": "2026-07-23T12:04:30Z",
+      "completed_at": "2026-07-23T12:05:00Z",
+      "entries": [
+        {
+          "id": "e1a2b3c4d5e6f70819203a4b5c6d7e8f",
+          "ordinal": 1,
+          "kind": "message",
+          "body": "Port the resumable session ledger.",
+          "metadata": {
+            "role": "user"
+          },
+          "created_at": "2026-07-23T12:04:31Z"
+        },
+        {
+          "id": "e2b3c4d5e6f70819203a4b5c6d7e8f90",
+          "ordinal": 2,
+          "kind": "tool_call",
+          "body": "{\"query\":\"session ledger\"}",
+          "metadata": {
+            "tool_name": "search_context",
+            "tool_call_id": "call-1"
+          },
+          "created_at": "2026-07-23T12:04:40Z"
+        },
+        {
+          "id": "e3c4d5e6f70819203a4b5c6d7e8f9012",
+          "ordinal": 3,
+          "kind": "tool_result",
+          "body": "3 sources found",
+          "metadata": {
+            "tool_name": "search_context",
+            "tool_call_id": "call-1"
+          },
+          "created_at": "2026-07-23T12:04:41Z"
+        }
+      ]
+    }
+  ]
+}

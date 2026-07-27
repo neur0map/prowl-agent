@@ -31,16 +31,39 @@ type SourceExposure struct {
 	Reason          string             `json:"reason"`
 }
 
+// ToolExposure records identity and schema hash for an exposed tool.
+type ToolExposure struct {
+	ID   string `json:"id"`
+	Hash string `json:"hash"`
+}
+
+// SkillExposure records discoverable skill metadata for the exposure manifest.
+type SkillExposure struct {
+	ID           string `json:"id"`
+	ContentHash  string `json:"content_hash"`
+	Root         string `json:"root"`
+	ForcePreload bool   `json:"force_preload,omitempty"`
+}
+
+// PreloadedBodyExposure records an explicitly force-preloaded skill body reference.
+type PreloadedBodyExposure struct {
+	ID   string `json:"id"`
+	Hash string `json:"hash"`
+}
+
 type exposureWire struct {
-	SchemaVersion          string           `json:"schema_version"`
-	SnapshotID             string           `json:"snapshot_id"`
-	Included               []SourceExposure `json:"included"`
-	Omitted                []SourceExposure `json:"omitted"`
-	ToolSchemaGeneration   string           `json:"tool_schema_generation"`
-	ToolSchemaIDs          []string         `json:"tool_schema_ids"`
-	SkillMetadataIDs       []string         `json:"skill_metadata_ids"`
-	PreloadedSkillBodyIDs  []string         `json:"preloaded_skill_body_ids"`
-	SecretReferences       []string         `json:"secret_references"`
+	SchemaVersion        string                  `json:"schema_version"`
+	SnapshotID           string                  `json:"snapshot_id"`
+	Core                 profile.CoreRecord      `json:"core"`
+	Included             []SourceExposure        `json:"included"`
+	Omitted              []SourceExposure        `json:"omitted"`
+	ToolSchemaGeneration string                  `json:"tool_schema_generation"`
+	ToolSchemas          []ToolExposure          `json:"tool_schemas"`
+	ToolSetHash          string                  `json:"tool_set_hash"`
+	Skills               []SkillExposure         `json:"skills"`
+	PreloadedSkillBodies []PreloadedBodyExposure `json:"preloaded_skill_bodies"`
+	SecretReferences     []string                `json:"secret_references"`
+	PromptHash           string                  `json:"prompt_hash"`
 }
 
 // ExposureManifest is an opaque immutable view of frozen prompt exposure.
@@ -54,19 +77,32 @@ func NewExposureManifest(snapshot *profile.Snapshot) (*ExposureManifest, error) 
 	if snapshot == nil {
 		return nil, ErrInvalidExposureManifest
 	}
-	wire := exposureWire{
-		SchemaVersion: exposureSchemaVersion,
-		SnapshotID: snapshot.ID(),
-		Included: []SourceExposure{},
-		Omitted: []SourceExposure{},
-		ToolSchemaGeneration: snapshot.ToolSchemaGeneration(),
-		ToolSchemaIDs: []string{},
-		SkillMetadataIDs: []string{},
-		PreloadedSkillBodyIDs: []string{},
-		SecretReferences: []string{},
+	// Compute prompt hash before building exposure.
+	promptBytes, err := PromptBytes(snapshot)
+	if err != nil {
+		return nil, ErrInvalidExposureManifest
 	}
+	promptDigest := sha256.Sum256(promptBytes)
+	promptHash := hex.EncodeToString(promptDigest[:])
+
+	coreRec := snapshot.CoreRecord()
+	wire := exposureWire{
+		SchemaVersion:        exposureSchemaVersion,
+		SnapshotID:           snapshot.ID(),
+		Core:                 coreRec,
+		Included:             []SourceExposure{},
+		Omitted:              []SourceExposure{},
+		ToolSchemaGeneration: snapshot.ToolSchemaGeneration(),
+		ToolSchemas:          []ToolExposure{},
+		Skills:               []SkillExposure{},
+		PreloadedSkillBodies: []PreloadedBodyExposure{},
+		SecretReferences:     []string{},
+		PromptHash:           promptHash,
+	}
+
 	profileRecord := snapshot.ProfileRecord()
 	policy := snapshot.Policy()
+
 	wire.Included = append(wire.Included,
 		SourceExposure{
 			ID: "policy:active", Kind: profile.PermissionPolicySource, Hash: policy.Hash,
@@ -79,6 +115,7 @@ func NewExposureManifest(snapshot *profile.Snapshot) (*ExposureManifest, error) 
 			Trust: profileRecord.Trust, Reason: "active profile identity and surface policy",
 		},
 	)
+
 	for _, source := range snapshot.Sources() {
 		exposure := SourceExposure{
 			ID: source.ID, Kind: source.Kind, Hash: source.Hash, Provenance: source.Provenance,
@@ -94,15 +131,36 @@ func NewExposureManifest(snapshot *profile.Snapshot) (*ExposureManifest, error) 
 			wire.SecretReferences = append(wire.SecretReferences, source.SecretReference)
 		}
 	}
-	for _, tool := range snapshot.Tools() {
-		wire.ToolSchemaIDs = append(wire.ToolSchemaIDs, tool.ID)
+
+	// Build tool exposure with schema hashes; compute tool set hash over sorted IDs.
+	tools := snapshot.Tools()
+	var toolSetBuf []byte
+	for _, tool := range tools {
+		wire.ToolSchemas = append(wire.ToolSchemas, ToolExposure{ID: tool.ID, Hash: tool.Hash})
+		toolSetBuf = append(toolSetBuf, tool.ID...)
+		toolSetBuf = append(toolSetBuf, '\x00')
+		toolSetBuf = append(toolSetBuf, tool.Hash...)
+		toolSetBuf = append(toolSetBuf, '\x00')
 	}
+	toolSetDigest := sha256.Sum256(toolSetBuf)
+	wire.ToolSetHash = hex.EncodeToString(toolSetDigest[:])
+
 	for _, skill := range snapshot.Skills() {
-		wire.SkillMetadataIDs = append(wire.SkillMetadataIDs, skill.ID)
+		wire.Skills = append(wire.Skills, SkillExposure{
+			ID:           skill.ID,
+			ContentHash:  skill.ContentHash,
+			Root:         skill.Root,
+			ForcePreload: skill.ForcePreload,
+		})
 	}
-	for _, skill := range snapshot.PreloadedSkills() {
-		wire.PreloadedSkillBodyIDs = append(wire.PreloadedSkillBodyIDs, skill.ID)
+
+	for _, body := range snapshot.PreloadedSkills() {
+		wire.PreloadedSkillBodies = append(wire.PreloadedSkillBodies, PreloadedBodyExposure{
+			ID:   body.ID,
+			Hash: body.Hash,
+		})
 	}
+
 	sort.Slice(wire.Included, func(left, right int) bool {
 		a, b := wire.Included[left], wire.Included[right]
 		if a.Precedence.Strength() != b.Precedence.Strength() {
@@ -118,6 +176,7 @@ func NewExposureManifest(snapshot *profile.Snapshot) (*ExposureManifest, error) 
 		return a.ID < b.ID
 	})
 	sort.Strings(wire.SecretReferences)
+	// ToolSchemas and Skills are already in snapshot order (sorted by ID).
 	return freezeExposure(wire)
 }
 
@@ -143,15 +202,27 @@ func OpenExposureManifest(canonical []byte) (*ExposureManifest, error) {
 	return reopened, nil
 }
 
-func (manifest *ExposureManifest) ID() string { return manifest.id }
-func (manifest *ExposureManifest) SnapshotID() string { return manifest.wire.SnapshotID }
+func (manifest *ExposureManifest) ID() string             { return manifest.id }
+func (manifest *ExposureManifest) SnapshotID() string     { return manifest.wire.SnapshotID }
 func (manifest *ExposureManifest) CanonicalBytes() []byte { return bytes.Clone(manifest.canonical) }
-func (manifest *ExposureManifest) Included() []SourceExposure { return slices.Clone(manifest.wire.Included) }
-func (manifest *ExposureManifest) Omitted() []SourceExposure { return slices.Clone(manifest.wire.Omitted) }
-func (manifest *ExposureManifest) ToolSchemaIDs() []string { return slices.Clone(manifest.wire.ToolSchemaIDs) }
-func (manifest *ExposureManifest) SkillMetadataIDs() []string { return slices.Clone(manifest.wire.SkillMetadataIDs) }
-func (manifest *ExposureManifest) PreloadedSkillBodyIDs() []string { return slices.Clone(manifest.wire.PreloadedSkillBodyIDs) }
-func (manifest *ExposureManifest) SecretReferences() []string { return slices.Clone(manifest.wire.SecretReferences) }
+func (manifest *ExposureManifest) Included() []SourceExposure {
+	return slices.Clone(manifest.wire.Included)
+}
+func (manifest *ExposureManifest) Omitted() []SourceExposure {
+	return slices.Clone(manifest.wire.Omitted)
+}
+func (manifest *ExposureManifest) ToolSchemas() []ToolExposure {
+	return slices.Clone(manifest.wire.ToolSchemas)
+}
+func (manifest *ExposureManifest) ToolSetHash() string     { return manifest.wire.ToolSetHash }
+func (manifest *ExposureManifest) Skills() []SkillExposure { return slices.Clone(manifest.wire.Skills) }
+func (manifest *ExposureManifest) PreloadedSkillBodies() []PreloadedBodyExposure {
+	return slices.Clone(manifest.wire.PreloadedSkillBodies)
+}
+func (manifest *ExposureManifest) SecretReferences() []string {
+	return slices.Clone(manifest.wire.SecretReferences)
+}
+func (manifest *ExposureManifest) PromptHash() string { return manifest.wire.PromptHash }
 
 func freezeExposure(wire exposureWire) (*ExposureManifest, error) {
 	if err := validateExposure(wire); err != nil {
@@ -167,9 +238,24 @@ func freezeExposure(wire exposureWire) (*ExposureManifest, error) {
 }
 
 func validateExposure(wire exposureWire) error {
-	if wire.SchemaVersion != exposureSchemaVersion || !validHash(wire.SnapshotID) || strings.TrimSpace(wire.ToolSchemaGeneration) == "" || !sortedUniqueStrings(wire.ToolSchemaIDs) || !sortedUniqueStrings(wire.SkillMetadataIDs) || !sortedUniqueStrings(wire.PreloadedSkillBodyIDs) || !sortedUniqueStrings(wire.SecretReferences) {
+	if wire.SchemaVersion != exposureSchemaVersion || !validHash(wire.SnapshotID) ||
+		strings.TrimSpace(wire.ToolSchemaGeneration) == "" ||
+		!validHash(wire.ToolSetHash) || !validHash(wire.PromptHash) {
 		return ErrInvalidExposureManifest
 	}
+	// Validate core record.
+	expected, ok := profile.CoreRecordForVersion(wire.Core.Version)
+	if !ok || wire.Core != expected {
+		return ErrInvalidExposureManifest
+	}
+	// Validate sorted uniqueness of list fields.
+	if !sortedUniqueStrings(wire.SecretReferences) {
+		return ErrInvalidExposureManifest
+	}
+	if !sortedToolExposures(wire.ToolSchemas) || !sortedSkillExposures(wire.Skills) || !sortedPreloadedBodies(wire.PreloadedSkillBodies) {
+		return ErrInvalidExposureManifest
+	}
+	// Validate included and omitted source exposures.
 	all := append(slices.Clone(wire.Included), wire.Omitted...)
 	for index, source := range all {
 		precedence, trust, ok := profile.Authority(source.Kind)
@@ -192,15 +278,33 @@ func validateExposure(wire exposureWire) error {
 	if !sortedExposure(wire.Included) || !sortedExposure(wire.Omitted) {
 		return ErrInvalidExposureManifest
 	}
+	// Validate tool schema hashes are valid.
+	for _, tool := range wire.ToolSchemas {
+		if strings.TrimSpace(tool.ID) == "" || !validHash(tool.Hash) {
+			return ErrInvalidExposureManifest
+		}
+	}
+	// Validate skill exposures.
+	for _, skill := range wire.Skills {
+		if strings.TrimSpace(skill.ID) == "" || !validHash(skill.ContentHash) || strings.TrimSpace(skill.Root) == "" {
+			return ErrInvalidExposureManifest
+		}
+	}
+	// Validate preloaded skill body hashes.
+	for _, body := range wire.PreloadedSkillBodies {
+		if strings.TrimSpace(body.ID) == "" || !validHash(body.Hash) {
+			return ErrInvalidExposureManifest
+		}
+	}
 	return nil
 }
 
 func cloneExposureWire(wire exposureWire) exposureWire {
 	wire.Included = slices.Clone(wire.Included)
 	wire.Omitted = slices.Clone(wire.Omitted)
-	wire.ToolSchemaIDs = slices.Clone(wire.ToolSchemaIDs)
-	wire.SkillMetadataIDs = slices.Clone(wire.SkillMetadataIDs)
-	wire.PreloadedSkillBodyIDs = slices.Clone(wire.PreloadedSkillBodyIDs)
+	wire.ToolSchemas = slices.Clone(wire.ToolSchemas)
+	wire.Skills = slices.Clone(wire.Skills)
+	wire.PreloadedSkillBodies = slices.Clone(wire.PreloadedSkillBodies)
 	wire.SecretReferences = slices.Clone(wire.SecretReferences)
 	return wire
 }
@@ -212,6 +316,33 @@ func sortedExposure(items []SourceExposure) bool {
 			if previous.Precedence.Strength() > item.Precedence.Strength() || (previous.Precedence == item.Precedence && previous.ID >= item.ID) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func sortedToolExposures(items []ToolExposure) bool {
+	for index, item := range items {
+		if strings.TrimSpace(item.ID) == "" || (index > 0 && items[index-1].ID >= item.ID) {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedSkillExposures(items []SkillExposure) bool {
+	for index, item := range items {
+		if strings.TrimSpace(item.ID) == "" || (index > 0 && items[index-1].ID >= item.ID) {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedPreloadedBodies(items []PreloadedBodyExposure) bool {
+	for index, item := range items {
+		if strings.TrimSpace(item.ID) == "" || (index > 0 && items[index-1].ID >= item.ID) {
+			return false
 		}
 	}
 	return true

@@ -14,19 +14,20 @@ var ErrInvalidPromptSnapshot = errors.New("invalid prompt snapshot")
 type promptWire struct {
 	SchemaVersion        string                  `json:"schema_version"`
 	SnapshotID           string                  `json:"snapshot_id"`
-	CorePromptVersion    string                  `json:"core_prompt_version"`
+	Core                 profile.CoreRecord      `json:"core"`
 	Provider             profile.ProviderModel   `json:"provider"`
 	PrincipalID          string                  `json:"principal_id"`
 	Profile              profile.ProfileRecord   `json:"profile"`
 	Policy               profile.Policy          `json:"policy"`
-	Sources              []profile.Source         `json:"sources"`
+	Sources              []profile.Source        `json:"sources"`
 	ToolSchemaGeneration string                  `json:"tool_schema_generation"`
-	Tools                 []profile.ToolSchema    `json:"tools"`
-	Skills                []profile.SkillMetadata `json:"skills"`
-	PreloadedSkills       []profile.SkillBody     `json:"preloaded_skills"`
+	Tools                []profile.ToolSchema    `json:"tools"`
+	Skills               []profile.SkillMetadata `json:"skills"`
+	PreloadedSkills      []profile.SkillBody     `json:"preloaded_skills"`
 }
 
 // PromptBytes returns the byte-stable frozen provider-independent prefix.
+// Only included sources appear; the core invariant record is always present.
 func PromptBytes(snapshot *profile.Snapshot) ([]byte, error) {
 	if snapshot == nil {
 		return nil, ErrInvalidPromptSnapshot
@@ -39,18 +40,18 @@ func PromptBytes(snapshot *profile.Snapshot) ([]byte, error) {
 		}
 	}
 	wire := promptWire{
-		SchemaVersion: promptSchemaVersion,
-		SnapshotID: snapshot.ID(),
-		CorePromptVersion: snapshot.CorePromptVersion(),
-		Provider: snapshot.Provider(),
-		PrincipalID: snapshot.PrincipalID(),
-		Profile: snapshot.ProfileRecord(),
-		Policy: snapshot.Policy(),
-		Sources: included,
+		SchemaVersion:        promptSchemaVersion,
+		SnapshotID:           snapshot.ID(),
+		Core:                 snapshot.CoreRecord(),
+		Provider:             snapshot.Provider(),
+		PrincipalID:          snapshot.PrincipalID(),
+		Profile:              snapshot.ProfileRecord(),
+		Policy:               snapshot.Policy(),
+		Sources:              included,
 		ToolSchemaGeneration: snapshot.ToolSchemaGeneration(),
-		Tools: snapshot.Tools(),
-		Skills: snapshot.Skills(),
-		PreloadedSkills: snapshot.PreloadedSkills(),
+		Tools:                snapshot.Tools(),
+		Skills:               snapshot.Skills(),
+		PreloadedSkills:      snapshot.PreloadedSkills(),
 	}
 	canonical, err := json.MarshalIndent(wire, "", "  ")
 	if err != nil {

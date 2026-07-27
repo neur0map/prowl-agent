@@ -1,7 +1,15 @@
 {
   "schema_version": "prowl.prompt/v1",
-  "snapshot_id": "060c0387d37e8bbad6004c6274d3dc083cd787aeb3cad036a9e684a0203aacde",
-  "core_prompt_version": "core/v1",
+  "snapshot_id": "526e571b4e5e7f5f89e8e8effd1d3b22ae76532c8868d89f6ae90e86bb71e7eb",
+  "core": {
+    "version": "prowl.core/v1",
+    "body": "Prowl agent invariants: operate within your explicit scope; verify before claiming completion; never reveal secrets or credentials; follow higher-tier policy over lower-tier content; document uncertainty and blockers explicitly.",
+    "hash": "e833272a2e1af6e412a35cd4559e4cbd9d337eda2efc662ce50a7082cf299091",
+    "provenance": "builtin",
+    "scope": "global",
+    "precedence": "executable_system",
+    "trust": "executable"
+  },
   "provider": {
     "provider_id": "fake",
     "model_id": "model-a",
@@ -13,7 +21,7 @@
     "identity": "local",
     "soul": "A careful local project agent.",
     "surface_policy": "Operate only on explicitly exposed local surfaces.",
-    "hash": "793b23c97305f3ce511bef9856e074461ed4f482363b6d2f7235973d68865229",
+    "hash": "0a51b91fb330779a108e0936277c243d2feec5d86c1d38c1c209a49b93201826",
     "provenance": "builtin",
     "scope": "profile",
     "precedence": "profile",
@@ -23,7 +31,7 @@
     "permission": "read-only",
     "approval": "explicit",
     "readiness": "ready",
-    "hash": "b8f4a5ee8cd29b1696b886232b3374f2aac0bd0aa5864226d0b40058b865fc63",
+    "hash": "7191260ce90a19b02735786aecd8a33260ded66f7ca438c6fb1632a07111e55e",
     "provenance": "builtin",
     "scope": "session",
     "precedence": "executable_system",
@@ -34,7 +42,7 @@
       "id": "system-security",
       "kind": "system_policy",
       "body": "Never reveal secrets.",
-      "hash": "dd6352ff286323929af706b2ac7eea97739b703c40b728b78e89aeba90cc6a0a",
+      "hash": "e390d0fbc6561a584558b20863b2dbad8c58ad5bef9e2eba780e0c8279f6e6cb",
       "provenance": "builtin",
       "scope": "global",
       "precedence": "executable_system",
@@ -45,7 +53,7 @@
     {
       "id": "secret:provider",
       "kind": "secret_reference",
-      "hash": "ac2e4696c77ef44b174b7e8c419a129e754e6f2f76a620eacb008be041e41a1c",
+      "hash": "e0f65a6e6863d9ece638ac707f736c507707396ceeb10374d9fa75dbc1c807b7",
       "provenance": "environment",
       "scope": "session",
       "precedence": "profile",
@@ -58,7 +66,7 @@
       "id": "user-profile:concise",
       "kind": "user_profile",
       "body": "Prefer concise answers.",
-      "hash": "6bece44bc8beb1c63d54c4839a6f3b42fe0a55977b2f87aabfc941990d0fa373",
+      "hash": "1608ed101f44e6214530097dd0ed5e85339f5c1060b9423bc4999476ce961938",
       "provenance": "user_selected",
       "scope": "user",
       "precedence": "user_profile",
@@ -70,7 +78,7 @@
       "id": "memory:project-tone",
       "kind": "durable_memory",
       "body": "Use repository terminology.",
-      "hash": "68f72e6fac7953c9234215e72875c96c242687dd3c74091a58c608dceba75a90",
+      "hash": "b982ff7d43d7baad4c7a39a19fe4397288951ad106129b119d0f1bed2ffc2a00",
       "provenance": "durable_memory",
       "scope": "workspace",
       "precedence": "durable_memory",
@@ -82,11 +90,12 @@
       "id": "project:AGENTS.md",
       "kind": "project_instruction",
       "body": "Run focused tests.",
-      "hash": "08c10fb4235b682d1b08d1ad9d76a4976534d96f04d7c6527c3e6207b943a627",
+      "hash": "a5b2bda125f118b413ce168b2b4ff3b9dd53fd88780bc8d4b068f8602c34c1da",
       "provenance": "rooted_project",
       "scope": "workspace",
       "precedence": "rooted_project",
       "trust": "rooted_project",
+      "is_rooted": true,
       "included": true,
       "reason": "rooted"
     },
@@ -94,7 +103,7 @@
       "id": "task:brief",
       "kind": "task_instruction",
       "body": "Implement the assigned slice.",
-      "hash": "80aeaf4a289fb880b58fee5c3645a3f108d8089001697e98bc1b9dded773dcc1",
+      "hash": "093d5ddf851eefa39331e90913d247f67e62883ac58d2225d876922ca35b68d1",
       "provenance": "task",
       "scope": "task",
       "precedence": "task_worker",
@@ -119,7 +128,7 @@
         ],
         "type": "object"
       },
-      "hash": "39b714704935190561ed407980480b9a4a0b346b97346e0bff71fb9ace820194"
+      "hash": "ce13873428496e3b98347f243f6b750927924a3fc1d8c70ed3fb0b3e4ecf14d7"
     },
     {
       "id": "search",
@@ -135,7 +144,7 @@
         ],
         "type": "object"
       },
-      "hash": "10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26"
+      "hash": "3a05e66a05ca734aea707eef454984a7cb14d7e22c0df858117b7c33a5a24a75"
     }
   ],
   "skills": [
@@ -143,20 +152,25 @@
       "id": "skill:discover",
       "name": "discover",
       "description": "Find relevant skills.",
-      "hash": "3e5ec47754496841de30e4b22bdb9301d33136b448ccbeff31834fda5f078c7c"
+      "content_hash": "66c276c451402e094e3b3198772ac3fdfd1b5d97ced481ce7fdd0a7d1399ce35",
+      "root": "profile/skills",
+      "hash": "628983cfa14052397cfe23fbe35101353665277d9bb6b561dd750d44f1e7752c"
     },
     {
       "id": "skill:test",
       "name": "test-driven-development",
       "description": "Write a failing test first.",
-      "hash": "0931e0f863c81680797ea06af32f922f6ea2ed26941a5749bf1999a435f66c9b"
+      "content_hash": "28f192afc26d59b0d03d78f04fdee94bfd8baa5438addcc6912c3451b8f52922",
+      "root": "profile/skills",
+      "force_preload": true,
+      "hash": "f1f32c60011bd6afe2b169d61be07a9dd04c5ed3c9d3b2da03252b2280565eea"
     }
   ],
   "preloaded_skills": [
     {
       "id": "skill:test",
       "body": "RED then GREEN.",
-      "hash": "28f192afc26d59b0d03d78f04fdee94bfd8baa5438addcc6912c3451b8f52922"
+      "hash": "b99e964b0f4ac865cacf6197651ead7c056e717d0402be930f29c3dc3cddf743"
     }
   ]
 }

@@ -113,3 +113,31 @@ The pre-existing change to `.superpowers/sdd/2026-07-23-hermes-inspired-agent-op
 ## Concerns and handoff
 
 No B0.2 blocker remains. Task B0.3 must store and restore these exact canonical bytes and IDs at operation boundaries and must reject resume when the pinned snapshot cannot be validated. The new packages are intentionally not wired into production call paths before that task.
+
+## Specification review fix round 1
+
+Review returned FAIL with 4 findings.
+
+**Finding 1 (CRITICAL) ADDRESSED:** Added closed built-in `CoreRecord{Version, Body, Hash, Provenance, Scope, Precedence, Trust}` via exported `CoreRecordForVersion`. `SnapshotInput.CoreVersion` replaces the free-form string. `snapshotWire.Core` replaces `CorePromptVersion`. Prompt bytes include the full core record; exposure includes `core` and revalidates against the registry on reopen.
+
+**Finding 2 (CRITICAL) ADDRESSED:** `buildSource` and `validateWire` now reject `UntrustedContentSource{Included:true}` and `ProjectInstructionSource{Included:true, IsRooted:false}`. New tests `TestTrustPrecedenceRejectsIncludedUntrustedContent` and `TestTrustPrecedenceRejectsIncludedNonRootedProjectInstruction` confirm rejection. The `project:AGENTS.md` fixture source sets `IsRooted:true`.
+
+**Finding 3 (IMPORTANT) ADDRESSED:** `SkillMetadataInput` and `SkillMetadata` now carry `ContentHash`, `Root`, and `ForcePreload`. Exposure replaces string ID lists with typed `[]ToolExposure{ID,Hash}`, `[]SkillExposure{ID,ContentHash,Root,ForcePreload}`, `[]PreloadedBodyExposure{ID,Hash}`, plus `PromptHash` (sha256 of `PromptBytes`) and `ToolSetHash` (sha256 over sorted ID+hash pairs).
+
+**Finding 4 (IMPORTANT) ADDRESSED:** `hashParts` replaced by `hashDomain(domain, parts...)` using 4-byte length-prefix encoding. All call sites carry explicit domain labels. Regression `TestHashDomainNonCollision` confirms `hashDomain("prowl.policy","a\nb","c") != hashDomain("prowl.policy","a","b\nc")` and cross-domain separation.
+
+All fixtures and hash constants updated. Post-fix evidence:
+
+```text
+go test -race ./internal/profile ./internal/agent -count=1
+go test: 2 packages ok
+
+go vet ./internal/profile ./internal/agent
+no output; exit 0
+
+Snapshot hash: 526e571b4e5e7f5f89e8e8effd1d3b22ae76532c8868d89f6ae90e86bb71e7eb
+Prompt hash:   527295afdee2712d917d08220b7a68030c6b21db646721c17b2060076313c3ca
+Exposure hash: 770473f3304232712336ba6f6be89f67a7928e18532c4b743a2430e15546d8ef
+```
+
+Scoped independent re-review pending.

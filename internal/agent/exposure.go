@@ -278,11 +278,20 @@ func validateExposure(wire exposureWire) error {
 	if !sortedExposure(wire.Included) || !sortedExposure(wire.Omitted) {
 		return ErrInvalidExposureManifest
 	}
-	// Validate tool schema hashes are valid.
+	// Validate tool schema hashes and recompute ToolSetHash for cross-validation.
+	var toolSetBuf []byte
 	for _, tool := range wire.ToolSchemas {
 		if strings.TrimSpace(tool.ID) == "" || !validHash(tool.Hash) {
 			return ErrInvalidExposureManifest
 		}
+		toolSetBuf = append(toolSetBuf, tool.ID...)
+		toolSetBuf = append(toolSetBuf, '\x00')
+		toolSetBuf = append(toolSetBuf, tool.Hash...)
+		toolSetBuf = append(toolSetBuf, '\x00')
+	}
+	expectedToolSetDigest := sha256.Sum256(toolSetBuf)
+	if hex.EncodeToString(expectedToolSetDigest[:]) != wire.ToolSetHash {
+		return ErrInvalidExposureManifest
 	}
 	// Validate skill exposures.
 	for _, skill := range wire.Skills {

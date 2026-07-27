@@ -125,3 +125,21 @@ func TestExposureManifestCanonicalRoundTripRejectsTampering(t *testing.T) {
 		t.Fatal("tampered exposure was accepted")
 	}
 }
+
+func TestExposureManifestRejectsTamperedToolSetHash(t *testing.T) {
+	snapshot := testSnapshot(t)
+	manifest, err := NewExposureManifest(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := manifest.CanonicalBytes()
+	// Replace ToolSetHash with a syntactically valid but wrong SHA-256.
+	wrongHash := "0000000000000000000000000000000000000000000000000000000000000000"
+	tampered := bytes.Replace(canonical, []byte(manifest.ToolSetHash()), []byte(wrongHash), 1)
+	if bytes.Equal(tampered, canonical) {
+		t.Skip("could not tamper ToolSetHash in fixture bytes")
+	}
+	if _, err := OpenExposureManifest(tampered); err == nil {
+		t.Fatal("exposure with tampered ToolSetHash was accepted")
+	}
+}

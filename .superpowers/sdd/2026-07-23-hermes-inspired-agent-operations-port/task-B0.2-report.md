@@ -140,4 +140,12 @@ Prompt hash:   527295afdee2712d917d08220b7a68030c6b21db646721c17b2060076313c3ca
 Exposure hash: 770473f3304232712336ba6f6be89f67a7928e18532c4b743a2430e15546d8ef
 ```
 
-Scoped independent re-review pending.
+Scoped independent re-review of `7290f1e..9a52e1d` returned one new finding:
+both spec and security reviewers noted that `validateExposure` only format-checked
+`ToolSetHash` as a valid SHA-256 hex string without recomputing it from `ToolSchemas`.
+This allowed `OpenExposureManifest` to accept an internally inconsistent manifest.
+Fix committed as `0692480`: recompute `toolSetHash` from `wire.ToolSchemas` in
+`validateExposure` and reject on mismatch; regression
+`TestExposureManifestRejectsTamperedToolSetHash` covers the tamper path.
+All 4 original findings ADDRESSED; 1 new finding introduced and fixed in the same round.
+Post-fix evidence: `go test -race ./internal/profile ./internal/agent -count=1` => 2 packages ok.

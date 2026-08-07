@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	decisionTransactionFile          = "decision-transaction.json"
-	decisionTransactionSchemaVersion = "prowl.knowledge-decision-transaction/v1"
-	decisionTransactionPrepared      = "prepared"
-	decisionTransactionCanonical     = "canonical"
-	maxDecisionTransactionBytes int64 = 48 << 20
+	decisionTransactionFile                = "decision-transaction.json"
+	decisionTransactionSchemaVersion       = "prowl.knowledge-decision-transaction/v1"
+	decisionTransactionPrepared            = "prepared"
+	decisionTransactionCanonical           = "canonical"
+	maxDecisionTransactionBytes      int64 = 48 << 20
 )
 
 type decisionFileSnapshot struct {

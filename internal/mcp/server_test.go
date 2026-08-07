@@ -108,8 +108,8 @@ func TestMCPIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(lt.Tools) != 17 {
-		t.Fatalf("tool count = %d, want 17", len(lt.Tools))
+	if len(lt.Tools) != 18 {
+		t.Fatalf("tool count = %d, want 18", len(lt.Tools))
 	}
 
 	// The tracked wrapper should have recorded usage for the calls above.

@@ -96,6 +96,8 @@ func newLegacyServer(h *handlers, version string) *sdk.Server {
 		Description: "Re-scan the project and refresh the index incrementally."}, tracked(h, h.reindexTool))
 	sdk.AddTool(s, &sdk.Tool{Name: "doctor",
 		Description: "Health diagnostics: cyclic includes, fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, tracked(h, h.doctorTool))
+	sdk.AddTool(s, &sdk.Tool{Name: "investigate_wip",
+		Description: "Investigate uncommitted work in progress: touched files with git status, the unfinished-work markers (TODO, FIXME, and friends) inside them, and the blast radius of each indexed file. A good first call when resuming a task.", Annotations: readOnlyAnnotations("Investigate WIP")}, tracked(h, h.investigateWip))
 	return s
 }
 

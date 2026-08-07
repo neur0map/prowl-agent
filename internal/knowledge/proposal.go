@@ -147,7 +147,6 @@ func (inbox *ReviewInbox) Diff(id string) (string, error) {
 	return documentDiff(proposal.TargetPath, old, candidate), nil
 }
 
-
 func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAudit) (*Proposal, error) {
 	proposal, err := inbox.load(id)
 	if err != nil {
@@ -229,7 +228,6 @@ func (inbox *ReviewInbox) accept(id string, now time.Time, decision *DecisionAud
 	}
 	return &transaction.Proposal, nil
 }
-
 
 func (inbox *ReviewInbox) reject(id string, now time.Time, decision *DecisionAudit) (*Proposal, error) {
 	proposal, err := inbox.load(id)

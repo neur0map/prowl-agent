@@ -1,11 +1,11 @@
 package cli
 
 import (
+	"github.com/prowl-agent/prowl-agent/internal/setup"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"github.com/prowl-agent/prowl-agent/internal/setup"
 )
 
 func TestEnsureAgentsBlockRefreshesInPlace(t *testing.T) {

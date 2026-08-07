@@ -229,7 +229,6 @@ func TestDecisionRecoveryPreservesChangedCandidateAndRollsBack(t *testing.T) {
 	}
 }
 
-
 func TestDecideSerializesConflictingAcceptAndReject(t *testing.T) {
 	root := t.TempDir()
 	repository := NewRepository(filepath.Join(root, "knowledge"), atomicTestCodec{})

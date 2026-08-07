@@ -1,10 +1,11 @@
 #!/bin/sh
-# Reject local-only planning files and AI-authorship tells in staged changes.
+# Fast local gate. Heavy build/vet/test run in CI (.github/workflows/ci.yml);
+# this hook only catches what is cheap to check and expensive to miss.
 # Enable with: git config core.hooksPath .githooks
 
 forbidden='—|[Cc]o-authored-by|[Gg]enerated (with|by)|[Cc]laude|ChatGPT|Copilot|Anthropic|OpenAI|🤖|comprehensive|seamless|leverage|delve|intricate'
 
-# 1. Never commit planning files (they stay local).
+# 1. Never commit local-only planning files.
 plans=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^docs/superpowers/')
 if [ -n "$plans" ]; then
   echo "pre-commit: refusing to commit local-only planning files:" >&2
@@ -12,7 +13,8 @@ if [ -n "$plans" ]; then
   exit 1
 fi
 
-# 2. Scan added lines (excluding this hooks dir, which names the patterns).
+# 2. Reject em-dashes, AI-authorship tells, and marketing filler in added lines
+#    (excluding this hooks dir, which names the patterns).
 added=$(git diff --cached -U0 --no-color -- . ':(exclude).githooks/' | grep -E '^\+[^+]')
 hits=$(printf '%s\n' "$added" | grep -nE "$forbidden")
 if [ -n "$hits" ]; then
@@ -21,4 +23,20 @@ if [ -n "$hits" ]; then
   echo "(no em-dashes, AI tool names, authorship trailers, or marketing filler)" >&2
   exit 1
 fi
+
+# 3. Staged Go files must be gofmt-clean. This is instant and needs no toolchain
+#    build, so it belongs in the commit gate rather than only in CI.
+gofiles=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
+if [ -n "$gofiles" ]; then
+  if command -v gofmt >/dev/null 2>&1; then
+    unformatted=$(printf '%s\n' "$gofiles" | xargs gofmt -l 2>/dev/null)
+    if [ -n "$unformatted" ]; then
+      echo "pre-commit: these Go files need gofmt:" >&2
+      printf '%s\n' "$unformatted" >&2
+      echo "run: gofmt -w <files>" >&2
+      exit 1
+    fi
+  fi
+fi
+
 exit 0

@@ -35,6 +35,16 @@ All notable changes are recorded here. The format follows
   is unavailable.
 - `capabilities search` and `capabilities get` provide token-lean discovery of
   built-in Prowl workflows before clients load detailed tools or resources.
+- `wip` (CLI) and `investigate_wip` (MCP) report uncommitted work in progress:
+  the files touched since the last commit with their git status, the
+  unfinished-work markers inside them (TODO, FIXME, HACK, XXX, BUG, WIP,
+  OPTIMIZE, or a custom `--markers` list), and the blast radius of each indexed
+  file. It lets a fresh session resume without re-reading the tree.
+- Continuous integration (`.github/workflows/ci.yml`) runs gofmt, vet, build,
+  and the tagged test suite on every push and pull request. A version workflow
+  advances the patch on each push to `unstable`, rolling the tenth patch into
+  the minor. The pre-commit hook now also blocks Go files that are not
+  gofmt-clean.
 
 ### Changed
 

@@ -55,7 +55,6 @@ func syncKnowledge(ws *workspace.Workspace, repo *knowledge.Repository) error {
 	return repo.SyncStore(db, ws.Root, time.Now().UTC())
 }
 
-
 func decideKnowledgeProposal(inbox *knowledge.ReviewInbox, id string, action knowledge.DecisionAction, now time.Time) (*knowledge.Proposal, error) {
 	state, err := inbox.Describe(id)
 	if err != nil {

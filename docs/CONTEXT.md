@@ -141,7 +141,7 @@ Observed on the checked-in six-case fixture:
 | graph packet | 0.67 | 0.83 | 1.00 | 0/6 | 1 |
 | hybrid knowledge/source/graph | **1.00** | **0.88** | **1.00** | **6/6** | **1** |
 
-All packets stayed under the fixed 800-token estimate; hybrid packets used 129–179 estimated tokens in this fixture. Operation counts are instrumented by a deterministic scripted-agent harness: each grep/search invocation and each selected file read is counted, while a complete context packet is one tool invocation.
+All packets stayed under the fixed 800-token estimate; hybrid packets used 129 to 179 estimated tokens in this fixture. Operation counts are instrumented by a deterministic scripted-agent harness: each grep/search invocation and each selected file read is counted, while a complete context packet is one tool invocation.
 
 `Complete evidence` means the scripted agent received all declared sources/concepts and required terms. This provider-free benchmark measures the plan's source-hit and tool-operation exit criteria without making an LLM-quality claim; provider-specific agent evaluation remains an optional integration benchmark.
 

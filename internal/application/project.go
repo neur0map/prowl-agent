@@ -18,7 +18,6 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/index"
-	"github.com/prowl-agent/prowl-agent/internal/jobs"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/query"
@@ -34,17 +33,6 @@ type InferencerProvider func(context.Context, config.Config) assist.Inferencer
 type Options struct {
 	EnableAI           bool
 	InferencerProvider InferencerProvider
-}
-
-// StartupLimits bound workbench assembly and its single freshness probe.
-type StartupLimits struct {
-	Timeout        time.Duration
-	CandidatePaths int
-}
-
-// DefaultStartupLimits returns fresh production bounds for local workbench startup.
-func DefaultStartupLimits() StartupLimits {
-	return StartupLimits{Timeout: 250 * time.Millisecond, CandidatePaths: 2000}
 }
 
 // RefreshResult describes one deterministic refresh. EmbeddingError is a
@@ -79,10 +67,7 @@ type Project struct {
 	beforeIndex func()
 	// afterIndex is a package-private test seam invoked while generation writes
 	// are still uncommitted and before post-index signature validation.
-	afterIndex            func()
-	jobService            *jobs.Service
-	startupRefreshPending bool
-	jobsMu                sync.Mutex
+	afterIndex func()
 }
 
 // OpenProject resolves a workspace, opens its derived store, loads strict
@@ -103,34 +88,6 @@ func OpenProject(ctx context.Context, start string, opts Options) (*Project, err
 		return nil, errors.Join(err, project.Close())
 	}
 	project.InitialRefresh = initialRefresh
-	return project, nil
-}
-
-// OpenWorkbenchProject assembles services and performs one bounded freshness
-// probe. A stale or inconclusive probe returns a usable project marked for a
-// later refresh job; it never refreshes synchronously.
-func OpenWorkbenchProject(parent context.Context, start string, opts Options, limits StartupLimits) (*Project, error) {
-	if limits.Timeout <= 0 || limits.Timeout > 10*time.Second || limits.CandidatePaths <= 0 || limits.CandidatePaths > 1_000_000 {
-		return nil, errors.New("invalid workbench startup limits")
-	}
-	ctx, cancel := context.WithTimeout(parent, limits.Timeout)
-	defer cancel()
-	project, err := assembleProject(ctx, start, opts, workspace.ResolveContext, config.LoadContext, store.OpenContext)
-	if err != nil {
-		return nil, err
-	}
-	current, probeErr := project.startupFresh(ctx, limits.CandidatePaths)
-	if probeErr != nil {
-		var candidateLimit index.CandidateLimitError
-		if errors.Is(probeErr, context.DeadlineExceeded) || errors.As(probeErr, &candidateLimit) {
-			project.startupRefreshPending = true
-			return project, nil
-		}
-		return nil, errors.Join(probeErr, project.Close())
-	}
-	if !current {
-		project.startupRefreshPending = true
-	}
 	return project, nil
 }
 
@@ -347,51 +304,6 @@ func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (R
 	return result, nil
 }
 
-func (p *Project) startupFresh(ctx context.Context, maxCandidates int) (bool, error) {
-	release, err := p.ReadGuard(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer release()
-	opt := index.Options{Ignore: p.Config.Ignore, Languages: p.Config.Languages}
-	snapshot, err := index.SourceSnapshotWithOptionsLimitContext(ctx, p.Workspace.Root, opt, maxCandidates)
-	if err != nil {
-		return false, err
-	}
-	readMeta := func(key string) (string, error) {
-		value, err := p.Store.GetMetaContext(ctx, key)
-		if err != nil {
-			return "", fmt.Errorf("read %s metadata: %w", key, err)
-		}
-		return value, nil
-	}
-	oldSig, err := readMeta("cli_sig")
-	if err != nil {
-		return false, err
-	}
-	oldVersion, err := readMeta("index_version")
-	if err != nil {
-		return false, err
-	}
-	indexState, err := readMeta("index_state")
-	if err != nil {
-		return false, err
-	}
-	current := indexState == "complete" && oldVersion == index.Version() && oldSig == strconv.FormatUint(snapshot.Signature, 16)
-	if p.Inferencer != nil {
-		vectorsComplete, err := readMeta("vectors_complete")
-		if err != nil {
-			return false, err
-		}
-		embedModel, err := readMeta("embed_model")
-		if err != nil {
-			return false, err
-		}
-		current = current && vectorsComplete == "1" && embedModel == p.Config.AI.EmbedModel
-	}
-	return current, ctx.Err()
-}
-
 func (p *Project) ensureFresh(ctx context.Context) (RefreshResult, error) {
 	opt := index.Options{Ignore: p.Config.Ignore, Languages: p.Config.Languages}
 	sig, sigErr := index.SignatureWithOptionsContext(ctx, p.Workspace.Root, opt)
@@ -420,13 +332,7 @@ func (p *Project) Close() error {
 		return nil
 	}
 	p.closeOnce.Do(func() {
-		p.jobsMu.Lock()
 		p.closed.Store(true)
-		service := p.jobService
-		p.jobsMu.Unlock()
-		if service != nil {
-			p.closeErr = service.Close()
-		}
 		p.refreshGate <- struct{}{}
 		defer func() { <-p.refreshGate }()
 		if p.Store != nil {
@@ -451,23 +357,4 @@ func generationReadGuard(path string) store.ReadGuard {
 		}
 		return func() { _ = fileLock.Unlock() }, nil
 	}
-}
-
-func (p *Project) StartupRefreshPending() bool { return p != nil && p.startupRefreshPending }
-
-func (p *Project) AttachJobsService(service *jobs.Service) error {
-	if p == nil || service == nil {
-		return errors.New("invalid project jobs service")
-	}
-	p.jobsMu.Lock()
-	defer p.jobsMu.Unlock()
-	if p.closed.Load() || p.jobService != nil {
-		return errors.New("invalid project jobs service")
-	}
-	p.jobService = service
-	return nil
-}
-
-func (p *Project) RefreshWithProgress(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
-	return p.refreshWithProgress(ctx, report)
 }

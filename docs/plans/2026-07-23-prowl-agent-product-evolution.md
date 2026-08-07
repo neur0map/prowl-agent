@@ -1,3 +1,15 @@
+> **SUPERSEDED (2026-08-07).** Prowl was refocused into a single, agent-first
+> token-saving context engine delivered over the CLI and MCP. The web workbench,
+> durable-jobs/event-streaming plane, and the Hermes-inspired agent-operations
+> kernel (Phases 3A/3B/3C and 4 through 7 below) were **removed** from the
+> product. This document is retained as research: its still-valid guidance lives
+> in section 2.5 (MCP design), sections 3.4 to 3.6 (context-packet contract,
+> staged retrieval, provider neutrality), section 5 (agent UX and progressive
+> disclosure), and section 8 (agent evaluation and token benchmarks). That
+> backlog now drives the tool. Sections describing a "knowledge-native agent
+> operating system," workbench UI, or Kanban control plane no longer reflect the
+> product.
+
 # Prowl Agent: Product Evolution Research and Implementation Plan
 
 **Date:** 2026-07-23

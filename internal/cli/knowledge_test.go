@@ -2,16 +2,13 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
-	"github.com/prowl-agent/prowl-agent/internal/workbench"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
@@ -45,19 +42,6 @@ func TestKnowledgeCommandLifecycleAndDatabaseIndependence(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(acceptOutput), &accepted); err != nil || accepted.Proposal.Status != "accepted" || accepted.Proposal.Decision == nil || accepted.Proposal.Decision.PrincipalID != knowledge.LocalPrincipalID {
 		t.Fatalf("accept output = %s, proposal=%+v, err=%v", acceptOutput, accepted.Proposal, err)
-	}
-	project, err := application.OpenProject(context.Background(), root, application.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = project.Close() })
-	service, err := workbench.NewService(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, err := service.KnowledgeProposal(context.Background(), proposed.Proposal.ID)
-	if err != nil || detail.Proposal.Decision == nil || detail.Proposal.Decision.PrincipalID != knowledge.LocalPrincipalID {
-		t.Fatalf("workbench proposal detail=%+v err=%v", detail, err)
 	}
 	listOutput := runKnowledgeCommand(t, "list", "--json")
 	if !strings.Contains(listOutput, `"id":"cli-decision"`) || !strings.Contains(listOutput, `"path":"decisions/cli.md"`) {

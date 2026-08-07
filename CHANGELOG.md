@@ -6,6 +6,21 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Refocused Prowl into a single, agent-first token-saving context engine
+  delivered over the CLI and MCP. Removed the browser workbench (`prowl-agent
+  open`, the embedded web UI, and the HTTP workbench server), the durable-jobs
+  and event-streaming plane, and the Hermes-inspired agent-operations kernel
+  (operations, agent, session, profile, toolruntime, entity) with its `session`
+  command. The retained engine (index, query, context packets, knowledge,
+  capabilities, MCP, and LSP) is the whole product.
+- Overview/brief projections no longer refuse repositories above 100k symbols;
+  the display-only count ceilings were raised, and a missing index on the
+  self-referential `symbols.parent_id` cascade that made full re-indexing of
+  large projects run in O(n^2) was added, cutting a multi-minute stall to
+  seconds.
+
 ### Added
 
 - `context search`, `context get`, and `context traces` expose versioned,

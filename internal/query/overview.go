@@ -251,7 +251,7 @@ type OverviewLimits struct {
 // while preventing callers from mutating process-global defaults.
 func DefaultOverviewLimits() OverviewLimits {
 	return OverviewLimits{
-		Files: 10000, Symbols: 100000, Edges: 250000, Resources: 100000, Chunks: 100000,
+		Files: 10000, Symbols: 100_000_000, Edges: 100_000_000, Resources: 100_000_000, Chunks: 100_000_000,
 		DependencyEdges: 50000, ResourceLinks: 10000,
 		Palette: 16, Keybinds: 10000, Hotspots: 5,
 		Languages: 64, Roles: 64, Docs: 8, Entrypoints: 20, Clusters: 8,
@@ -505,9 +505,9 @@ func validateOverviewLimits(limits OverviewLimits) error {
 		value int
 		max   int
 	}{
-		{"files", limits.Files, 10000}, {"symbols", limits.Symbols, 100000},
-		{"edges", limits.Edges, 250000}, {"resources", limits.Resources, 100000},
-		{"chunks", limits.Chunks, 100000}, {"dependency edges", limits.DependencyEdges, 50000},
+		{"files", limits.Files, 10000}, {"symbols", limits.Symbols, 100_000_000},
+		{"edges", limits.Edges, 100_000_000}, {"resources", limits.Resources, 100_000_000},
+		{"chunks", limits.Chunks, 100_000_000}, {"dependency edges", limits.DependencyEdges, 50000},
 		{"resource links", limits.ResourceLinks, 10000}, {"palette", limits.Palette, 16},
 		{"keybinds", limits.Keybinds, 10000}, {"hotspots", limits.Hotspots, 5},
 		{"languages", limits.Languages, 64}, {"roles", limits.Roles, 64},

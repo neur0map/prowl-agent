@@ -209,7 +209,7 @@ func timelineGitEvents(ctx context.Context, root string, roots []string) ([]Time
 	}
 	events := make([]TimelineEvent, 0, len(fields)/3)
 	for index := 0; index < len(fields); index += 3 {
-		commit, occurred, subject := fields[index], fields[index+1], fields[index+2]
+		commit, occurred, subject := strings.TrimLeft(fields[index], "\r\n"), fields[index+1], fields[index+2]
 		at, err := time.Parse(time.RFC3339, occurred)
 		if err != nil || !validTimelineID(commit) || !validTimelineText(subject, maxTimelineGitSubject, roots...) {
 			return nil, ErrInvalidDerivedData

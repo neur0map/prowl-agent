@@ -3,6 +3,11 @@ package store
 import "context"
 
 var resetDerivedStatements = []string{
+	// Index the self-referential symbols.parent_id cascade before the deletes.
+	// Without it, ON DELETE CASCADE scans the whole table per row (O(n^2)) and a
+	// full reset of a large project stalls for minutes inside the transaction
+	// path, which cannot disable foreign keys.
+	`CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_id)`,
 	`DROP TRIGGER IF EXISTS symbols_ad`,
 	`DROP TRIGGER IF EXISTS chunks_ad`,
 	`DELETE FROM edges`,

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -132,12 +134,19 @@ func TestTimelineReturnsBoundedEmptyStateAndRejectsInvalidPage(t *testing.T) {
 
 func commitTimelineFixture(t *testing.T, root string) {
 	t.Helper()
+	// A second commit is essential: git's --format joins records with a newline
+	// that the parser must strip, a defect invisible with a single commit.
+	if err := os.WriteFile(filepath.Join(root, "second.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, arguments := range [][]string{
 		{"init"},
 		{"config", "user.email", "timeline@example.test"},
 		{"config", "user.name", "Timeline Test"},
 		{"add", "main.go"},
 		{"commit", "-m", "Add timeline fixture"},
+		{"add", "second.go"},
+		{"commit", "-m", "Add second timeline commit"},
 	} {
 		command := exec.Command("git", arguments...)
 		command.Dir = root

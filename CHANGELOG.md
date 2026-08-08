@@ -69,6 +69,11 @@ All notable changes are recorded here. The format follows
   has a timeout so a stuck runner fails in minutes, not a day.
 
 ### Added
+- `prowl-agent brief <path>` gives a cited orientation for a path or subsystem
+  in one call: file count, languages, the architecture guides to read, and the
+  key files to read first (ranked by dependency fan-in, falling back to size for
+  leaf subsystems). Use it to warm-start on a slice of the repo, or to hand a
+  subagent scoped context, instead of re-deriving the shape by reading files.
 - MCP tool results now reach the model as TOON instead of JSON. The read tools
   serialized their output as JSON in the content block the model reads; TOON
   carries the same data for roughly 40% fewer tokens, and the structured output

@@ -111,6 +111,11 @@ func newOverviewCmd() *cobra.Command {
 		func(_ context.Context, q *query.Querier, _ []string) (any, error) { return q.Overview() })
 }
 
+func newBriefCmd() *cobra.Command {
+	return newQueryCmd("brief <path>", "Cited orientation for a path or subsystem: size, languages, guides, and the key files to read first (warm-start a subagent in one call)", false, cobra.ExactArgs(1),
+		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.Brief(a[0]) })
+}
+
 // newClustersCmd lists subsystem summaries by default (label, language, file
 // count); given a name it returns the full file list of matching subsystems, so
 // "pull a whole subsystem" stays cheap instead of dumping every cluster's files.

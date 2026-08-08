@@ -311,13 +311,14 @@ func isIdentByte(b byte) bool {
 	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
-// depKinds are the dependency edges traversed for callers and blast radius,
-// including the synthetic "pkg" fan-out (an importer to every file of an
-// imported package). calleeKinds omits "pkg": for "what does this file import"
-// the direct includes/execs/binds are the answer, and the pkg fan-out would
-// repeat every file of every imported package.
-var depKinds = []string{"includes", "execs", "binds", "autostarts", "references", "pkg"}
-var calleeKinds = []string{"includes", "execs", "binds", "autostarts", "references"}
+// depKinds are the dependency edges traversed for callers, entrypoint roots, and
+// blast radius: includes/execs/binds/autostarts/references, QML component
+// instantiation and singleton/type member use, and the synthetic "pkg" fan-out
+// (an importer to every file of an imported package). calleeKinds omits "pkg":
+// for "what does this file use" the direct edges are the answer, and the pkg
+// fan-out would repeat every file of every imported package.
+var depKinds = []string{"includes", "execs", "binds", "autostarts", "references", "instantiates", "uses", "pkg"}
+var calleeKinds = []string{"includes", "execs", "binds", "autostarts", "references", "instantiates", "uses"}
 
 // EdgeView is the agent-facing shape of a dependency edge: the related file, the
 // kind, the line, the literal target, and whether it resolved. It drops the

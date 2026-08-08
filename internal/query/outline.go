@@ -16,7 +16,7 @@ type OutlineSymbol struct {
 	Depth     int    `json:"depth"`
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
-	Signature string `json:"signature,omitempty"`
+	Signature string `json:"signature"`
 	LineStart int    `json:"line_start"`
 	LineEnd   int    `json:"line_end"`
 }

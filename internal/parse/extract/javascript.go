@@ -48,7 +48,7 @@ func (javascriptExtractor) Extract(src []byte) (Result, error) {
 			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: kind, Signature: sig, StartLine: line(n), EndLine: end, Complexity: cx})
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }
 

@@ -65,6 +65,6 @@ func (hyprlangExtractor) Extract(src []byte) (Result, error) {
 			r.Edges = append(r.Edges, RawEdge{Kind: "execs", Raw: unquote(c.Content(src)), Line: line(c)})
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }

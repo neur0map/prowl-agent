@@ -37,6 +37,6 @@ func (csharpExtractor) Extract(src []byte) (Result, error) {
 			r.Resources = append(r.Resources, Resource{Kind: "namespace", Name: n.Content(src), Line: line(n)})
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }

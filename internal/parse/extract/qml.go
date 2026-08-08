@@ -52,6 +52,6 @@ func (qmlExtractor) Extract(src []byte) (Result, error) {
 			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "property", StartLine: line(n), EndLine: line(n)})
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }

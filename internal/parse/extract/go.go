@@ -45,6 +45,6 @@ func (goExtractor) Extract(src []byte) (Result, error) {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: unquote(n.Content(src)), Line: line(n)})
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }

@@ -48,7 +48,7 @@ func (kotlinExtractor) Extract(src []byte) (Result, error) {
 			r.Edges = append(r.Edges, RawEdge{Kind: "includes", Raw: raw, Line: line(n)})
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }
 

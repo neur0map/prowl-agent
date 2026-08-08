@@ -50,7 +50,7 @@ func (elixirExtractor) Extract(src []byte) (Result, error) {
 			}
 		}
 	})
-	r.Chunks = chunkText(src, 40)
+	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err
 }
 

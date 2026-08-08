@@ -5,6 +5,7 @@ package extract
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	sitter "github.com/alexaandru/go-tree-sitter-bare"
@@ -132,21 +133,123 @@ func firstChildOfType(n sitter.Node, typ string) (sitter.Node, bool) {
 	return sitter.Node{}, false
 }
 
-// chunkText splits src into windows of at most window lines for FTS.
-func chunkText(src []byte, window int) []Chunk {
+// chunkStructured splits src into text chunks aligned to symbol boundaries, so a
+// function, type, or component stays whole in one chunk when it fits. Fixed-size
+// windows split a symbol across chunks, fragmenting its full-text and embedding
+// signal; structure-aware chunks keep syntactic units intact (cAST, EMNLP 2025).
+// A symbol up to twice the window stays whole; larger symbols and symbol-less
+// regions are split into windows, so a file with no symbols matches fixed
+// windows. Adjacent small atoms are packed together up to window lines.
+func chunkStructured(src []byte, symbols []Symbol, window int) []Chunk {
 	if window <= 0 {
 		window = 40
 	}
 	lines := strings.Split(string(src), "\n")
+	n := len(lines)
+	if n == 0 {
+		return nil
+	}
 	var out []Chunk
-	for i := 0; i < len(lines); i += window {
-		end := i + window
-		if end > len(lines) {
-			end = len(lines)
+	curA, curB := 0, 0
+	emit := func() {
+		out = append(out, Chunk{StartLine: curA, EndLine: curB, Text: strings.Join(lines[curA-1:curB], "\n")})
+		curA, curB = 0, 0
+	}
+	for _, at := range buildAtoms(mergeSymbolSpans(symbols, n), n, window) {
+		switch {
+		case curA == 0:
+			curA, curB = at.a, at.b
+		case at.b-curA+1 <= window:
+			curB = at.b
+		default:
+			emit()
+			curA, curB = at.a, at.b
 		}
-		out = append(out, Chunk{StartLine: i + 1, EndLine: end, Text: strings.Join(lines[i:end], "\n")})
+	}
+	if curA != 0 {
+		emit()
 	}
 	return out
+}
+
+// symbolSpan is a merged, disjoint line range covering one or more symbols.
+type symbolSpan struct{ a, b int }
+
+// mergeSymbolSpans returns disjoint, sorted line spans for the symbols, clamped
+// to [1,n]. Overlapping or nested symbols (a type and its methods) are unioned
+// so the file tiling never overlaps; adjacent distinct symbols stay separate.
+func mergeSymbolSpans(symbols []Symbol, n int) []symbolSpan {
+	spans := make([]symbolSpan, 0, len(symbols))
+	for _, s := range symbols {
+		a, b := s.StartLine, s.EndLine
+		if b < a {
+			b = a
+		}
+		if a < 1 {
+			a = 1
+		}
+		if b > n {
+			b = n
+		}
+		if a > n {
+			continue
+		}
+		spans = append(spans, symbolSpan{a, b})
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].a != spans[j].a {
+			return spans[i].a < spans[j].a
+		}
+		return spans[i].b < spans[j].b
+	})
+	var merged []symbolSpan
+	for _, s := range spans {
+		if len(merged) > 0 && s.a <= merged[len(merged)-1].b {
+			if s.b > merged[len(merged)-1].b {
+				merged[len(merged)-1].b = s.b
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+// atom is an ordered, contiguous piece of the file to be packed into a chunk.
+type atom struct{ a, b int }
+
+// buildAtoms turns merged symbol regions and the gaps around them into ordered,
+// contiguous atoms covering [1,n]. A symbol region up to window*2 lines becomes
+// one atom so it stays whole; larger regions and symbol-less gaps are split into
+// window-sized atoms. The caller packs adjacent atoms up to window lines.
+func buildAtoms(regions []symbolSpan, n, window int) []atom {
+	hard := window * 2
+	var atoms []atom
+	windowSplit := func(a, b int) {
+		for s := a; s <= b; s += window {
+			e := s + window - 1
+			if e > b {
+				e = b
+			}
+			atoms = append(atoms, atom{s, e})
+		}
+	}
+	cursor := 1
+	for _, r := range regions {
+		if r.a > cursor {
+			windowSplit(cursor, r.a-1)
+		}
+		if r.b-r.a+1 <= hard {
+			atoms = append(atoms, atom{r.a, r.b})
+		} else {
+			windowSplit(r.a, r.b)
+		}
+		cursor = r.b + 1
+	}
+	if cursor <= n {
+		windowSplit(cursor, n)
+	}
+	return atoms
 }
 
 // Sexpr returns the parse tree's S-expression for a snippet, a debugging aid

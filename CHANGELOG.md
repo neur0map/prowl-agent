@@ -8,6 +8,14 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Full-text and embedding chunks are now aligned to symbol boundaries instead of
+  blind 40-line windows, so a function, type, or component stays whole in one
+  chunk (up to twice the window) rather than being split across two. A symbol
+  split mid-body fragments its retrieval signal; keeping it whole is the proven
+  structure-aware chunking win (cAST, EMNLP 2025). On a 1,400-file repo the
+  share of multi-line symbols contained in a single chunk rose from 79% to 98%.
+  Files with no extracted symbols still chunk into fixed windows.
+
 - `init` now configures MCP clients with the lean `core` tool surface
   (`serve --mcp-surface core`), the curated six-tool set with progressive
   disclosure. The injected config previously launched bare `serve`, which

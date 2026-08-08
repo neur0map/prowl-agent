@@ -85,6 +85,11 @@ Setup is transactional: a malformed client config aborts the run and restores an
 file it already touched. The optional `AGENTS.md` guidance sits between markers,
 so re-running setup refreshes only Prowl's block.
 
+When a harness with a skill system is detected (its skill directory, for example
+`.omp/skills/` or `.claude/skills/`), `init` also installs a few prowl skills so
+the agent knows when to reach for prowl and when to stay on grep. The skill files
+are prowl-owned and excluded from the index.
+
 There is no server to keep running. Each query re-indexes incrementally first
 (only what changed, in tens of milliseconds), so the agent never reads stale data
 and you never run a watcher by hand. Everything is a read-only CLI query or an MCP
@@ -114,6 +119,7 @@ prowl-agent doctor --profile rice # add keybind, desktop command, color, orphan 
 prowl-agent tests <path>        # configs/keybinds that launch or reload a file
 prowl-agent changed             # your git changes mapped to the files they could affect
 prowl-agent wip                 # uncommitted work: touched files, TODO/FIXME markers, blast radius
+prowl-agent explore <path>      # index a repo you do not own, answer, and leave it untouched
 prowl-agent context search <question> --mode compact --budget-tokens 1800 --json
 prowl-agent capabilities search <query> # discover workflows without loading every schema
 ```

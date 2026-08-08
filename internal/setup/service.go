@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/prowl-agent/prowl-agent/skills"
 )
 
 const (
@@ -27,6 +29,10 @@ const (
 	IntegrationOpenCode = "opencode"
 	IntegrationNeovim   = "neovim"
 	IntegrationHelix    = "helix"
+	IntegrationClaude   = "claude"
+
+	// integrationSkill marks an Action that installs one embedded agent skill.
+	integrationSkill = "skill"
 
 	maxIdempotencyKeyBytes = 128
 	replayPath             = ".prowl/setup-applies.json"
@@ -38,7 +44,7 @@ const (
 )
 
 var allIntegrations = []string{
-	IntegrationAgents, IntegrationCursor, IntegrationFactory, IntegrationGeneric,
+	IntegrationAgents, IntegrationClaude, IntegrationCursor, IntegrationFactory, IntegrationGeneric,
 	IntegrationHelix, IntegrationNeovim, IntegrationOMP, IntegrationOpenCode, IntegrationVSCode,
 }
 
@@ -395,16 +401,75 @@ func digest(data []byte) string {
 }
 
 func actionsFor(integrations []string) []Action {
+	base := map[string]string{
+		IntegrationAgents: "AGENTS.md", IntegrationGeneric: ".mcp.json", IntegrationCursor: ".cursor/mcp.json",
+		IntegrationVSCode: ".vscode/mcp.json", IntegrationOMP: ".omp/mcp.json", IntegrationFactory: ".factory/mcp.json",
+		IntegrationOpenCode: "opencode.json", IntegrationNeovim: ".prowl/editor/nvim.lua", IntegrationHelix: ".helix/languages.toml",
+	}
+	skillRoots := map[string]string{
+		IntegrationOMP:    ".omp/skills",
+		IntegrationClaude: ".claude/skills",
+	}
 	actions := make([]Action, 0, len(integrations))
 	for _, integration := range integrations {
-		path := map[string]string{
-			IntegrationAgents: "AGENTS.md", IntegrationGeneric: ".mcp.json", IntegrationCursor: ".cursor/mcp.json",
-			IntegrationVSCode: ".vscode/mcp.json", IntegrationOMP: ".omp/mcp.json", IntegrationFactory: ".factory/mcp.json",
-			IntegrationOpenCode: "opencode.json", IntegrationNeovim: ".prowl/editor/nvim.lua", IntegrationHelix: ".helix/languages.toml",
-		}[integration]
-		actions = append(actions, Action{Integration: integration, Path: path, Description: "merge Prowl integration without replacing existing settings"})
+		if path, ok := base[integration]; ok {
+			actions = append(actions, Action{Integration: integration, Path: path, Description: "merge Prowl integration without replacing existing settings"})
+		}
+		if dir, ok := skillRoots[integration]; ok {
+			actions = append(actions, skillActions(dir)...)
+		}
 	}
 	return actions
+}
+
+// skillActions emits one install Action per embedded skill under dir. The order
+// follows skills.All (sorted by name) so plans stay deterministic.
+func skillActions(dir string) []Action {
+	all := skills.All()
+	actions := make([]Action, 0, len(all))
+	for _, skill := range all {
+		actions = append(actions, Action{
+			Integration: integrationSkill,
+			Path:        dir + "/" + skill.Name + "/SKILL.md",
+			Description: "install prowl agent skill",
+		})
+	}
+	return actions
+}
+
+// skillContent returns the embedded body for the named skill.
+func skillContent(name string) (string, bool) {
+	for _, skill := range skills.All() {
+		if skill.Name == name {
+			return skill.Content, true
+		}
+	}
+	return "", false
+}
+
+// skillNameFromPath recovers a skill name from its install path
+// (".../skills/<name>/SKILL.md").
+func skillNameFromPath(rel string) string {
+	return filepath.Base(filepath.Dir(rel))
+}
+
+// installSkill writes one embedded skill body to its install path. Skills are
+// fully prowl-owned, so a whole-file overwrite is correct.
+func installSkill(root *os.Root, rel string) error {
+	content, ok := skillContent(skillNameFromPath(rel))
+	if !ok {
+		return errors.New("unknown prowl skill")
+	}
+	return writeRootFile(root, rel, []byte(content), 0o644)
+}
+
+// removeSkill deletes a prowl-owned skill file, refusing when a user edited it.
+func removeSkill(root *os.Root, rel string) error {
+	content, ok := skillContent(skillNameFromPath(rel))
+	if !ok {
+		return nil
+	}
+	return removeOwnedFile(root, rel, content)
 }
 
 func (service *Service) applyActionsInRoot(root *os.Root, actions []Action, pending *transaction) error {
@@ -435,6 +500,10 @@ func (service *Service) applyActionsInRoot(root *os.Root, actions []Action, pend
 			}
 		case IntegrationHelix:
 			if err := injectHelix(root, action.Path); err != nil {
+				return err
+			}
+		case integrationSkill:
+			if err := installSkill(root, action.Path); err != nil {
 				return err
 			}
 		default:
@@ -854,7 +923,7 @@ func DetectIntegrations(root string) []string {
 	checks := []struct{ name, path string }{
 		{IntegrationAgents, "AGENTS.md"}, {IntegrationGeneric, ".mcp.json"}, {IntegrationCursor, ".cursor"},
 		{IntegrationVSCode, ".vscode"}, {IntegrationOMP, ".omp"}, {IntegrationFactory, ".factory"},
-		{IntegrationOpenCode, "opencode.json"}, {IntegrationNeovim, ".nvim"}, {IntegrationHelix, ".helix"},
+		{IntegrationOpenCode, "opencode.json"}, {IntegrationNeovim, ".nvim"}, {IntegrationHelix, ".helix"}, {IntegrationClaude, ".claude"},
 	}
 	out := make([]string, 0, len(checks))
 	for _, check := range checks {
@@ -952,6 +1021,8 @@ func (service *Service) removeIntegrations(integrations []string) error {
 			err = removeOwnedFile(root, action.Path, nvimConfig)
 		case IntegrationHelix:
 			err = removeOwnedFile(root, action.Path, helixConfig())
+		case integrationSkill:
+			err = removeSkill(root, action.Path)
 		}
 		if err != nil {
 			return safeError(err)

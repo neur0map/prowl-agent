@@ -267,6 +267,12 @@ func languageAllowed(lang string, configured []string) bool {
 }
 
 func stripGeneratedContent(rel string, data []byte) []byte {
+	// prowl-installed agent skills live at <harness>/skills/<name>/SKILL.md and
+	// are entirely prowl-authored guidance, not project source, so they never
+	// belong in the code index (same reasoning as the generated AGENTS.md block).
+	if isInstalledSkillPath(rel) {
+		return nil
+	}
 	if !strings.EqualFold(filepath.Base(rel), "AGENTS.md") {
 		return data
 	}
@@ -286,6 +292,23 @@ func stripGeneratedContent(rel string, data []byte) []byte {
 		content = content[:start] + content[end:]
 	}
 	return []byte(strings.TrimSpace(content))
+}
+
+// isInstalledSkillPath reports whether rel is a prowl-installed agent skill:
+// a SKILL.md inside a "skills" directory that sits under a harness config dir
+// (a path segment beginning with "."). A user's own docs/skills/x/SKILL.md is
+// left indexed because its "skills" parent is not a dotted harness dir.
+func isInstalledSkillPath(rel string) bool {
+	if !strings.EqualFold(filepath.Base(rel), "SKILL.md") {
+		return false
+	}
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	for i := 1; i < len(segments); i++ {
+		if segments[i] == "skills" && strings.HasPrefix(segments[i-1], ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // Version returns the indexing-logic version (the binary's VCS revision). The

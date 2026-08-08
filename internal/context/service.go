@@ -69,7 +69,11 @@ func (service *Service) Search(request Request) (packet Packet, err error) {
 		return Packet{}, err
 	}
 	candidates := append(append(curated, sources...), graph...)
-	candidates = applySemanticScores(request.Question, candidates, service.Reranker)
+	reranker := service.Reranker
+	if request.Reranker != nil {
+		reranker = request.Reranker
+	}
+	candidates = applySemanticScores(request.Question, candidates, reranker)
 	packet, err = Pack(request, candidates, service.Estimator)
 	if err != nil {
 		return Packet{}, err

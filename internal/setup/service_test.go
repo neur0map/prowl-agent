@@ -465,6 +465,61 @@ func TestSetupVerifyRejectsMissingMarker(t *testing.T) {
 	}
 }
 
+func TestSetupApplyInstallsAndRemovesEmbeddedSkills(t *testing.T) {
+	root := t.TempDir()
+	// A present harness config dir makes it a detected, installable target.
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if detected := DetectIntegrations(root); !contains(detected, IntegrationClaude) {
+		t.Fatalf("config dir did not surface the integration: %v", detected)
+	}
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationOMP, IntegrationClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := service.Apply(context.Background(), ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "skills",
+	})
+	if err != nil {
+		t.Fatalf("apply installing skills failed: %v", err)
+	}
+	if !outcome.Verified {
+		t.Fatal("apply installing skills was not verified")
+	}
+	const skill = "prowl-repo-exploration"
+	want, ok := skillContent(skill)
+	if !ok || want == "" {
+		t.Fatalf("embedded skill %q missing", skill)
+	}
+	dirs := []string{".omp/skills", ".claude/skills"}
+	for _, dir := range dirs {
+		path := filepath.Join(root, filepath.FromSlash(dir), skill, "SKILL.md")
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("installed skill %s: %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("installed skill %s content = %q, want embedded body", path, got)
+		}
+	}
+	// Removing the integrations takes their installed skill files back out.
+	if err := service.removeIntegrations([]string{IntegrationOMP, IntegrationClaude}); err != nil {
+		t.Fatalf("remove integrations: %v", err)
+	}
+	for _, dir := range dirs {
+		path := filepath.Join(root, filepath.FromSlash(dir), skill, "SKILL.md")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("skill %s survived removal: %v", path, err)
+		}
+	}
+}
+
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

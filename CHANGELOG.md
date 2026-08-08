@@ -33,6 +33,21 @@ All notable changes are recorded here. The format follows
   state.
 
 ### Added
+- Agent skills: `init` installs a small set of prowl skills (repo exploration,
+  change safety, durable knowledge) into a detected harness skill directory
+  (`.omp/skills/`, `.claude/skills/`), so agents learn when to reach for prowl
+  instead of grepping. Each skill's description states its triggers. The
+  installed skill files are excluded from the index. AGENTS.md remains the
+  fallback for harnesses without a skill system.
+- `explore <path>` reviews or extracts from a repository you do not own: it
+  indexes into a scratch location, answers an overview or a `--question` context
+  packet, and leaves the target tree untouched (no `.prowl/`, `.gitignore`, or
+  `AGENTS.md` written into it).
+- Host-powered reranking: `search_context` accepts `rerank`, and when the MCP
+  client supports sampling, prowl asks the host model to reorder results. This
+  gives semantic-quality relevance with no local model, so a keyword-dense file
+  no longer outranks the real code. Falls back to deterministic ranking when
+  sampling is unavailable.
 
 - `context search`, `context get`, and `context traces` expose versioned,
   budget-aware packets that combine canonical project knowledge with cited source

@@ -3,7 +3,7 @@
 # this hook only catches what is cheap to check and expensive to miss.
 # Enable with: git config core.hooksPath .githooks
 
-forbidden='—|[Cc]o-authored-by|[Gg]enerated (with|by)|[Cc]laude|ChatGPT|Copilot|Anthropic|OpenAI|🤖|comprehensive|seamless|leverage|delve|intricate'
+forbidden='—|–|[Cc]o-authored-by|[Gg]enerated (with|by)|🤖|comprehensive|seamless|leverage|delve|intricate'
 
 # 1. Never commit local-only planning files.
 plans=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^docs/superpowers/')

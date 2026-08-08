@@ -38,6 +38,7 @@ type contextSearchIn struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty" jsonschema:"estimated token budget"`
 	BudgetBytes  int    `json:"budget_bytes,omitempty" jsonschema:"optional byte budget"`
 	Synthesize   bool   `json:"synthesize,omitempty" jsonschema:"request optional client-side semantic synthesis"`
+	Rerank       bool   `json:"rerank,omitempty" jsonschema:"ask the host model to rerank results when it supports sampling"`
 }
 
 type contextGetIn struct {
@@ -82,7 +83,11 @@ func (h *handlers) searchContext(ctx context.Context, request *sdk.CallToolReque
 	if in.BudgetTokens == 0 && in.BudgetBytes == 0 && mode != contextpacket.ModeFull {
 		in.BudgetTokens = 1800
 	}
-	packet, err := h.context.Search(contextpacket.Request{Question: in.Query, Mode: mode, BudgetTokens: in.BudgetTokens, BudgetBytes: in.BudgetBytes})
+	searchRequest := contextpacket.Request{Question: in.Query, Mode: mode, BudgetTokens: in.BudgetTokens, BudgetBytes: in.BudgetBytes}
+	if in.Rerank && request != nil && sessionSupportsSampling(request.Session) {
+		searchRequest.Reranker = samplingReranker{ctx: ctx, session: request.Session}
+	}
+	packet, err := h.context.Search(searchRequest)
 	if err == nil && in.Synthesize {
 		packet = synthesizePacket(ctx, request, packet)
 	}

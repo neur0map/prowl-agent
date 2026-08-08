@@ -22,6 +22,9 @@ type Request struct {
 	BudgetTokens int               `json:"budget_tokens,omitempty"`
 	BudgetBytes  int               `json:"budget_bytes,omitempty"`
 	Filters      map[string]string `json:"filters"`
+	// Reranker overrides the service-level semantic reranker for a single
+	// request. It is runtime-only and never serialized.
+	Reranker SemanticReranker `json:"-"`
 }
 
 // Citation points to deterministic evidence.

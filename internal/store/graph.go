@@ -1,6 +1,9 @@
 package store
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Symbol is a definition to insert (parent linked by name within the file).
 type Symbol struct {
@@ -204,25 +207,43 @@ type ChunkHit struct {
 }
 
 // SearchChunks runs an FTS5 query over text chunks, returning highlighted
-// snippets. It tries the query as an exact phrase first, then -- only when that
-// matches nothing -- falls back to all terms (AND) and finally any term (OR),
-// so a natural-language question still returns the most relevant chunks instead
-// of nothing when the exact phrase is absent.
+// snippets. It merges three match tiers in precision order -- the exact phrase,
+// then all terms (AND), then any term (OR) -- deduping by chunk and capping at
+// limit. Precision matches lead, and the OR tier fills the remaining slots, so a
+// natural-language question still recalls chunks that share only some terms
+// instead of being masked when a coincidental chunk happens to match all terms.
 func (s *Store) SearchChunks(query string, limit int) ([]ChunkHit, error) {
-	matches := []string{ftsQuote(query)}
-	if terms := ftsTerms(query); len(terms) > 1 {
-		matches = append(matches, strings.Join(terms, " "), strings.Join(terms, " OR "))
-	}
-	for _, m := range matches {
+	seen := map[string]bool{}
+	var out []ChunkHit
+	for _, m := range ftsMatchTiers(query) {
 		hits, err := s.searchChunksMatch(m, limit)
 		if err != nil {
 			return nil, err
 		}
-		if len(hits) > 0 {
-			return hits, nil
+		for _, h := range hits {
+			key := h.File + "\x00" + strconv.Itoa(h.StartLine)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, h)
+			if len(out) >= limit {
+				return out, nil
+			}
 		}
 	}
-	return nil, nil
+	return out, nil
+}
+
+// ftsMatchTiers returns FTS match strings in precision order: the exact phrase,
+// then all terms (AND), then any term (OR). Only multi-term queries add the
+// AND/OR tiers.
+func ftsMatchTiers(query string) []string {
+	matches := []string{ftsQuote(query)}
+	if terms := ftsTerms(query); len(terms) > 1 {
+		matches = append(matches, strings.Join(terms, " "), strings.Join(terms, " OR "))
+	}
+	return matches
 }
 
 func (s *Store) searchChunksMatch(match string, limit int) ([]ChunkHit, error) {
@@ -254,23 +275,29 @@ type ChunkBody struct {
 	Text      string
 }
 
-// SearchChunkText runs the same FTS query as SearchChunks but returns each
-// matched chunk's full text instead of a snippet.
+// SearchChunkText runs the same tiered, merged FTS query as SearchChunks but
+// returns each matched chunk's full text instead of a snippet.
 func (s *Store) SearchChunkText(query string, limit int) ([]ChunkBody, error) {
-	matches := []string{ftsQuote(query)}
-	if terms := ftsTerms(query); len(terms) > 1 {
-		matches = append(matches, strings.Join(terms, " "), strings.Join(terms, " OR "))
-	}
-	for _, match := range matches {
+	seen := map[string]bool{}
+	var out []ChunkBody
+	for _, match := range ftsMatchTiers(query) {
 		hits, err := s.searchChunkTextMatch(match, limit)
 		if err != nil {
 			return nil, err
 		}
-		if len(hits) > 0 {
-			return hits, nil
+		for _, c := range hits {
+			key := c.File + "\x00" + strconv.Itoa(c.StartLine)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, c)
+			if len(out) >= limit {
+				return out, nil
+			}
 		}
 	}
-	return nil, nil
+	return out, nil
 }
 
 func (s *Store) searchChunkTextMatch(match string, limit int) ([]ChunkBody, error) {

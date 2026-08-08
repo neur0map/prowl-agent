@@ -264,6 +264,46 @@ func TestSearchChunksPhraseToTermsFallback(t *testing.T) {
 	}
 }
 
+func TestSearchChunksMergesTiersForRecall(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(rel, text string) {
+		fid, err := s.UpsertFile(File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil, []Chunk{{StartLine: 1, EndLine: 1, Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// settings.go coincidentally contains all three query terms; battery.go, the
+	// real implementation, contains only "battery". The AND tier matches only
+	// settings.go, so before tier-merging the real file was masked entirely.
+	mk("settings.go", "toggle the battery indicator, status text, and the display option")
+	mk("battery.go", "the battery charge implementation lives here")
+
+	hits, err := s.SearchChunks("battery status display", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]bool{}
+	for _, h := range hits {
+		files[h.File] = true
+	}
+	if !files["settings.go"] {
+		t.Fatalf("AND-tier match settings.go missing: %v", hits)
+	}
+	if !files["battery.go"] {
+		t.Fatalf("OR-tier real file battery.go was masked by the AND tier: %v", hits)
+	}
+	if hits[0].File != "settings.go" {
+		t.Fatalf("precision order broken: want the all-term match settings.go first, got %v", hits)
+	}
+}
+
 func TestGenerationRejectsNestedAndDoesNotPublishRollbackOrCommitFailure(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "index.db"))
 	if err != nil {

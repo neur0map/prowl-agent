@@ -118,7 +118,7 @@ func TestServiceExpandsOneGraphHopWithSelectionReason(t *testing.T) {
 	if _, err := index.IndexWithOptions(database, root, index.Options{Languages: []string{"go"}}); err != nil {
 		t.Fatal(err)
 	}
-	packet, err := (&Service{Store: database, Root: root}).Search(Request{Question: "checks request allowed", Mode: ModeCompact, BudgetTokens: 1000})
+	packet, err := (&Service{Store: database, Root: root}).Search(Request{Question: "checks incoming request", Mode: ModeCompact, BudgetTokens: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}

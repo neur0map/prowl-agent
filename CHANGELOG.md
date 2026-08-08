@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Full-text search merges its phrase, all-terms (AND), and any-term (OR) tiers
+  instead of returning only the first non-empty tier. Precision matches still
+  lead, but the OR tier fills the remaining slots, so a natural-language query
+  recalls files that share only some of its terms instead of being masked when a
+  coincidental file happens to match every term. On inir, `search "battery
+  status display"` now surfaces the real `PillBattery` and `BatteryPopup`
+  components the all-terms tier alone missed. This lifts recall for both `search`
+  and the MCP context packets, which share the retrieval, and ranking (low-signal
+  down-weight, graph, semantic) keeps precision.
 - Context ranking now down-weights low-signal file classes (locale/i18n tables,
   generated code, dependency lockfiles, minified bundles) so a keyword-dense
   data file no longer outranks the real code that answers a question. The

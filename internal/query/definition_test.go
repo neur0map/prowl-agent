@@ -89,3 +89,43 @@ func TestDefinitionQMLComponentReturnsWholeFile(t *testing.T) {
 		t.Fatalf("line_end=%d, want the whole file", def.LineEnd)
 	}
 }
+
+func TestDefinitionIncludesDocComment(t *testing.T) {
+	dir := t.TempDir()
+	src := "package widget\n\n// Battery reports the charge level.\n// Second doc line.\nfunc Battery() int {\n\treturn 1\n}\n\nfunc Plain() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "w.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module w\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := index.Index(s, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	q := New(s)
+
+	def, err := q.Definition(dir, "Battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(def.Code, "Battery reports the charge level") || !strings.Contains(def.Code, "Second doc line") {
+		t.Fatalf("doc comment not included above the symbol: %q", def.Code)
+	}
+	if def.LineStart != 3 {
+		t.Fatalf("line_start=%d, want 3 (the first doc line)", def.LineStart)
+	}
+
+	// A symbol with a blank line above it must not absorb unrelated lines.
+	plain, err := q.Definition(dir, "Plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.Code, "doc line") || strings.Contains(plain.Code, "func Battery") {
+		t.Fatalf("Plain over-reached into earlier lines: %q", plain.Code)
+	}
+}

@@ -88,6 +88,7 @@ func (q *Querier) Definition(root, target string) (Definition, error) {
 	if end > len(lines) {
 		end = len(lines)
 	}
+	start = docCommentStart(lines, start)
 	body := lines[start-1 : end]
 	truncated := false
 	if len(body) > DefinitionMaxLines {
@@ -104,4 +105,33 @@ func (q *Querier) Definition(root, target string) (Definition, error) {
 		Code:      strings.Join(body, "\n"),
 		Truncated: truncated,
 	}, nil
+}
+
+// isCommentLine reports whether a trimmed line begins with a comment marker
+// common across the indexed languages (// # /* * -- <!--). It is a heuristic,
+// used only to attach a symbol's own doc block, never to parse code.
+func isCommentLine(s string) bool {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return false
+	}
+	for _, p := range []string{"//", "#", "/*", "*", "--", "<!--"} {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// docCommentStart walks up from a symbol's first line to include a contiguous
+// block of comment lines directly above it (its doc comment), stopping at the
+// first blank or non-comment line. It is bounded so a file-top license header
+// separated by a blank line is never mistaken for a symbol's doc.
+func docCommentStart(lines []string, start int) int {
+	const maxDoc = 15
+	s := start
+	for s > 1 && start-s < maxDoc && isCommentLine(lines[s-2]) {
+		s--
+	}
+	return s
 }

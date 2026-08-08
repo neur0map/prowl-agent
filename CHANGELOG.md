@@ -8,6 +8,12 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `def` and the `read_symbol` MCP tool now include a symbol's doc comment: the
+  contiguous block of comment lines directly above it, stopping at the first
+  blank line and bounded to 15 lines so a file-top license header is never
+  absorbed. Reading one symbol now carries its documentation, matching what an
+  editor's hover shows.
+
 - Full-text and embedding chunks are now aligned to symbol boundaries instead of
   blind 40-line windows, so a function, type, or component stays whole in one
   chunk (up to twice the window) rather than being split across two. A symbol

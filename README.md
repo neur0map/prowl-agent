@@ -286,6 +286,13 @@ live in `sqlite-vec`, so the agent finds files that mean the same thing even whe
 they share no words (for example, "music spectrum" finds an `AudioVisualizer`).
 Structural search works without any of this.
 
+You do not need any of this for good relevance either. Over MCP, an agent can
+call `search_context` with `rerank: true` and prowl asks the agent's own model to
+reorder the results. That fixes the case where a keyword-dense file (a
+translation table, a changelog) outranks the real code, and it needs no local
+model. When the client does not support that, ranking stays deterministic; prowl
+never blocks a query to make you download anything.
+
 ## Supported formats
 
 Go, Rust, Java, Kotlin, Ruby, C#, PHP, Dart, Elixir, TypeScript/TSX, Lua, Python,

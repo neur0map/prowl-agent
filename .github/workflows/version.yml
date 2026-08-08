@@ -58,3 +58,22 @@ jobs:
           git add cmd/prowl-agent/main.go
           git commit -m "chore: bump version to v${{ steps.bump.outputs.new }} [skip ci]"
           git push origin HEAD:unstable
+
+      # Optionally cut a release for the new version. A tag pushed with the
+      # default GITHUB_TOKEN cannot trigger the release workflow (GitHub blocks
+      # that recursion), so this runs only when a RELEASE_PAT secret is present.
+      # Without it, releases are cut by pushing a v* tag by hand, which builds
+      # and publishes through release.yml.
+      - name: Tag release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "no RELEASE_PAT secret; skipping auto-tag (push a v* tag by hand to cut a release)"
+            exit 0
+          fi
+          tag="v${{ steps.bump.outputs.new }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "prowl-agent $tag"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "$tag"

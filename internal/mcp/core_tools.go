@@ -24,7 +24,7 @@ func readOnlyAnnotations(title string) *sdk.ToolAnnotations {
 }
 
 func registerCoreTools(server *sdk.Server, h *handlers) {
-	sdk.AddTool(server, &sdk.Tool{Name: "search_context", Description: "Build a bounded, cited context packet for a project question.", Annotations: readOnlyAnnotations("Search context")}, tracked(h, h.searchContext))
+	sdk.AddTool(server, &sdk.Tool{Name: "search_context", Description: "Build a bounded, cited context packet for a project question. Ranks by full text with no model. For a relevance-sensitive question, set rerank=true to have your own model reorder the candidates (one extra model call, no local model needed).", Annotations: readOnlyAnnotations("Search context")}, tracked(h, h.searchContext))
 	sdk.AddTool(server, &sdk.Tool{Name: "get_context", Description: "Fetch selected context IDs with progressive detail and an explicit budget.", Annotations: readOnlyAnnotations("Get context")}, tracked(h, h.getContext))
 	sdk.AddTool(server, &sdk.Tool{Name: "analyze_change", Description: "Analyze the structural blast radius of a project-relative file.", Annotations: readOnlyAnnotations("Analyze change")}, tracked(h, h.analyzeChange))
 	sdk.AddTool(server, &sdk.Tool{Name: "propose_knowledge_change", Description: "Create a reviewable OKF proposal. This never accepts durable knowledge.", Annotations: &sdk.ToolAnnotations{Title: "Propose knowledge change", ReadOnlyHint: false, DestructiveHint: &falseHint, OpenWorldHint: &falseHint}}, tracked(h, h.proposeKnowledge))
@@ -38,7 +38,7 @@ type contextSearchIn struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty" jsonschema:"estimated token budget"`
 	BudgetBytes  int    `json:"budget_bytes,omitempty" jsonschema:"optional byte budget"`
 	Synthesize   bool   `json:"synthesize,omitempty" jsonschema:"request optional client-side semantic synthesis"`
-	Rerank       bool   `json:"rerank,omitempty" jsonschema:"ask the host model to rerank results when it supports sampling"`
+	Rerank       bool   `json:"rerank,omitempty" jsonschema:"reorder results with your own model for better relevance; needs no local model and is ignored when the client does not support sampling"`
 }
 
 type contextGetIn struct {

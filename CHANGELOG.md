@@ -31,6 +31,14 @@ All notable changes are recorded here. The format follows
   `.prowl-setup.lock` and `.prowl/setup-applies.json` are now covered by the
   derived-state gitignore block alongside the index, cache, logs, and editor
   state.
+- `search_context` now tells the agent, in its tool description and the `rerank`
+  hint, that reranking uses the agent's own model and needs no local model, so
+  the agent knows when to ask for it. When the client does not support sampling,
+  ranking stays deterministic and no query is blocked to prompt a download.
+- The version workflow can cut a release for each bump when a `RELEASE_PAT`
+  secret is set (a tag pushed with the default token cannot trigger the release
+  build). Without the secret, releases are cut by pushing a `v*` tag, which
+  builds and publishes the cross-platform binaries.
 
 ### Added
 - MCP tool results now reach the model as TOON instead of JSON. The read tools

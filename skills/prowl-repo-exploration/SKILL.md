@@ -39,8 +39,14 @@ location, answers, and leaves the target tree untouched (no `.prowl/`, no
 
 ## If ranking looks noisy
 
-With no local AI, `search`/`context` rank by full text, so a keyword-dense file
-(a translation table, a changelog) can outrank the real code. If the top hits
-look off, rerank the returned candidates yourself with the model you already
-have (a cheap one is enough): drop docs, locale, and generated files, keep
-implementation. Do not fall back to grepping the whole tree.
+Without a local model, `search`/`context` rank by full text, so a keyword-dense
+file (a translation table, a changelog) can outrank the real code. Two fixes,
+neither needs the user to install anything:
+
+- Over MCP: call `search_context` with `rerank: true`. prowl asks your own model
+  to reorder the candidates. It needs no local model and is ignored when your
+  client does not support sampling.
+- Otherwise: rerank the returned candidates yourself (a cheap model is enough).
+  Drop docs, locale, and generated files; keep implementation.
+
+Either way, do not fall back to grepping the whole tree.

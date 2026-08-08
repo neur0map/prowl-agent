@@ -74,10 +74,12 @@ prowl-agent init --no-ai --no-input --integrations cursor,vscode
 ```
 
 `init` builds the index, previews the selected integrations, and writes only the
-clients you choose. `--integrations auto` picks clients already present in the
-project; use `none`, `all`, or a comma-separated list. `--remove-integrations`
-removes only Prowl-owned entries and leaves neighboring config alone. State lives
-in `.prowl/`, which it adds to `.gitignore`.
+clients you choose. `--integrations auto` (the default) picks clients already
+present in the project and always writes the `AGENTS.md` guidance, so any agent
+that reads the repo is told to query Prowl first. Use `none`, `all`, or a
+comma-separated list. `--remove-integrations` removes only Prowl-owned entries
+and leaves neighboring config alone. State lives in `.prowl/`, which it adds to
+`.gitignore`.
 
 Setup is transactional: a malformed client config aborts the run and restores any
 file it already touched. The optional `AGENTS.md` guidance sits between markers,

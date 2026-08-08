@@ -869,7 +869,12 @@ func DetectIntegrations(root string) []string {
 func ParseIntegrationSelection(value string, detected []string) ([]string, error) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if value == "" || value == "auto" {
-		return NormalizeIntegrations(detected)
+		// AGENTS.md is the client-agnostic guidance almost every coding agent
+		// reads, and guidance an agent never sees cannot make it reach for Prowl.
+		// Always include it in auto, even on a repo that has none yet, so a bare
+		// `init` still tells agents to query Prowl first. It is a reversible,
+		// marker-bounded block (`--remove-integrations` takes it back out).
+		return NormalizeIntegrations(append(append([]string(nil), detected...), IntegrationAgents))
 	}
 	if value == "none" {
 		return []string{}, nil
@@ -998,18 +1003,24 @@ const AgentsEndMarker = agentsEndMarker
 const agentsBlock = agentsMarker + `
 ## Prowl project context
 
-Use the local Prowl index before broad file reads. Results cite file and line ranges;
-the index refreshes automatically.
+This repo has a Prowl index. To find code, trace how it connects, or check what a
+change touches, query Prowl first; use grep and file reads only for plain-text
+scans and for reading a file you have already located. Prowl reindexes what
+changed before each query, so answers stay current, and a symbol lookup returns
+ranked, cited file:line results with signatures in one call rather than a grep
+hit list you then open files to disambiguate.
 
-- Start: ` + "`prowl-agent overview`" + `
-- Locate code or knowledge: ` + "`prowl-agent find <name>`" + ` and ` + "`prowl-agent search <text>`" + `
-- Understand dependencies: ` + "`prowl-agent callers|callees|relations <path>`" + `
-- Before editing: ` + "`prowl-agent impact <path>`" + ` and ` + "`prowl-agent references <symbol_id>`" + `
-- After editing: ` + "`prowl-agent changed`" + ` and ` + "`prowl-agent doctor`" + `
-- Dotfile/desktop checks: ` + "`prowl-agent doctor --profile rice`" + `
+- Map the project: ` + "`prowl-agent overview`" + `
+- Find a symbol, setting, or component: ` + "`prowl-agent find <name>`" + `
+- Where a symbol is used: ` + "`prowl-agent references <symbol_id>`" + ` (id from find)
+- How files connect: ` + "`prowl-agent callers|callees|relations <path>`" + `
+- Blast radius before an edit: ` + "`prowl-agent impact <path>`" + `
+- Search text or meaning: ` + "`prowl-agent search <text>`" + `
+- Resume unfinished work: ` + "`prowl-agent wip`" + `
+- After edits: ` + "`prowl-agent changed`" + ` and ` + "`prowl-agent doctor`" + `
 
-Use ` + "`--format human|toon|json|markdown`" + ` as needed; non-terminal output
-remains token-lean TOON by default. MCP clients can launch ` + "`prowl-agent serve`" + `.
+Output is token-lean TOON by default; add ` + "`--format human|toon|json|markdown`" + `.
+MCP clients can run ` + "`prowl-agent serve`" + `.
 <!-- /prowl-agent -->`
 
 type mcpServer struct {

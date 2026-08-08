@@ -28,7 +28,7 @@ func TestEnsureAgentsBlockRefreshesInPlace(t *testing.T) {
 	if strings.Contains(s, "old guidance: use prowl-agent serve only") {
 		t.Errorf("stale block content not replaced:\n%s", s)
 	}
-	if !strings.Contains(s, "Use the local Prowl index before broad file reads") {
+	if !strings.Contains(s, "query Prowl first") {
 		t.Errorf("current guidance missing:\n%s", s)
 	}
 	// The user's surrounding content is preserved.

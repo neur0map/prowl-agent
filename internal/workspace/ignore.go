@@ -18,6 +18,8 @@ var derivedIgnorePatterns = []string{
 	".prowl/cache/",
 	".prowl/logs/",
 	".prowl/editor/",
+	".prowl/setup-applies.json",
+	".prowl-setup.lock",
 }
 
 // EnsureIgnored makes sure pattern is present in root/.gitignore, creating the

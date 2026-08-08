@@ -20,6 +20,17 @@ All notable changes are recorded here. The format follows
   self-referential `symbols.parent_id` cascade that made full re-indexing of
   large projects run in O(n^2) was added, cutting a multi-minute stall to
   seconds.
+- The generated `AGENTS.md` guidance is now a directive rule rather than a menu:
+  query Prowl to find code, trace how it connects, or check a change's blast
+  radius, and fall back to grep or file reads only for plain-text scans. It
+  states that queries reindex first (so answers are current) and lists `wip`.
+- `init --integrations auto` (the default) now always writes the `AGENTS.md`
+  guidance, even on a repo that has none, so a bare `init` still tells agents to
+  reach for Prowl. It stays a reversible, marker-bounded block.
+- `init` no longer leaves untracked runtime files for `git add -A` to sweep up:
+  `.prowl-setup.lock` and `.prowl/setup-applies.json` are now covered by the
+  derived-state gitignore block alongside the index, cache, logs, and editor
+  state.
 
 ### Added
 

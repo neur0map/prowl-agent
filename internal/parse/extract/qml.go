@@ -12,6 +12,8 @@ const qmlSCM = `
 (ui_binding name: (identifier) @bind.name value: (expression_statement (identifier) @bind.val))
 (ui_property name: (identifier) @prop.name)
 (member_expression object: (identifier) @use.name)
+(function_declaration name: (identifier) @func.name) @func.def
+(ui_signal name: (identifier) @signal.name) @signal.def
 `
 
 // Extract turns a QML file into edges and symbols. The dominant structure in QML
@@ -51,6 +53,8 @@ func (qmlExtractor) Extract(src []byte) (Result, error) {
 		if n, ok := capNode(caps, "prop.name"); ok {
 			r.Symbols = append(r.Symbols, Symbol{Name: n.Content(src), Kind: "property", StartLine: line(n), EndLine: line(n)})
 		}
+		addNamed(&r, caps, src, "func.name", "func.def", "function", "javascript")
+		addNamed(&r, caps, src, "signal.name", "signal.def", "signal", "javascript")
 	})
 	r.Chunks = chunkStructured(src, r.Symbols, 40)
 	return r, err

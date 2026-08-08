@@ -8,6 +8,12 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- QML `function` and `signal` declarations are now indexed as symbols, so
+  `find`, `def`, and `read_symbol` resolve a component's methods and signals
+  (previously only components, properties, and ids were indexed). In a
+  QML-heavy project this makes component methods first-class and readable like
+  functions in any other language.
+
 - `def` and the `read_symbol` MCP tool now include a symbol's doc comment: the
   contiguous block of comment lines directly above it, stopping at the first
   blank line and bounded to 15 lines so a file-top license header is never

@@ -88,19 +88,19 @@ func TestMCPIntegration(t *testing.T) {
 	if out := call("find_callers", map[string]any{"path": "hypr/colors.conf"}); !strings.Contains(out, "hypr/hyprland.conf") {
 		t.Fatalf("find_callers: %s", out)
 	}
-	if out := call("status", nil); !strings.Contains(out, "\"files\":11") {
+	if out := call("status", nil); !strings.Contains(out, "files: 11") {
 		t.Fatalf("status: %s", out)
 	}
 	if out := call("reindex", nil); !strings.Contains(out, "reindexed") {
 		t.Fatalf("reindex: %s", out)
 	}
-	if out := call("doctor", nil); !strings.Contains(out, "\"score\"") {
+	if out := call("doctor", nil); !strings.Contains(out, "score") {
 		t.Fatalf("doctor: %s", out)
 	}
-	if out := call("overview", nil); !strings.Contains(out, "\"roles\"") {
+	if out := call("overview", nil); !strings.Contains(out, "roles") {
 		t.Fatalf("overview: %s", out)
 	}
-	if out := call("clusters", nil); !strings.Contains(out, "\"clusters\"") {
+	if out := call("clusters", nil); !strings.Contains(out, "clusters") {
 		t.Fatalf("clusters: %s", out)
 	}
 

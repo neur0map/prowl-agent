@@ -33,6 +33,11 @@ All notable changes are recorded here. The format follows
   state.
 
 ### Added
+- MCP tool results now reach the model as TOON instead of JSON. The read tools
+  serialized their output as JSON in the content block the model reads; TOON
+  carries the same data for roughly 40% fewer tokens, and the structured output
+  still travels as JSON in `structuredContent` for clients that parse it. This
+  brings the MCP surface in line with the token-lean CLI default.
 - Agent skills: `init` installs a small set of prowl skills (repo exploration,
   change safety, durable knowledge) into a detected harness skill directory
   (`.omp/skills/`, `.claude/skills/`), so agents learn when to reach for prowl

@@ -268,6 +268,14 @@ func tracked[In, Out any](h *handlers, fn func(context.Context, *sdk.CallToolReq
 		res, out, err := fn(ctx, req, in)
 		if err == nil {
 			h.recordStats(out)
+			// When the handler did not choose its own (compact) content, the SDK
+			// would serialize the output as JSON for the model to read. Emit it as
+			// TOON instead, which is cheaper for the same data.
+			if res == nil {
+				if toonRes := toonFallback(out); toonRes != nil {
+					res = toonRes
+				}
+			}
 		}
 		return res, out, err
 	}

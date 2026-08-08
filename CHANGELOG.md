@@ -8,6 +8,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `init` now configures MCP clients with the lean `core` tool surface
+  (`serve --mcp-surface core`), the curated six-tool set with progressive
+  disclosure. The injected config previously launched bare `serve`, which
+  defaults to the eighteen-tool legacy surface, so clients never actually saw
+  `search_context`/`get_context` or their improved descriptions and ranking.
+  New and re-initialized clients now get the intended surface; the bare `serve`
+  default is unchanged for manual and opt-in use (`--mcp-surface legacy|all`).
 - Full-text search merges its phrase, all-terms (AND), and any-term (OR) tiers
   instead of returning only the first non-empty tier. Precision matches still
   lead, but the OR tier fills the remaining slots, so a natural-language query

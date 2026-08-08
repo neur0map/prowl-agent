@@ -1115,7 +1115,7 @@ func mergeMCPConfig(root *os.Root, rel, key string) error {
 	if servers == nil {
 		servers = map[string]any{}
 	}
-	servers["prowl-agent"] = mcpServer{Type: "stdio", Command: "prowl-agent", Args: []string{"serve"}}
+	servers["prowl-agent"] = mcpServer{Type: "stdio", Command: "prowl-agent", Args: []string{"serve", "--mcp-surface", "core"}}
 	doc[key] = servers
 	return writeJSON(root, rel, doc)
 }
@@ -1136,7 +1136,7 @@ func mergeOpenCode(root *os.Root, rel string) error {
 	if mcp == nil {
 		mcp = map[string]any{}
 	}
-	mcp["prowl-agent"] = map[string]any{"type": "local", "command": []string{"prowl-agent", "serve"}, "enabled": true}
+	mcp["prowl-agent"] = map[string]any{"type": "local", "command": []string{"prowl-agent", "serve", "--mcp-surface", "core"}, "enabled": true}
 	doc["mcp"] = mcp
 	return writeJSON(root, rel, doc)
 }

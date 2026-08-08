@@ -69,6 +69,7 @@ func (service *Service) Search(request Request) (packet Packet, err error) {
 		return Packet{}, err
 	}
 	candidates := append(append(curated, sources...), graph...)
+	applySymbolMatch(candidates, service.Store, request.Question)
 	reranker := service.Reranker
 	if request.Reranker != nil {
 		reranker = request.Reranker

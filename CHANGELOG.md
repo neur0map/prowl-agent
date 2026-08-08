@@ -8,6 +8,16 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Context ranking no longer counts stopwords ("how", "the", "is") in lexical
+  scoring, so verbose prose and generated data files stop outranking the actual
+  code for a natural-language question. A candidate that *defines* a symbol
+  matching the query (a file with `ComputeFrame` for "how is a frame computed")
+  is also boosted above one that only mentions the terms in text, since naming a
+  symbol after a concept is a deterministic authority signal. A new retrieval
+  benchmark case (authoritative source vs term-dense prose under a tight budget)
+  guards both; on inir the battery service rose from rank 7 to 4 and an
+  unrelated term-dense widget fell out of the packet.
+
 - QML `function` and `signal` declarations are now indexed as symbols, so
   `find`, `def`, and `read_symbol` resolve a component's methods and signals
   (previously only components, properties, and ids were indexed). In a

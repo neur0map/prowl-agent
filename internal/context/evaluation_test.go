@@ -151,6 +151,8 @@ func newEvaluationFixture(tb testing.TB) *evaluationFixture {
 		"noise/cache_notes.go":     "package noise\n// InvalidateCache InvalidateCache InvalidateCache tutorial only\n",
 		"bar/battery.go":           "package bar\n// BatteryIndicator displays the battery charge level on the status bar.\nfunc BatteryIndicator() string { return \"battery charge level shown on the status bar\" }\n",
 		"i18n/catalog_gen.go":      "package i18n\n// Code generated from locale sources. DO NOT EDIT.\n// battery battery battery charge charge charge level level level status status status bar bar bar display display display the the the\nvar Catalog = map[string]string{\"battery\": \"bateria\", \"charge\": \"carga\", \"level\": \"nivel\", \"status\": \"estado\", \"bar\": \"barra\", \"display\": \"mostrar\"}\n",
+		"render/pipeline.go":       "package render\n// ComputeFrame renders one frame in the render loop and returns its id.\nfunc ComputeFrame() int { return sceneFrame() }\nfunc sceneFrame() int { return 1 }\n",
+		"guide/frame_notes.go":     "package guide\n// how the frame is computed: the render loop draws each frame; frame timing and frame pacing across the render loop\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))

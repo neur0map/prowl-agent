@@ -61,5 +61,14 @@
     "distractors": ["i18n/catalog_gen.go"],
     "budget_tokens": 120,
     "required_terms": ["BatteryIndicator", "charge level"]
+  },
+  {
+    "name": "frame authority ranking",
+    "question": "how is a frame computed in the render loop",
+    "expected_sources": ["render/pipeline.go"],
+    "expected_concepts": [],
+    "distractors": ["guide/frame_notes.go"],
+    "budget_tokens": 120,
+    "required_terms": ["ComputeFrame"]
   }
 ]

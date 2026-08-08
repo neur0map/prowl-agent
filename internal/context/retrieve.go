@@ -96,6 +96,43 @@ func sourceCandidates(target *store.Store, query string, limit int) ([]Candidate
 	return out, nil
 }
 
+// symbolMatchBoost lifts a candidate that DEFINES a symbol matching the query
+// above one that only mentions the terms in prose or comments. A file named
+// after the concept (ComputeFrame for "how is a frame computed") is more
+// authoritative than incidental text, and this signal is deterministic.
+const symbolMatchBoost = 8
+
+// applySymbolMatch flags candidates whose file defines a symbol whose name
+// contains a meaningful query term, using the same substring match `find` uses
+// (so camelCase components are caught). Short tokens are skipped to avoid
+// matching common substrings. The flag is scored in RankCandidates.
+func applySymbolMatch(candidates []Candidate, target *store.Store, query string) {
+	if target == nil {
+		return
+	}
+	files := map[string]bool{}
+	for _, term := range queryTerms(query) {
+		if len(term) < 4 {
+			continue
+		}
+		hits, err := target.SymbolsBySubstring(term, 50)
+		if err != nil {
+			continue
+		}
+		for _, h := range hits {
+			files[h.File] = true
+		}
+	}
+	if len(files) == 0 {
+		return
+	}
+	for i := range candidates {
+		if len(candidates[i].Citations) > 0 && files[candidates[i].Citations[0].Path] {
+			candidates[i].SymbolMatch = true
+		}
+	}
+}
+
 func graphCandidates(target *store.Store, direct []Candidate, limit int) ([]Candidate, error) {
 	if target == nil || len(direct) == 0 || limit <= 0 {
 		return nil, nil
@@ -184,13 +221,25 @@ func citationEndLine(start int, text string) int {
 	return start + lines - 1
 }
 
+// queryStopwords are common English and question words that carry no code
+// relevance, so counting them in lexical scoring inflates verbose prose and
+// generated data files over the actual code. Code-common words (get, set) are
+// deliberately kept.
+var queryStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "of": true, "to": true, "in": true, "on": true,
+	"is": true, "are": true, "was": true, "were": true, "be": true, "for": true, "and": true,
+	"or": true, "with": true, "how": true, "does": true, "do": true, "where": true, "what": true,
+	"when": true, "why": true, "which": true, "that": true, "this": true, "it": true, "by": true,
+	"from": true, "as": true, "at": true, "into": true,
+}
+
 func queryTerms(query string) []string {
 	fields := strings.Fields(strings.ToLower(query))
 	seen := map[string]bool{}
 	var terms []string
 	for _, field := range fields {
 		field = strings.Trim(field, ".,:;!?()[]{}\"'`")
-		if len(field) > 1 && !seen[field] {
+		if len(field) > 1 && !seen[field] && !queryStopwords[field] {
 			seen[field] = true
 			terms = append(terms, field)
 		}

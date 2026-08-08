@@ -22,6 +22,12 @@ All notable changes are recorded here. The format follows
   Quickshell repo, `impact` on the `Config.qml` singleton went from 0 to 978
   dependents and resolved edges rose from 3,681 to 7,327, with no new dangling
   edges (unresolved built-in references like `Qt` and `Math` are dropped).
+- The six MCP core tools now carry explicit when-to-use and when-not-to-use
+  descriptions, cross-reference each other (`search_context` then `get_context`),
+  and state the freshness guarantee (Prowl reindexes changed files before
+  answering), so an agent reaches for the index instead of grepping or reading
+  whole files. Precise tool descriptions measurably improve how an agent picks
+  the right tool.
 
 - Refocused Prowl into a single, agent-first token-saving context engine
   delivered over the CLI and MCP. Removed the browser workbench (`prowl-agent

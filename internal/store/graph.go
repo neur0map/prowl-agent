@@ -137,6 +137,29 @@ func (s *Store) SymbolsBySubstring(query string, limit int) ([]SymbolHit, error)
 		WHERE sy.name LIKE ? ESCAPE '\' ORDER BY length(sy.name), f.rel_path, sy.start_line LIMIT ?`, like, limit)
 }
 
+// DistinctSymbolNamesByLength returns distinct symbol names whose character
+// length is within [minLen, maxLen], the candidate set for find's typo-tolerant
+// fallback. Bounded so a huge repo cannot make the fuzzy scan unbounded.
+func (s *Store) DistinctSymbolNamesByLength(minLen, maxLen int) ([]string, error) {
+	if minLen < 1 {
+		minLen = 1
+	}
+	rows, err := s.sql().Query(`SELECT DISTINCT name FROM symbols WHERE length(name) BETWEEN ? AND ? ORDER BY name LIMIT 20000`, minLen, maxLen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // SymbolSpan is a code definition's line range, used to find the function or
 // type that encloses a usage line.
 type SymbolSpan struct {

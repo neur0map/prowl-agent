@@ -126,10 +126,112 @@ func (q *Querier) findSymbolLocked(name string) ([]store.SymbolHit, error) {
 			add(sub)
 		}
 	}
+	if len(out) == 0 {
+		return q.fuzzySymbols(name), nil // last resort: a typo or approximate name
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return findRank(out[i]) < findRank(out[j])
 	})
 	return out, nil
+}
+
+// fuzzySymbols is find's last resort: when no exact, full-text, or substring
+// match exists, return symbols whose name is within a small edit distance of the
+// query (a typo or an approximate recollection), closest first. It runs only on
+// a total miss, so it never displaces a real match, and skips very short queries
+// where fuzzy matching is mostly noise.
+func (q *Querier) fuzzySymbols(name string) []store.SymbolHit {
+	term := strings.ToLower(strings.TrimSpace(name))
+	n := len([]rune(term))
+	if n < 4 {
+		return nil
+	}
+	maxDist := 1
+	if n >= 8 {
+		maxDist = 2
+	}
+	names, err := q.s.DistinctSymbolNamesByLength(n-maxDist, n+maxDist)
+	if err != nil {
+		return nil
+	}
+	type scored struct {
+		name string
+		d    int
+	}
+	var near []scored
+	for _, cand := range names {
+		if d := osaDistance(term, strings.ToLower(cand)); d >= 1 && d <= maxDist {
+			near = append(near, scored{cand, d})
+		}
+	}
+	sort.SliceStable(near, func(i, j int) bool {
+		if near[i].d != near[j].d {
+			return near[i].d < near[j].d
+		}
+		return near[i].name < near[j].name
+	})
+	seen := map[int64]bool{}
+	var out []store.SymbolHit
+	for _, s := range near {
+		hits, err := q.s.SymbolsByName(s.name, DefaultLimit)
+		if err != nil {
+			continue
+		}
+		for _, h := range hits {
+			if !seen[h.ID] {
+				seen[h.ID] = true
+				out = append(out, h)
+			}
+		}
+		if len(out) >= DefaultLimit {
+			break
+		}
+	}
+	return out
+}
+
+// osaDistance is the optimal string alignment (restricted Damerau-Levenshtein)
+// distance between a and b: the fewest inserts, deletes, substitutions, and
+// adjacent transpositions to turn one into the other.
+func osaDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev2 := make([]int, lb+1)
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			m := prev[j] + 1
+			if v := curr[j-1] + 1; v < m {
+				m = v
+			}
+			if v := prev[j-1] + cost; v < m {
+				m = v
+			}
+			if i > 1 && j > 1 && ra[i-1] == rb[j-2] && ra[i-2] == rb[j-1] {
+				if v := prev2[j-2] + 1; v < m {
+					m = v
+				}
+			}
+			curr[j] = m
+		}
+		prev2, prev, curr = prev, curr, prev2
+	}
+	return prev[lb]
 }
 
 // Usages is where a symbol is referenced: graph edges for config/resource

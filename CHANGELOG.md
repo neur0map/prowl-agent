@@ -25,6 +25,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `find` now tolerates typos: when a name matches nothing exactly, by full text,
+  or by substring, it falls back to symbols within a small edit distance
+  (optimal string alignment, so a wrong letter, an adjacent transposition, or a
+  missing letter still resolves -- `BatteryIndecator` finds `BatteryIndicator`).
+  It fires only on a total miss so it never displaces a real match, skips very
+  short queries to avoid noise, and stays fast (a bounded, length-filtered scan).
+
 - Path arguments are normalized before lookup, so a leading `./` or an uncleaned
   path (`pkg/../pkg/file.go`) resolves like the clean form. Agents routinely pass
   `./path`; previously `outline`, `impact`, `callers`, `callees`, `relations`,

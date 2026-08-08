@@ -17,6 +17,8 @@ type Candidate struct {
 	Knowledge       bool
 	GraphDistance   int
 	ChangedRelated  bool
+	LowSignal       bool
+	LowSignalClass  string
 }
 
 // SemanticReranker optionally assigns normalized relevance scores. Implementations
@@ -60,6 +62,10 @@ func RankCandidates(candidates []Candidate) []Candidate {
 	for _, candidate := range candidates {
 		score := candidate.LexicalScore
 		reasons := append([]string(nil), candidate.WhySelected...)
+		if candidate.LowSignal && !candidate.DirectMatch {
+			score *= lowSignalDampening
+			reasons = append(reasons, candidate.LowSignalClass+" file, low-signal (down-weighted)")
+		}
 		if candidate.SemanticScore > 0 {
 			score += candidate.SemanticScore * 12
 			reasons = append(reasons, "semantic relevance score "+formatScore(candidate.SemanticScore))

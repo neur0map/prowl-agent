@@ -76,7 +76,7 @@ func sourceCandidates(target *store.Store, query string, limit int) ([]Candidate
 		end := citationEndLine(hit.StartLine, hit.Text)
 		idPayload := filepath.ToSlash(hit.File) + ":" + itoa(hit.StartLine)
 		id := "source:" + base64.RawURLEncoding.EncodeToString([]byte(idPayload))
-		out = append(out, Candidate{
+		candidate := Candidate{
 			Item: Item{
 				ID: id, Kind: "source", Title: filepath.ToSlash(hit.File), Summary: firstParagraph([]byte(hit.Text)),
 				WhySelected: []string{"full-text source match"}, Freshness: "current", Confidence: 1,
@@ -86,7 +86,12 @@ func sourceCandidates(target *store.Store, query string, limit int) ([]Candidate
 			},
 			CompactContent: firstParagraph([]byte(hit.Text)), StandardContent: hit.Text, FullContent: hit.Text,
 			LexicalScore: lexicalScore(terms, hit.Text),
-		})
+		}
+		if class := lowSignalClass(hit.File); class != "" && !queryWantsClass(terms, class) {
+			candidate.LowSignal = true
+			candidate.LowSignalClass = class
+		}
+		out = append(out, candidate)
 	}
 	return out, nil
 }

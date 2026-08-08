@@ -122,7 +122,7 @@ prowl-agent context traces --limit 20 --json
 
 ## Deterministic retrieval evaluation
 
-The checked-in corpus is `internal/context/testdata/retrieval-corpus.json`. It contains six cases: three identifier lookups and three natural-language questions. Each declares two expected sources (including a dependency-neighbor source), one expected concept, a known distractor, required compact-packet evidence, and an 800-token budget.
+The checked-in corpus is `internal/context/testdata/retrieval-corpus.json`. It contains seven cases: three identifier lookups, three natural-language questions, and one low-signal down-weight case. Most declare two expected sources (including a dependency-neighbor source), one expected concept, a known distractor, required compact-packet evidence, and an 800-token budget; the low-signal case declares one real source against a keyword-dense generated-locale distractor under a tight 120-token budget.
 
 Run the acceptance evaluation:
 
@@ -131,19 +131,21 @@ go test -tags sqlite_fts5 ./internal/context \
   -run TestRetrievalEvaluationImprovesHitsUnderFixedBudget -count=1 -v
 ```
 
-Observed on the checked-in six-case fixture:
+Observed on the checked-in seven-case fixture:
 
 | Strategy | Mean recall | Mean distractor-aware precision | Mean required-evidence utilization | Complete evidence | Exposed retrieval operations |
 |---|---:|---:|---:|---:|---:|
-| scripted grep/file agent | 0.44 | 0.70 | 0.75 | 0/6 | 5.0 |
-| scripted existing-Prowl agent | 0.44 | 0.75 | 0.75 | 0/6 | 2.8 |
-| lexical packet | 0.44 | 0.75 | 0.75 | 0/6 | 1 |
-| graph packet | 0.67 | 0.83 | 1.00 | 0/6 | 1 |
-| hybrid knowledge/source/graph | **1.00** | **0.88** | **1.00** | **6/6** | **1** |
+| scripted grep/file agent | 0.52 | 0.74 | 0.79 | 1/7 | 5.4 |
+| scripted existing-Prowl agent | 0.52 | 0.79 | 0.79 | 1/7 | 2.9 |
+| lexical packet | 0.52 | 0.79 | 0.79 | 1/7 | 1 |
+| graph packet | 0.72 | 0.86 | 1.00 | 1/7 | 1 |
+| hybrid knowledge/source/graph | **1.00** | **0.89** | **1.00** | **7/7** | **1** |
 
-All packets stayed under the fixed 800-token estimate; hybrid packets used 129 to 179 estimated tokens in this fixture. Operation counts are instrumented by a deterministic scripted-agent harness: each grep/search invocation and each selected file read is counted, while a complete context packet is one tool invocation.
+All packets stayed under each case's fixed token estimate; hybrid packets used 120 to 179 estimated tokens in this fixture. Operation counts are instrumented by a deterministic scripted-agent harness: each grep/search invocation and each selected file read is counted, while a complete context packet is one tool invocation.
 
 `Complete evidence` means the scripted agent received all declared sources/concepts and required terms. This provider-free benchmark measures the plan's source-hit and tool-operation exit criteria without making an LLM-quality claim; provider-specific agent evaluation remains an optional integration benchmark.
+
+The low-signal case reproduces a real failure: a keyword-dense generated locale table (`i18n/catalog_gen.go`) scores higher on raw lexical overlap than the real `bar/battery.go` widget. The ranker dampens the lexical contribution of low-signal file classes (locale/i18n, generated, lockfiles, minified bundles) unless the query itself names the class, so the real code is surfaced and the distractor is dropped under budget. A direct identifier match to such a file is never dampened.
 
 Run timing benchmarks separately:
 

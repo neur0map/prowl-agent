@@ -8,6 +8,14 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Context ranking now down-weights low-signal file classes (locale/i18n tables,
+  generated code, dependency lockfiles, minified bundles) so a keyword-dense
+  data file no longer outranks the real code that answers a question. The
+  dampening is query-aware: a query that names the class (for example
+  "translation" or "lockfile") still surfaces those files, and a direct
+  identifier match is never dampened. A seventh, provider-free benchmark case
+  reproduces the failure and guards the fix.
+
 - Refocused Prowl into a single, agent-first token-saving context engine
   delivered over the CLI and MCP. Removed the browser workbench (`prowl-agent
   open`, the embedded web UI, and the HTTP workbench server), the durable-jobs

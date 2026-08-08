@@ -149,6 +149,8 @@ func newEvaluationFixture(tb testing.TB) *evaluationFixture {
 		"noise/auth_notes.go":      "package noise\n// Authenticate Authenticate Authenticate tutorial only\n",
 		"noise/migration_notes.go": "package noise\n// ApplyMigration ApplyMigration ApplyMigration tutorial only\n",
 		"noise/cache_notes.go":     "package noise\n// InvalidateCache InvalidateCache InvalidateCache tutorial only\n",
+		"bar/battery.go":           "package bar\n// BatteryIndicator displays the battery charge level on the status bar.\nfunc BatteryIndicator() string { return \"battery charge level shown on the status bar\" }\n",
+		"i18n/catalog_gen.go":      "package i18n\n// Code generated from locale sources. DO NOT EDIT.\n// battery battery battery charge charge charge level level level status status status bar bar bar display display display the the the\nvar Catalog = map[string]string{\"battery\": \"bateria\", \"charge\": \"carga\", \"level\": \"nivel\", \"status\": \"estado\", \"bar\": \"barra\", \"display\": \"mostrar\"}\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))

@@ -52,5 +52,14 @@
     "distractors": ["noise/cache_notes.go"],
     "budget_tokens": 800,
     "required_terms": ["storage epoch", "stale cache reads"]
+  },
+  {
+    "name": "battery display low-signal",
+    "question": "how does the status bar display the battery charge level",
+    "expected_sources": ["bar/battery.go"],
+    "expected_concepts": [],
+    "distractors": ["i18n/catalog_gen.go"],
+    "budget_tokens": 120,
+    "required_terms": ["BatteryIndicator", "charge level"]
   }
 ]

@@ -59,7 +59,7 @@ func TestCoreSurfaceIsSmallerAndLegacyStaysEighteen(t *testing.T) {
 	legacyJSON, _ := json.Marshal(legacyTools)
 	coreJSON, _ := json.Marshal(coreTools)
 	legacyDigest := fmt.Sprintf("%x", sha256.Sum256(legacyJSON))
-	if legacyDigest != "2a08155a2fb45e654298e8e6f9d2458ed8418ce4fa7a4eb9422ff378cb6b6300" {
+	if legacyDigest != "0f576b9618f499e971d5ca00343cd9cee8e37ae3b335994ced0644fc03c388f3" {
 		t.Fatalf("legacy descriptor digest = %s", legacyDigest)
 	}
 	if len(coreJSON) >= len(legacyJSON) {

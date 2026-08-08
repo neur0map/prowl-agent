@@ -948,6 +948,7 @@ func looksPathy(s string) bool {
 
 // Hotspots ranks structurally central and large files.
 type Hotspots struct {
+	Central          []store.FanRow   `json:"central"`
 	FanIn            []store.FanRow   `json:"fan_in"`
 	Largest          []FileSize       `json:"largest"`
 	LargestFunctions []store.FuncSpan `json:"largest_functions"`
@@ -1054,6 +1055,11 @@ func (q *Querier) RepoHotspots() (Hotspots, error) {
 			break
 		}
 	}
+	edges, err := q.s.FileDepEdges()
+	if err != nil {
+		return h, err
+	}
+	h.Central = centralFiles(files, edges, top)
 	return h, nil
 }
 

@@ -82,32 +82,42 @@ func (q *Querier) Brief(scope string) (Brief, error) {
 
 	b.Guides = guideDocs(files)
 
-	fan, err := q.s.FanIn(400)
+	edges, err := q.s.FileDepEdges()
 	if err != nil {
 		return Brief{}, err
 	}
-	const topKey = 10
-	seen := map[string]bool{}
-	for _, r := range fan {
-		if inScope(r.File) && !isVendored(r.File) {
-			b.KeyFiles = append(b.KeyFiles, r)
-			seen[r.File] = true
-			if len(b.KeyFiles) >= topKey {
-				break
-			}
-		}
+	allPaths := make([]string, 0, len(files))
+	for _, f := range files {
+		allPaths = append(allPaths, f.RelPath)
 	}
-	if len(b.KeyFiles) < topKey {
-		sort.Slice(scoped, func(i, j int) bool { return scoped[i].Size > scoped[j].Size })
-		for _, f := range scoped {
-			if seen[f.RelPath] || isVendored(f.RelPath) {
-				continue
-			}
-			b.KeyFiles = append(b.KeyFiles, store.FanRow{File: f.RelPath, In: 0})
-			seen[f.RelPath] = true
-			if len(b.KeyFiles) >= topKey {
-				break
-			}
+	score, degree := fileCentrality(allPaths, edges)
+	sizeOf := make(map[string]int64, len(scoped))
+	inScopePaths := make([]string, 0, len(scoped))
+	for _, f := range scoped {
+		if isVendored(f.RelPath) {
+			continue
+		}
+		inScopePaths = append(inScopePaths, f.RelPath)
+		sizeOf[f.RelPath] = f.Size
+	}
+	sort.Slice(inScopePaths, func(i, j int) bool {
+		pi, pj := inScopePaths[i], inScopePaths[j]
+		if score[pi] != score[pj] {
+			return score[pi] > score[pj]
+		}
+		if degree[pi] != degree[pj] {
+			return degree[pi] > degree[pj]
+		}
+		if sizeOf[pi] != sizeOf[pj] {
+			return sizeOf[pi] > sizeOf[pj]
+		}
+		return pi < pj
+	})
+	const topKey = 10
+	for _, p := range inScopePaths {
+		b.KeyFiles = append(b.KeyFiles, store.FanRow{File: p, In: degree[p]})
+		if len(b.KeyFiles) >= topKey {
+			break
 		}
 	}
 

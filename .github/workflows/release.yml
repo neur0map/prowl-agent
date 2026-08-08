@@ -87,6 +87,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # sqlite-vec's C includes <sqlite3.h>, which mingw lacks. Install the
+      # vcpkg header only (CGO_CFLAGS); go-sqlite3 still self-compiles its
+      # bundled amalgamation via the sqlite_fts5 tag, so no lib is linked.
+      - name: Provide sqlite3 headers for sqlite-vec
+        shell: pwsh
+        run: |
+          & C:\vcpkg\vcpkg.exe install "sqlite3[fts5]:x64-mingw-static"
+          "CGO_CFLAGS=-IC:\vcpkg\installed\x64-mingw-static\include" >> $env:GITHUB_ENV
       - name: Build and smoke
         shell: pwsh
         env:

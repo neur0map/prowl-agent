@@ -106,6 +106,11 @@ func newFindCmd() *cobra.Command {
 		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.FindSymbol(a[0]) })
 }
 
+func newOutlineCmd() *cobra.Command {
+	return newQueryCmd("outline <path>", "Show a file's structure: its symbols, signatures, and line ranges (no bodies), to grasp a file without reading it", false, cobra.ExactArgs(1),
+		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.Outline(a[0]) })
+}
+
 func newOverviewCmd() *cobra.Command {
 	return newQueryCmd("overview", "High-level map of the project (roles, entrypoints, clusters, hotspots)", false, cobra.NoArgs,
 		func(_ context.Context, q *query.Querier, _ []string) (any, error) { return q.Overview() })

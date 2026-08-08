@@ -6,6 +6,16 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `prowl-agent outline <path>` and the `outline` MCP tool return a file's
+  structure -- every symbol with its kind, signature, nesting depth, and line
+  range, but no bodies -- from the index alone (no file read). An agent grasps a
+  file's shape from a handful of signature lines instead of reading the whole
+  file (66% fewer tokens on a 332-line QML service in testing), then reads only
+  the symbols it needs with `def`/`read_symbol`. `outline` joins the core MCP
+  surface (now eight tools), directly targeting agent token usage.
+
 ### Changed
 
 - Repository-meta and CI configuration (`.github/`, `.gitlab-ci.yml`, CircleCI,

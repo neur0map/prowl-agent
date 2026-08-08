@@ -21,7 +21,7 @@ grep or glob for literal string or filename scans.
 ## Workflow
 
 1. Orient: `prowl-agent overview` (whole-project map: entrypoints, clusters, hotspots, docs to read), or `prowl-agent brief <path>` for one subsystem (its size, languages, guides, and the key files to read first, ranked by dependency centrality).
-2. Locate: `prowl-agent find <name>` for a symbol, then `prowl-agent def <name>` to read only that symbol's source instead of the whole file; `prowl-agent search <text>` for content.
+2. Locate & read cheaply: `prowl-agent find <name>` for a symbol; `prowl-agent outline <path>` for a file's structure (symbols and signatures, no bodies); `prowl-agent def <name>` to read only one symbol's source instead of the whole file; `prowl-agent search <text>` for content.
 3. Understand a slice: `prowl-agent context search "<question>" --budget-tokens 2000`
    returns a bounded, cited packet. Add `--json` to parse it.
 4. Trace: `prowl-agent callers <path>`, `prowl-agent callees <path>`,

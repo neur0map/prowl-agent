@@ -31,6 +31,7 @@ func registerCoreTools(server *sdk.Server, h *handlers) {
 	sdk.AddTool(server, &sdk.Tool{Name: "validate_knowledge", Description: "Check that stored project knowledge is well-formed: evidence anchors still resolve, links are valid, and entries are current. Use before relying on or proposing knowledge. Read-only.", Annotations: readOnlyAnnotations("Validate knowledge")}, tracked(h, h.validateKnowledge))
 	sdk.AddTool(server, &sdk.Tool{Name: "search_capabilities", Description: "List Prowl's built-in workflows and their metadata (token-lean) before fetching full details. Use to discover what Prowl offers; to search your code use search_context instead.", Annotations: readOnlyAnnotations("Search capabilities")}, tracked(h, h.searchCapabilities))
 	sdk.AddTool(server, &sdk.Tool{Name: "read_symbol", Description: "Read one symbol's source (its signature and body), cited and bounded, resolved by name or by a numeric id from a find result. Use it to read a single function, type, or component instead of the whole file. Read-only.", Annotations: readOnlyAnnotations("Read symbol")}, tracked(h, h.readSymbol))
+	sdk.AddTool(server, &sdk.Tool{Name: "outline", Description: "Show a file's structure: every symbol it defines with kind, signature, nesting depth, and line range, but no bodies. Use it to grasp a file from a handful of signature lines instead of reading the whole file (far cheaper on tokens), then read_symbol only the parts you need. Read-only.", Annotations: readOnlyAnnotations("Outline file")}, tracked(h, h.outline))
 }
 
 type contextSearchIn struct {
@@ -62,6 +63,10 @@ type capabilitySearchIn struct {
 
 type readSymbolIn struct {
 	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
+}
+
+type outlineIn struct {
+	Path string `json:"path" jsonschema:"repo-relative file path"`
 }
 
 type proposalOut struct {
@@ -106,6 +111,14 @@ func (h *handlers) readSymbol(_ context.Context, _ *sdk.CallToolRequest, in read
 		return nil, query.Definition{}, err
 	}
 	return nil, def, nil
+}
+
+func (h *handlers) outline(_ context.Context, _ *sdk.CallToolRequest, in outlineIn) (*sdk.CallToolResult, query.FileOutline, error) {
+	o, err := h.q.Outline(in.Path)
+	if err != nil {
+		return nil, query.FileOutline{}, err
+	}
+	return nil, o, nil
 }
 
 func synthesizePacket(ctx context.Context, request *sdk.CallToolRequest, packet contextpacket.Packet) contextpacket.Packet {

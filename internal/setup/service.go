@@ -1076,15 +1076,17 @@ const AgentsEndMarker = agentsEndMarker
 const agentsBlock = agentsMarker + `
 ## Prowl project context
 
-This repo has a Prowl index. To find code, trace how it connects, or check what a
-change touches, query Prowl first; use grep and file reads only for plain-text
-scans and for reading a file you have already located. Prowl reindexes what
-changed before each query, so answers stay current, and a symbol lookup returns
-ranked, cited file:line results with signatures in one call rather than a grep
-hit list you then open files to disambiguate.
+This repo has a Prowl index. To find code, read it, trace how it connects, or
+check what a change touches, query Prowl first, and prefer reading one symbol
+(def) or a file's structure (outline) over opening whole files; use grep only
+for plain-text scans. Prowl reindexes what changed before each query, so answers
+stay current, and a symbol lookup returns ranked, cited file:line results in one
+call rather than a grep hit list you then open files to disambiguate.
 
 - Map the project: ` + "`prowl-agent overview`" + `
 - Find a symbol, setting, or component: ` + "`prowl-agent find <name>`" + `
+- See a file's structure without reading it: ` + "`prowl-agent outline <path>`" + ` (symbols and signatures, no bodies)
+- Read one symbol instead of the whole file: ` + "`prowl-agent def <name>`" + `
 - Where a symbol is used: ` + "`prowl-agent references <symbol_id>`" + ` (id from find)
 - How files connect: ` + "`prowl-agent callers|callees|relations <path>`" + `
 - Blast radius before an edit: ` + "`prowl-agent impact <path>`" + `

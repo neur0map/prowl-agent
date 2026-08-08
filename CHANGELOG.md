@@ -18,6 +18,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- The AGENTS.md guidance Prowl injects on `init` now points agents at `outline`
+  (a file's structure without reading it) and `def` (one symbol instead of the
+  whole file), and frames the workflow as reading through Prowl rather than
+  opening whole files. Agents only save tokens if the guidance names these
+  commands; the block previously listed neither, so the token-saving read path
+  went unused.
+
 - Repository-meta and CI configuration (`.github/`, `.gitlab-ci.yml`, CircleCI,
   Jenkinsfile) is now a low-signal class, so an issue template or workflow stops
   outranking real code for a code question; a query that names CI (workflow,

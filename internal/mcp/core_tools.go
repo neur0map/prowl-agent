@@ -30,6 +30,7 @@ func registerCoreTools(server *sdk.Server, h *handlers) {
 	sdk.AddTool(server, &sdk.Tool{Name: "propose_knowledge_change", Description: "Propose durable project knowledge for human review (an OKF proposal); a person approves it later. This never writes accepted knowledge. Use to record a lasting architecture fact or decision, not transient notes.", Annotations: &sdk.ToolAnnotations{Title: "Propose knowledge change", ReadOnlyHint: false, DestructiveHint: &falseHint, OpenWorldHint: &falseHint}}, tracked(h, h.proposeKnowledge))
 	sdk.AddTool(server, &sdk.Tool{Name: "validate_knowledge", Description: "Check that stored project knowledge is well-formed: evidence anchors still resolve, links are valid, and entries are current. Use before relying on or proposing knowledge. Read-only.", Annotations: readOnlyAnnotations("Validate knowledge")}, tracked(h, h.validateKnowledge))
 	sdk.AddTool(server, &sdk.Tool{Name: "search_capabilities", Description: "List Prowl's built-in workflows and their metadata (token-lean) before fetching full details. Use to discover what Prowl offers; to search your code use search_context instead.", Annotations: readOnlyAnnotations("Search capabilities")}, tracked(h, h.searchCapabilities))
+	sdk.AddTool(server, &sdk.Tool{Name: "read_symbol", Description: "Read one symbol's source (its signature and body), cited and bounded, resolved by name or by a numeric id from a find result. Use it to read a single function, type, or component instead of the whole file. Read-only.", Annotations: readOnlyAnnotations("Read symbol")}, tracked(h, h.readSymbol))
 }
 
 type contextSearchIn struct {
@@ -57,6 +58,10 @@ type proposalIn struct {
 type capabilitySearchIn struct {
 	Query string `json:"query"`
 	Limit int    `json:"limit,omitempty"`
+}
+
+type readSymbolIn struct {
+	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
 }
 
 type proposalOut struct {
@@ -93,6 +98,14 @@ func (h *handlers) searchContext(ctx context.Context, request *sdk.CallToolReque
 	}
 	packet = contextpacket.CanonicalProjection(packet)
 	return packetResourceLinks(packet), packet, err
+}
+
+func (h *handlers) readSymbol(_ context.Context, _ *sdk.CallToolRequest, in readSymbolIn) (*sdk.CallToolResult, query.Definition, error) {
+	def, err := h.q.Definition(h.root, in.Symbol)
+	if err != nil {
+		return nil, query.Definition{}, err
+	}
+	return nil, def, nil
 }
 
 func synthesizePacket(ctx context.Context, request *sdk.CallToolRequest, packet contextpacket.Packet) contextpacket.Packet {

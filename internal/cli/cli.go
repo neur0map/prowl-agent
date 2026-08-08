@@ -12,7 +12,7 @@ func Register(root *cobra.Command, version string) {
 	// Read-only query commands: the CLI-first path. Any agent can shell out to
 	// these (token-lean TOON output) with no MCP server and no `serve`.
 	root.AddCommand(
-		newFindCmd(), newSearchCmd(), newOverviewCmd(), newClustersCmd(),
+		newFindCmd(), newDefCmd(), newSearchCmd(), newOverviewCmd(), newClustersCmd(),
 		newCallersCmd(), newCalleesCmd(), newRelationsCmd(), newImpactCmd(),
 		newEntrypointsCmd(), newHotspotsCmd(), newViolationsCmd(), newTestsCmd(),
 		newReferencesCmd(), newChangedCmd(), newWipCmd(), newExploreCmd(),

@@ -96,6 +96,13 @@ All notable changes are recorded here. The format follows
   has a timeout so a stuck runner fails in minutes, not a day.
 
 ### Added
+- `prowl-agent def <name-or-id>` and the MCP `read_symbol` tool return one
+  symbol's source (signature and body), cited and bounded, resolved by name or
+  by a find id. An agent reads a single function, type, or component instead of
+  the whole file, which is prowl's core promise applied to the find-then-read
+  step. A QML component returns its whole file; other symbols return their exact
+  range, capped at 200 lines. `read_symbol` joins the core MCP surface, so
+  MCP-only clients get symbol-level reads too.
 - `prowl-agent brief <path>` gives a cited orientation for a path or subsystem
   in one call: file count, languages, the architecture guides to read, and the
   key files to read first (ranked by graph centrality). Use it to warm-start on

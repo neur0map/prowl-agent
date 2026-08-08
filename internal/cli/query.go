@@ -278,6 +278,43 @@ func newSearchCmd() *cobra.Command {
 	return c
 }
 
+// newDefCmd shows a symbol's source. It resolves the symbol like `find`, then
+// returns only its body (bounded, cited), so an agent reads one function or
+// component instead of the whole file. It needs the workspace root to read the
+// source, so it is not built from the generic helper.
+func newDefCmd() *cobra.Command {
+	var output outputOptions
+	c := &cobra.Command{
+		Use:   "def <name-or-id>",
+		Short: "Show a symbol's source (signature and body), cited and bounded, so you read one symbol not the whole file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
+			q, ws, s, closer, err := openQuerier(cmd.Context(), false)
+			if err != nil {
+				return err
+			}
+			defer closer()
+			def, err := q.Definition(ws.Root, a[0])
+			if err != nil {
+				return err
+			}
+			_ = s.RecordAnswer(def)
+			str, err := formatValue(def, format)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), str)
+			return err
+		},
+	}
+	output.addFlags(c)
+	return c
+}
+
 // stripSnippets drops snippet bodies for token-lean, file-only results.
 func stripSnippets(hits []store.ChunkHit) []store.ChunkHit {
 	out := make([]store.ChunkHit, len(hits))

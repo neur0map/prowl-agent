@@ -111,6 +111,7 @@ server adds to every request.
 prowl-agent overview            # project map: docs to read, roles, entrypoints, clusters (start here)
 prowl-agent brief <path>        # cited orientation for a subsystem: size, languages, guides, key files (warm-start a subagent)
 prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
+prowl-agent def <name>          # read one symbol's source (signature + body), cited and bounded, not the whole file
 prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
 prowl-agent callers <path>      # what includes / imports / execs / binds to a file
 prowl-agent callees <path>      # what a file includes / imports / execs / binds to

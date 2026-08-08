@@ -93,6 +93,12 @@ func (q *Querier) FindSymbol(name string) ([]store.SymbolHit, error) {
 		return nil, err
 	}
 	defer release()
+	return q.findSymbolLocked(name)
+}
+
+// findSymbolLocked is FindSymbol's ranked resolution without acquiring the read
+// guard, so another locked operation (Definition) can reuse it without nesting.
+func (q *Querier) findSymbolLocked(name string) ([]store.SymbolHit, error) {
 	exact, err := q.s.SymbolsByName(name, DefaultLimit)
 	if err != nil {
 		return nil, err

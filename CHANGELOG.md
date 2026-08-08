@@ -25,6 +25,14 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Indexing now parses files in parallel across CPU cores instead of one at a
+  time. Reading and tree-sitter extraction (the CPU-bound work) fan out to a
+  worker per core while the store stays single-writer; results are consumed in
+  traversal order, so file IDs and the published index are byte-identical to the
+  serial build (deterministic across runs). A cold index of a 1,413-file repo
+  dropped from 13.8s to 7.1s (~1.9x) on a 16-core machine. Incremental reindex
+  (only changed files) is unaffected.
+
 - The AGENTS.md guidance Prowl injects on `init` now teaches `references <name>`
   (a symbol's callers) instead of the stale `references <symbol_id> (id from
   find)` -- the tool resolves by name directly now, so agents skip the

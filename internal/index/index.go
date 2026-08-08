@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -90,7 +91,6 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 	if err := reportProgress("indexing", 1); err != nil {
 		return sum, err
 	}
-	filesProcessed := 0
 	current := make(map[string]bool, len(rels))
 	ver := indexVersion()
 	prevVer, _ := s.GetMeta("index_version")
@@ -101,70 +101,101 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 		}
 	}
 
-	for _, rel := range rels {
-		filesProcessed++
-		if filesProcessed%32 == 0 && filesProcessed < len(rels) {
-			percent := 1 + filesProcessed*89/len(rels)
-			if err := reportProgress("indexing", percent); err != nil {
+	// Pre-load current file hashes so parse workers decide skip-vs-reparse without
+	// touching the store, keeping all DB access on the single consumer goroutine.
+	var known map[string]string
+	if !force {
+		if existing, err := s.AllFiles(); err == nil {
+			known = make(map[string]string, len(existing))
+			for _, f := range existing {
+				known[f.RelPath] = f.Hash
+			}
+		}
+	}
+
+	// Reading and tree-sitter extraction are CPU-bound and independent per file,
+	// so fan them out across workers; the store is single-writer, so results are
+	// applied serially. Ordered futures keep the consume order equal to rels, so
+	// file IDs and the published index stay deterministic across runs.
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(rels) {
+		workers = len(rels)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	futures := make(chan chan fileParse, workers)
+	go func() {
+		defer close(futures)
+		sem := make(chan struct{}, workers)
+		for _, rel := range rels {
+			select {
+			case <-cctx.Done():
+				return
+			case sem <- struct{}{}:
+			}
+			ch := make(chan fileParse, 1)
+			select {
+			case <-cctx.Done():
+				<-sem
+				return
+			case futures <- ch:
+			}
+			go func(rel string, ch chan fileParse) {
+				defer func() { <-sem }()
+				ch <- parseFile(root, rel, opt, force, known)
+			}(rel, ch)
+		}
+	}()
+	drain := func() {
+		cancel()
+		for range futures {
+		}
+	}
+
+	processed := 0
+	for ch := range futures {
+		if err := ctx.Err(); err != nil {
+			drain()
+			return sum, err
+		}
+		fp := <-ch
+		processed++
+		if processed%32 == 0 && processed < len(rels) {
+			if err := reportProgress("indexing", 1+processed*89/len(rels)); err != nil {
+				drain()
 				return sum, err
 			}
 		}
-		if err := ctx.Err(); err != nil {
-			return sum, err
+		if fp.err != nil {
+			drain()
+			return sum, fp.err
 		}
-		full := filepath.Join(root, filepath.FromSlash(rel))
-		data, err := os.ReadFile(full)
-		if err != nil {
-			return sum, fmt.Errorf("%w: read indexed source %s: %v", ErrSourcesChanged, rel, err)
-		}
-		data = stripGeneratedContent(rel, data)
-		if len(strings.TrimSpace(string(data))) == 0 {
+		if !fp.detected {
 			continue
 		}
-		head := data
-		if len(head) > 512 {
-			head = head[:512]
-		}
-		lang := parse.Detect(rel, head)
-		if lang == "" || !languageAllowed(lang, opt.Languages) {
-			continue
-		}
-		current[rel] = true
+		current[fp.rel] = true
 		sum.Indexed++
-
-		hash := strconv.FormatUint(xxhash.Sum64(data), 16)
-		if existing, ok, err := s.GetFileByPath(rel); err != nil {
-			return sum, err
-		} else if !force && ok && existing.Hash == hash {
+		if !fp.changed {
 			sum.Skipped++
 			continue
 		}
-
-		ex, ok := extract.For(lang)
-		if !ok {
+		if !fp.hasExt {
 			continue
 		}
-		res, _ := ex.Extract(data) // partial extraction is acceptable; chunks still stored
-		if lang == "qml" {
-			b := filepath.Base(rel)
-			res.Symbols = append(res.Symbols, extract.Symbol{
-				Name: b[:len(b)-len(filepath.Ext(b))], Kind: "component", StartLine: 1, EndLine: 1,
-			})
-		}
-
-		var mtime int64
-		if info, err := os.Stat(full); err == nil {
-			mtime = info.ModTime().Unix()
-		}
 		fid, err := s.UpsertFile(store.File{
-			RelPath: rel, Lang: lang, Role: graph.InferRole(rel, lang),
-			Size: int64(len(data)), Hash: hash, MTime: mtime,
+			RelPath: fp.rel, Lang: fp.lang, Role: graph.InferRole(fp.rel, fp.lang),
+			Size: fp.size, Hash: fp.hash, MTime: fp.mtime,
 		})
 		if err != nil {
+			drain()
 			return sum, err
 		}
-		syms, ress, edges, chunks := mapResult(res)
+		syms, ress, edges, chunks := mapResult(fp.res)
 		if err := s.ReplaceFileGraph(fid, syms, ress, edges, chunks); err != nil {
+			drain()
 			return sum, err
 		}
 		sum.Parsed++
@@ -243,6 +274,74 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 		return sum, errors.Join(err, s.SetMeta("index_state", "incomplete"))
 	}
 	return sum, nil
+}
+
+// fileParse carries one file's parse result from a worker to the serial DB
+// writer. detected marks a supported, non-empty source (counts as Indexed);
+// changed marks a content-hash difference that must be written; hasExt marks a
+// registered extractor, so res is meaningful.
+type fileParse struct {
+	rel      string
+	detected bool
+	changed  bool
+	hasExt   bool
+	lang     string
+	hash     string
+	size     int64
+	mtime    int64
+	res      extract.Result
+	err      error
+}
+
+// parseFile performs one file's read, generated-content stripping, language
+// detection, hashing, and (when changed) tree-sitter extraction. It does no
+// database access -- the skip decision uses the pre-loaded hash map -- so it is
+// safe to run concurrently: parse.Parse builds a fresh parser per call.
+func parseFile(root, rel string, opt Options, force bool, known map[string]string) fileParse {
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return fileParse{rel: rel, err: fmt.Errorf("%w: read indexed source %s: %v", ErrSourcesChanged, rel, err)}
+	}
+	data = stripGeneratedContent(rel, data)
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return fileParse{rel: rel}
+	}
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	lang := parse.Detect(rel, head)
+	if lang == "" || !languageAllowed(lang, opt.Languages) {
+		return fileParse{rel: rel}
+	}
+	fp := fileParse{
+		rel: rel, detected: true, lang: lang,
+		hash: strconv.FormatUint(xxhash.Sum64(data), 16), size: int64(len(data)),
+	}
+	if !force {
+		if h, ok := known[rel]; ok && h == fp.hash {
+			return fp
+		}
+	}
+	fp.changed = true
+	ex, ok := extract.For(lang)
+	if !ok {
+		return fp
+	}
+	fp.hasExt = true
+	res, _ := ex.Extract(data)
+	if lang == "qml" {
+		b := filepath.Base(rel)
+		res.Symbols = append(res.Symbols, extract.Symbol{
+			Name: b[:len(b)-len(filepath.Ext(b))], Kind: "component", StartLine: 1, EndLine: 1,
+		})
+	}
+	if info, err := os.Stat(full); err == nil {
+		fp.mtime = info.ModTime().Unix()
+	}
+	fp.res = res
+	return fp
 }
 
 func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {

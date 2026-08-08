@@ -668,3 +668,37 @@ func TestIndexWithProgressReporterFailureLeavesGenerationIncomplete(t *testing.T
 		t.Fatalf("index_state=%q, want incomplete after reporter failure", state)
 	}
 }
+
+// TestIndexParallelDeterministicIDs pins the ordered-futures guarantee: because
+// files are parsed concurrently but written in traversal order, a fresh index of
+// the same tree must assign each file the same ID every run. Consuming results in
+// completion order instead would make IDs vary run-to-run; this guards against that.
+func TestIndexParallelDeterministicIDs(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "sample-config")
+	ids := func() map[string]int64 {
+		s := openStore(t)
+		if _, err := Index(s, root, nil); err != nil {
+			t.Fatal(err)
+		}
+		all, err := s.AllFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := make(map[string]int64, len(all))
+		for _, f := range all {
+			id, err := s.FileID(f.RelPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m[f.RelPath] = id
+		}
+		return m
+	}
+	a, b := ids(), ids()
+	if len(a) == 0 {
+		t.Fatal("no files indexed")
+	}
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("file IDs not deterministic across runs:\n a=%v\n b=%v", a, b)
+	}
+}

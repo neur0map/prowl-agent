@@ -17,6 +17,13 @@ All notable changes are recorded here. The format follows
   components the all-terms tier alone missed. This lifts recall for both `search`
   and the MCP context packets, which share the retrieval, and ranking (low-signal
   down-weight, graph, semantic) keeps precision.
+- Context ranking now also demotes prose documentation (Markdown, README,
+  CHANGELOG) below code for a code question. The tier merge above surfaced more
+  doc chunks, so a "how does X work" query started leading with `docs/*.md` and
+  `CHANGELOG.md` instead of the code that answers it. Docs are dampened mildly
+  (a doc can be the answer), and a query that names docs or guides keeps them at
+  full weight. This completes the low-signal ranking work for the doc case the
+  original backlog flagged.
 - Context ranking now down-weights low-signal file classes (locale/i18n tables,
   generated code, dependency lockfiles, minified bundles) so a keyword-dense
   data file no longer outranks the real code that answers a question. The

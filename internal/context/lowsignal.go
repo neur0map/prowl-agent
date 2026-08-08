@@ -12,6 +12,12 @@ import (
 // direct identifier match or a query that names the class overrides this.
 const lowSignalDampening = 0.35
 
+// docDampening scales prose documentation (Markdown and friends). Docs describe
+// code rather than implement it, and match natural-language questions densely,
+// so for a code question they should rank below the code; but they are more
+// relevant than pure noise, so the factor is milder than lowSignalDampening.
+const docDampening = 0.5
+
 // lowSignalClass classifies a project-relative path into a low-signal file
 // class, or returns "" for ordinary source. Classification is by path and
 // filename convention only, so it is deterministic and language-agnostic.
@@ -30,6 +36,8 @@ func lowSignalClass(path string) string {
 		return "generated"
 	case isLocalePath(p, base):
 		return "locale"
+	case isDocPath(base):
+		return "docs"
 	}
 	return ""
 }
@@ -79,6 +87,17 @@ func isLocalePath(p, base string) bool {
 	return false
 }
 
+// isDocPath reports whether a path is prose documentation (Markdown and
+// friends), which describes code rather than implementing it. Knowledge
+// documents are separate candidates and are never classified here.
+func isDocPath(base string) bool {
+	switch filepath.Ext(base) {
+	case ".md", ".mdx", ".markdown", ".rst", ".adoc":
+		return true
+	}
+	return false
+}
+
 // queryWantsClass reports whether the query itself names a low-signal class, in
 // which case those files are legitimate answers and must not be down-weighted.
 func queryWantsClass(terms []string, class string) bool {
@@ -92,6 +111,8 @@ func queryWantsClass(terms []string, class string) bool {
 		keys = []string{"generated", "generate", "codegen", "protobuf", "proto", "grpc", "schema"}
 	case "minified":
 		keys = []string{"minified", "minify", "bundle", "bundled", "sourcemap"}
+	case "docs":
+		keys = []string{"docs", "doc", "documentation", "readme", "changelog", "guide", "guides", "tutorial", "howto"}
 	}
 	for _, term := range terms {
 		for _, key := range keys {

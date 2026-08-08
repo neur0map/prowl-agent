@@ -63,7 +63,11 @@ func RankCandidates(candidates []Candidate) []Candidate {
 		score := candidate.LexicalScore
 		reasons := append([]string(nil), candidate.WhySelected...)
 		if candidate.LowSignal && !candidate.DirectMatch {
-			score *= lowSignalDampening
+			factor := lowSignalDampening
+			if candidate.LowSignalClass == "docs" {
+				factor = docDampening
+			}
+			score *= factor
 			reasons = append(reasons, candidate.LowSignalClass+" file, low-signal (down-weighted)")
 		}
 		if candidate.SemanticScore > 0 {

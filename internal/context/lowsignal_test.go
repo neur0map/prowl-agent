@@ -96,3 +96,20 @@ func TestLowSignalCaseSurfacesRealCode(t *testing.T) {
 		t.Fatalf("low-signal distractor i18n/catalog_gen.go selected: precision=%.2f", metrics.Precision)
 	}
 }
+
+func TestLowSignalClassDocs(t *testing.T) {
+	for _, p := range []string{"README.md", "docs/guide.md", "CHANGELOG.md", "notes.rst", "api.mdx"} {
+		if got := lowSignalClass(p); got != "docs" {
+			t.Errorf("lowSignalClass(%q) = %q, want docs", p, got)
+		}
+	}
+	if got := lowSignalClass("internal/query/query.go"); got != "" {
+		t.Errorf("a source file must not be docs, got %q", got)
+	}
+	if !queryWantsClass([]string{"architecture", "guide"}, "docs") {
+		t.Error("a guide query should keep docs at full weight")
+	}
+	if queryWantsClass([]string{"battery", "status"}, "docs") {
+		t.Error("a code query should not keep docs at full weight")
+	}
+}

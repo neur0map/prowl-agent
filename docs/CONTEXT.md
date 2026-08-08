@@ -145,7 +145,7 @@ All packets stayed under each case's fixed token estimate; hybrid packets used 1
 
 `Complete evidence` means the scripted agent received all declared sources/concepts and required terms. This provider-free benchmark measures the plan's source-hit and tool-operation exit criteria without making an LLM-quality claim; provider-specific agent evaluation remains an optional integration benchmark.
 
-The low-signal case reproduces a real failure: a keyword-dense generated locale table (`i18n/catalog_gen.go`) scores higher on raw lexical overlap than the real `bar/battery.go` widget. The ranker dampens the lexical contribution of low-signal file classes (locale/i18n, generated, lockfiles, minified bundles) unless the query itself names the class, so the real code is surfaced and the distractor is dropped under budget. A direct identifier match to such a file is never dampened.
+The low-signal case reproduces a real failure: a keyword-dense generated locale table (`i18n/catalog_gen.go`) scores higher on raw lexical overlap than the real `bar/battery.go` widget. The ranker dampens the lexical contribution of low-signal file classes (locale/i18n, generated, lockfiles, minified bundles) unless the query itself names the class, so the real code is surfaced and the distractor is dropped under budget. Prose documentation (Markdown and friends) is dampened more mildly, since a doc can be the answer but should rank below code for a code question. A direct identifier match to such a file is never dampened.
 
 Run timing benchmarks separately:
 

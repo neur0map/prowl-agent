@@ -52,6 +52,12 @@ Windows amd64 from PowerShell:
 irm https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.ps1 | iex
 ```
 
+Windows may show "Windows protected your PC" or flag the `.exe`. It is an
+unsigned Go binary, which antivirus tools often flag as a false positive; the
+same code on Linux and macOS is fine. Verify the download against its `.sha256`
+file, then unblock it (`Unblock-File .\prowl-agent.exe`) or click **More info,
+Run anyway**. To avoid the warning, build from source (below).
+
 Both installers pick the native artifact and verify its SHA-256 checksum. Linux
 builds need a recent glibc. To build from source, install Go 1.26+, a C compiler,
 and SQLite development headers (`libsqlite3-dev` on Debian/Ubuntu):

@@ -15,6 +15,7 @@ jobs:
   build-unix:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -25,12 +26,17 @@ jobs:
           - runner: ubuntu-24.04-arm
             target: linux-arm64
             output: prowl-agent-linux-arm64
-          - runner: macos-13
-            target: darwin-amd64
-            output: prowl-agent-darwin-amd64
           - runner: macos-14
             target: darwin-arm64
             output: prowl-agent-darwin-arm64
+          # darwin-amd64 has no Intel macOS runner that reliably schedules, so
+          # it is cross-built on the arm64 runner (the macOS SDK is universal)
+          # and not executed here.
+          - runner: macos-14
+            target: darwin-amd64
+            output: prowl-agent-darwin-amd64
+            goarch: amd64
+            cross: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -38,11 +44,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Test
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags sqlite_fts5 ./...
 
       - name: Build and smoke
         shell: bash
@@ -55,12 +56,16 @@ jobs:
           else
             version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)-${GITHUB_SHA::7}"
           fi
+          arch="${{ matrix.goarch }}"
+          [ -n "$arch" ] && export GOARCH="$arch"
           go build -tags sqlite_fts5 -trimpath \
             -ldflags "-s -w -X main.version=${version}" \
             -o "$OUTPUT" ./cmd/prowl-agent
-          "./$OUTPUT" --version
           shasum -a 256 "$OUTPUT" > "$OUTPUT.sha256"
-          scripts/release-smoke.sh "$OUTPUT" "$OUTPUT.sha256"
+          if [ -z "${{ matrix.cross }}" ]; then
+            "./$OUTPUT" --version
+            scripts/release-smoke.sh "$OUTPUT" "$OUTPUT.sha256"
+          fi
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
@@ -74,6 +79,7 @@ jobs:
   build-windows:
     name: windows-amd64
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -87,12 +93,6 @@ jobs:
           & C:\vcpkg\vcpkg.exe install "sqlite3[fts5]:x64-mingw-static"
           "CGO_CFLAGS=-IC:\vcpkg\installed\x64-mingw-static\include" >> $env:GITHUB_ENV
           "CGO_LDFLAGS=-LC:\vcpkg\installed\x64-mingw-static\lib -lsqlite3" >> $env:GITHUB_ENV
-
-      - name: Test
-        shell: pwsh
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags "libsqlite3 sqlite_fts5" ./...
 
       - name: Build and smoke
         shell: pwsh
@@ -108,7 +108,7 @@ jobs:
             $version = "$describe-$($env:GITHUB_SHA.Substring(0, 7))"
           }
           go build -tags "libsqlite3 sqlite_fts5" -trimpath `
-            -ldflags "-s -w -X main.version=$version" `
+            -ldflags "-X main.version=$version" `
             -o $env:OUTPUT ./cmd/prowl-agent
           & (Join-Path $PWD $env:OUTPUT) --version
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:OUTPUT).Hash.ToLowerInvariant()

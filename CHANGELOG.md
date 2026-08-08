@@ -39,6 +39,13 @@ All notable changes are recorded here. The format follows
   secret is set (a tag pushed with the default token cannot trigger the release
   build). Without the secret, releases are cut by pushing a `v*` tag, which
   builds and publishes the cross-platform binaries.
+- Fixed the release build so it actually publishes. The `darwin-amd64` target,
+  which never scheduled on the retired Intel macOS runner and stalled every
+  release for 24 hours, is now cross-built on the arm64 runner (build-only,
+  since the macOS SDK is universal). The full test suite no longer runs in the
+  release build (CI already runs it on Linux), the Windows `.exe` is no longer
+  stripped (stripping trips more antivirus false positives), and every build
+  job has a timeout so a stuck runner fails in minutes, not a day.
 
 ### Added
 - MCP tool results now reach the model as TOON instead of JSON. The read tools

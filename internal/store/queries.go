@@ -104,7 +104,7 @@ type Dep struct {
 // blastKinds are the edge kinds traversed for dependency/impact analysis. "pkg"
 // is the synthetic Go package-dependency edge (an importer to each file in the
 // imported package), so impact and entrypoints work across Go packages.
-var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts", "instantiates", "pkg"}
+var blastKinds = []string{"includes", "references", "execs", "binds", "autostarts", "instantiates", "uses", "pkg"}
 
 // TransitiveDependents returns files that (transitively) depend on fileID, the
 // blast radius. A dependent is a file that includes/execs/references it.

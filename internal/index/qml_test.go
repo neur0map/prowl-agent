@@ -56,3 +56,55 @@ func TestQMLInstantiationResolves(t *testing.T) {
 		t.Fatalf("Button.qml should have a filename-derived component symbol, got %+v", syms)
 	}
 }
+
+// A QML singleton (used by member access like `Config.spacing`, never
+// instantiated) must still resolve to its defining .qml file, so a shared
+// singleton shows real dependents in impact analysis.
+func TestQMLSingletonReferenceResolves(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("Config.qml", "pragma Singleton\nimport QtQuick\nQtObject {\n  property int spacing: 8\n}\n")
+	write("Panel.qml", "import QtQuick\nItem {\n  width: Config.spacing\n  height: Qt.point.y\n}\n")
+
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := Index(s, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	config, ok, _ := s.GetFileByPath("Config.qml")
+	if !ok {
+		t.Fatal("Config.qml not indexed")
+	}
+	panel, _, _ := s.GetFileByPath("Panel.qml")
+
+	edges, _ := s.EdgesFromFile(panel.ID, "uses")
+	if len(edges) != 1 {
+		t.Fatalf("Panel uses edges = %d, want 1 (Config only; built-in Qt dropped)", len(edges))
+	}
+	if e := edges[0]; e.Raw != "Config" || !e.Resolved || e.DstID != config.ID {
+		t.Fatalf("edge = %+v, want resolved Config -> %d", e, config.ID)
+	}
+
+	// The singleton now has a real dependent in impact analysis.
+	deps, err := s.TransitiveDependents(config.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundPanel := false
+	for _, d := range deps {
+		if d.File == "Panel.qml" {
+			foundPanel = true
+		}
+	}
+	if !foundPanel {
+		t.Fatalf("Config.qml dependents = %+v, want Panel.qml", deps)
+	}
+}

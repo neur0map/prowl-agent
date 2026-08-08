@@ -109,6 +109,28 @@ func Resolve(s *store.Store) error {
 	if err := s.DeleteUnresolvedEdges("instantiates"); err != nil {
 		return err
 	}
+	// Pass 4b: QML singleton/type member references (e.g. `Config.spacing`,
+	// `Theme.accent`) -> the .qml file defining that type, resolved by stem like
+	// instantiation. Singletons are used by member access, never instantiated, so
+	// without this a shared `Config.qml` shows zero dependents. Unresolved
+	// built-ins (Qt, Math, enum scopes) are dropped afterward.
+	uses, err := s.UnresolvedEdges("uses")
+	if err != nil {
+		return err
+	}
+	for _, e := range uses {
+		if byID[e.FileID].Lang != "qml" {
+			continue
+		}
+		if id, ok := resolveQMLComponent(qmlStem, byID[e.FileID].RelPath, e.Raw); ok && id != e.FileID {
+			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.DeleteUnresolvedEdges("uses"); err != nil {
+		return err
+	}
 	// Pass 5: Go package imports -> the files of the imported in-module package.
 	if err := resolveGoPackages(s, files, byID); err != nil {
 		return err

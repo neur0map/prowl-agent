@@ -15,6 +15,13 @@ All notable changes are recorded here. The format follows
   "translation" or "lockfile") still surfaces those files, and a direct
   identifier match is never dampened. A seventh, provider-free benchmark case
   reproduces the failure and guards the fix.
+- QML dependency resolution now models singleton and type member references
+  (`Config.spacing`, `Theme.accent`), not just component instantiation. A shared
+  singleton is used by member access and never instantiated, so `impact` and
+  `callers` previously reported zero dependents for it. On a real 1,400-file
+  Quickshell repo, `impact` on the `Config.qml` singleton went from 0 to 978
+  dependents and resolved edges rose from 3,681 to 7,327, with no new dangling
+  edges (unresolved built-in references like `Qt` and `Math` are dropped).
 
 - Refocused Prowl into a single, agent-first token-saving context engine
   delivered over the CLI and MCP. Removed the browser workbench (`prowl-agent

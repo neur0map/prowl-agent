@@ -35,17 +35,17 @@ All notable changes are recorded here. The format follows
   hint, that reranking uses the agent's own model and needs no local model, so
   the agent knows when to ask for it. When the client does not support sampling,
   ranking stays deterministic and no query is blocked to prompt a download.
-- The version workflow can cut a release for each bump when a `RELEASE_PAT`
-  secret is set (a tag pushed with the default token cannot trigger the release
-  build). Without the secret, releases are cut by pushing a `v*` tag, which
-  builds and publishes the cross-platform binaries.
-- Fixed the release build so it actually publishes. The `darwin-amd64` target,
-  which never scheduled on the retired Intel macOS runner and stalled every
-  release for 24 hours, is now cross-built on the arm64 runner (build-only,
-  since the macOS SDK is universal). The full test suite no longer runs in the
+- Fixed the release build so it publishes across every platform, and releases
+  are now cut on demand by running the build-binary workflow with a `version`
+  input (no personal access token or hand-pushed tag needed). The `darwin-amd64`
+  target, which never scheduled on the retired Intel macOS runner and stalled
+  every release for 24 hours, is cross-built on the arm64 runner (build-only,
+  since the macOS SDK is universal). Windows now self-compiles go-sqlite3 with
+  the runner's mingw gcc and takes only the sqlite3 header from vcpkg, fixing an
+  undefined-symbol link failure. The full test suite no longer runs in the
   release build (CI already runs it on Linux), the Windows `.exe` is no longer
-  stripped (stripping trips more antivirus false positives), and every build
-  job has a timeout so a stuck runner fails in minutes, not a day.
+  stripped (stripping trips more antivirus false positives), and every build job
+  has a timeout so a stuck runner fails in minutes, not a day.
 
 ### Added
 - MCP tool results now reach the model as TOON instead of JSON. The read tools

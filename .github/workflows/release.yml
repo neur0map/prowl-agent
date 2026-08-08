@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. v0.8.8 (blank = build/nightly only)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -50,8 +55,11 @@ jobs:
         env:
           CGO_ENABLED: "1"
           OUTPUT: ${{ matrix.output }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
             version="$GITHUB_REF_NAME"
           else
             version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)-${GITHUB_SHA::7}"
@@ -100,8 +108,11 @@ jobs:
         env:
           CGO_ENABLED: "1"
           OUTPUT: prowl-agent-windows-amd64.exe
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+          if ($env:INPUT_VERSION) {
+            $version = $env:INPUT_VERSION
+          } elseif ($env:GITHUB_REF_TYPE -eq 'tag') {
             $version = $env:GITHUB_REF_NAME
           } else {
             $describe = git describe --tags --always --dirty 2>$null
@@ -127,7 +138,7 @@ jobs:
 
   publish-nightly:
     needs: [build-unix, build-windows]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event.inputs.version == ''
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts
@@ -150,7 +161,7 @@ jobs:
 
   publish-tag:
     needs: [build-unix, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts
@@ -161,10 +172,10 @@ jobs:
       - name: Publish versioned release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ github.event.inputs.version != '' && github.event.inputs.version || github.ref_name }}
+          name: ${{ github.event.inputs.version != '' && github.event.inputs.version || github.ref_name }}
           prerelease: false
           files: release/**/*
           body: >
-            Cross-platform build of prowl-agent ${{ github.ref_name }}. Verify
+            Cross-platform build of prowl-agent ${{ github.event.inputs.version != '' && github.event.inputs.version || github.ref_name }}. Verify
             every binary with its included SHA-256 file.

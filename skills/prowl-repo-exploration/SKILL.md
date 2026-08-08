@@ -20,7 +20,7 @@ grep or glob for literal string or filename scans.
 
 ## Workflow
 
-1. Orient: `prowl-agent overview` (project map, entrypoints, clusters, docs to read).
+1. Orient: `prowl-agent overview` (whole-project map: entrypoints, clusters, hotspots, docs to read), or `prowl-agent brief <path>` for one subsystem (its size, languages, guides, and the key files to read first, ranked by dependency centrality).
 2. Locate: `prowl-agent find <name>` for a symbol; `prowl-agent search <text>` for content.
 3. Understand a slice: `prowl-agent context search "<question>" --budget-tokens 2000`
    returns a bounded, cited packet. Add `--json` to parse it.
@@ -39,14 +39,15 @@ location, answers, and leaves the target tree untouched (no `.prowl/`, no
 
 ## If ranking looks noisy
 
-Without a local model, `search`/`context` rank by full text, so a keyword-dense
-file (a translation table, a changelog) can outrank the real code. Two fixes,
-neither needs the user to install anything:
+prowl already down-weights low-signal files (locale and i18n tables, generated
+code, lockfiles, minified bundles, and prose docs) so they rank below the real
+code for a code question, unless your query names that class. `hotspots` and the
+`overview` rank by dependency centrality, not raw frequency. If a
+relevance-sensitive question still ranks poorly:
 
 - Over MCP: call `search_context` with `rerank: true`. prowl asks your own model
   to reorder the candidates. It needs no local model and is ignored when your
   client does not support sampling.
 - Otherwise: rerank the returned candidates yourself (a cheap model is enough).
-  Drop docs, locale, and generated files; keep implementation.
 
 Either way, do not fall back to grepping the whole tree.

@@ -33,8 +33,9 @@ try {
         & $Binary init --dry-run --json --integrations cursor,agents | Set-Content -LiteralPath $planPath -NoNewline
         $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
         if (-not $plan.dry_run) { throw 'dry run was not reported' }
-        $actualIntegrations = @($plan.plan.actions | ForEach-Object integration | Sort-Object)
-        if (($actualIntegrations -join ',') -ne 'agents,cursor') { throw "unexpected dry-run integrations: $($actualIntegrations -join ',')" }
+        $clientIntegrations = @($plan.plan.actions | ForEach-Object integration | Where-Object { $_ -ne 'skill' } | Sort-Object -Unique)
+        if (($clientIntegrations -join ',') -ne 'agents,cursor') { throw "unexpected dry-run integrations: $($clientIntegrations -join ',')" }
+        if (-not ($plan.plan.actions | Where-Object { $_.integration -eq 'skill' })) { throw 'no skill install actions in plan' }
         if (Test-Path -LiteralPath '.prowl') { throw 'dry run created .prowl' }
 
         $initPath = Join-Path $tmp 'init.json'

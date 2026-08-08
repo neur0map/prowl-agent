@@ -87,13 +87,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install SQLite development headers
-        shell: pwsh
-        run: |
-          & C:\vcpkg\vcpkg.exe install "sqlite3[fts5]:x64-mingw-static"
-          "CGO_CFLAGS=-IC:\vcpkg\installed\x64-mingw-static\include" >> $env:GITHUB_ENV
-          "CGO_LDFLAGS=-LC:\vcpkg\installed\x64-mingw-static\lib -lsqlite3" >> $env:GITHUB_ENV
-
       - name: Build and smoke
         shell: pwsh
         env:
@@ -107,7 +100,7 @@ jobs:
             if (-not $describe) { $describe = 'dev' }
             $version = "$describe-$($env:GITHUB_SHA.Substring(0, 7))"
           }
-          go build -tags "libsqlite3 sqlite_fts5" -trimpath `
+          go build -tags sqlite_fts5 -trimpath `
             -ldflags "-X main.version=$version" `
             -o $env:OUTPUT ./cmd/prowl-agent
           & (Join-Path $PWD $env:OUTPUT) --version

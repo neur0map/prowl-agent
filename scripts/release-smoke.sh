@@ -37,7 +37,9 @@ python3 - "$tmp/plan.json" <<'PY'
 import json, pathlib, sys
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload['dry_run'] is True
-assert {action['integration'] for action in payload['plan']['actions']} == {'agents', 'cursor'}
+actions = payload['plan']['actions']
+assert {a['integration'] for a in actions if a['integration'] != 'skill'} == {'agents', 'cursor'}, actions
+assert any(a['integration'] == 'skill' for a in actions), actions
 PY
 test ! -e .prowl
 

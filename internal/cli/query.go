@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -228,14 +227,8 @@ func newTestsCmd() *cobra.Command {
 }
 
 func newReferencesCmd() *cobra.Command {
-	return newQueryCmd("references <symbol_id>", "Where a symbol is used: reference edges, or full-text call sites for code (id from 'find')", false, cobra.ExactArgs(1),
-		func(_ context.Context, q *query.Querier, a []string) (any, error) {
-			id, err := strconv.ParseInt(a[0], 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("symbol_id must be an integer (from 'prowl-agent find'): %w", err)
-			}
-			return q.FindReferences(id)
-		})
+	return newQueryCmd("references <name-or-id>", "Where a symbol is used: reference edges, or cited call sites for code, resolved by name or by an id from 'find'", false, cobra.ExactArgs(1),
+		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.References(a[0]) })
 }
 
 // newSearchCmd is the content/semantic search. It carries extra flags (--smart,

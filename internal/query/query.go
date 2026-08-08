@@ -4,6 +4,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -235,6 +236,27 @@ collect:
 		}
 	}
 	return u, nil
+}
+
+// References resolves a symbol by numeric id (from a find result) or by name
+// (best-ranked match) and returns where it is used, so a caller need not run
+// find first. Read-only.
+func (q *Querier) References(target string) (Usages, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return Usages{}, fmt.Errorf("a symbol name or id is required")
+	}
+	if id, err := strconv.ParseInt(target, 10, 64); err == nil {
+		return q.FindReferences(id)
+	}
+	hits, err := q.FindSymbol(target)
+	if err != nil {
+		return Usages{}, err
+	}
+	if len(hits) == 0 {
+		return Usages{}, fmt.Errorf("no symbol named %q; run find to see candidates", target)
+	}
+	return q.FindReferences(hits[0].ID)
 }
 
 // enclosingName returns the innermost code definition whose line range contains

@@ -119,7 +119,7 @@ prowl-agent callees <path>      # what a file includes / imports / execs / binds
 prowl-agent impact <path>       # blast radius: count, subsystems, direct importers (--all = full list)
 prowl-agent relations <path>    # a file's symbols and include neighbors
 prowl-agent entrypoints <path>  # root files from which this file is reachable
-prowl-agent references <id>     # references to a symbol id (the id column from find)
+prowl-agent references <name>   # where a symbol is used: cited call sites (by name, or an id from find)
 prowl-agent clusters [name]     # subsystems (summaries); with a name, that subsystem's files
 prowl-agent hotspots            # files ranked by graph centrality, plus largest and most complex
 prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors

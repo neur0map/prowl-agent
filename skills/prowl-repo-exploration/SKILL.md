@@ -25,7 +25,7 @@ grep or glob for literal string or filename scans.
 3. Understand a slice: `prowl-agent context search "<question>" --budget-tokens 2000`
    returns a bounded, cited packet. Add `--json` to parse it.
 4. Trace: `prowl-agent callers <path>`, `prowl-agent callees <path>`,
-   `prowl-agent references <id>` (id from find), `prowl-agent impact <path>`.
+   `prowl-agent references <name>` (a symbol's call sites), `prowl-agent impact <path>`.
 
 Output is compact TOON by default; add `--format json` when you need to parse it.
 Every query re-indexes what changed first, so answers are current.

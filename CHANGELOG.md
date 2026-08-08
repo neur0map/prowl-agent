@@ -16,6 +16,13 @@ All notable changes are recorded here. The format follows
   the symbols it needs with `def`/`read_symbol`. `outline` joins the core MCP
   surface (now eight tools), directly targeting agent token usage.
 
+- The `find_references` MCP tool exposes symbol-level call-hierarchy on the core
+  surface (now nine tools): an agent gets the cited `{file, line, text}` call
+  sites of a function or symbol -- its callers and change blast radius -- in one
+  call instead of grepping and reading files. `references` (CLI and tool) now
+  resolves a symbol by name as well as by id (like `def`), so no find-then-id
+  round trip, and returns a helpful "run find" error for an unknown name.
+
 ### Changed
 
 - The AGENTS.md guidance Prowl injects on `init` now points agents at `outline`

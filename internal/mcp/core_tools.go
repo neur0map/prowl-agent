@@ -32,6 +32,7 @@ func registerCoreTools(server *sdk.Server, h *handlers) {
 	sdk.AddTool(server, &sdk.Tool{Name: "search_capabilities", Description: "List Prowl's built-in workflows and their metadata (token-lean) before fetching full details. Use to discover what Prowl offers; to search your code use search_context instead.", Annotations: readOnlyAnnotations("Search capabilities")}, tracked(h, h.searchCapabilities))
 	sdk.AddTool(server, &sdk.Tool{Name: "read_symbol", Description: "Read one symbol's source (its signature and body), cited and bounded, resolved by name or by a numeric id from a find result. Use it to read a single function, type, or component instead of the whole file. Read-only.", Annotations: readOnlyAnnotations("Read symbol")}, tracked(h, h.readSymbol))
 	sdk.AddTool(server, &sdk.Tool{Name: "outline", Description: "Show a file's structure: every symbol it defines with kind, signature, nesting depth, and line range, but no bodies. Use it to grasp a file from a handful of signature lines instead of reading the whole file (far cheaper on tokens), then read_symbol only the parts you need. Read-only.", Annotations: readOnlyAnnotations("Outline file")}, tracked(h, h.outline))
+	sdk.AddTool(server, &sdk.Tool{Name: "find_references", Description: "Find where a symbol is used across the repo: cited {file, line, text} call sites (and reference edges for config/resource symbols), resolved by name or by a numeric id. Use it for the callers of a function or the blast radius of changing a symbol, instead of grepping and reading files. Read-only; call sites are name-usage based, not a language call graph, so a comment or same-named symbol may slip in.", Annotations: readOnlyAnnotations("Find references")}, tracked(h, h.findReferencesByName))
 }
 
 type contextSearchIn struct {
@@ -67,6 +68,10 @@ type readSymbolIn struct {
 
 type outlineIn struct {
 	Path string `json:"path" jsonschema:"repo-relative file path"`
+}
+
+type findReferencesIn struct {
+	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
 }
 
 type proposalOut struct {
@@ -119,6 +124,14 @@ func (h *handlers) outline(_ context.Context, _ *sdk.CallToolRequest, in outline
 		return nil, query.FileOutline{}, err
 	}
 	return nil, o, nil
+}
+
+func (h *handlers) findReferencesByName(_ context.Context, _ *sdk.CallToolRequest, in findReferencesIn) (*sdk.CallToolResult, query.Usages, error) {
+	u, err := h.q.References(in.Symbol)
+	if err != nil {
+		return nil, query.Usages{}, err
+	}
+	return nil, u, nil
 }
 
 func synthesizePacket(ctx context.Context, request *sdk.CallToolRequest, packet contextpacket.Packet) contextpacket.Packet {

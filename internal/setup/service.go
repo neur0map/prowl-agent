@@ -1087,7 +1087,7 @@ call rather than a grep hit list you then open files to disambiguate.
 - Find a symbol, setting, or component: ` + "`prowl-agent find <name>`" + `
 - See a file's structure without reading it: ` + "`prowl-agent outline <path>`" + ` (symbols and signatures, no bodies)
 - Read one symbol instead of the whole file: ` + "`prowl-agent def <name>`" + `
-- Where a symbol is used: ` + "`prowl-agent references <symbol_id>`" + ` (id from find)
+- Where a symbol is used (its callers): ` + "`prowl-agent references <name>`" + `
 - How files connect: ` + "`prowl-agent callers|callees|relations <path>`" + `
 - Blast radius before an edit: ` + "`prowl-agent impact <path>`" + `
 - Search text or meaning: ` + "`prowl-agent search <text>`" + `

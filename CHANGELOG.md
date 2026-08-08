@@ -25,6 +25,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- The AGENTS.md guidance Prowl injects on `init` now teaches `references <name>`
+  (a symbol's callers) instead of the stale `references <symbol_id> (id from
+  find)` -- the tool resolves by name directly now, so agents skip the
+  find-then-id round trip.
+
 - `find` now tolerates typos: when a name matches nothing exactly, by full text,
   or by substring, it falls back to symbols within a small edit distance
   (optimal string alignment, so a wrong letter, an adjacent transposition, or a

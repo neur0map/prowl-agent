@@ -36,8 +36,23 @@ func TestBuildSetupPlanDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Actions) != 2 {
-		t.Fatalf("actions = %#v, want two", plan.Actions)
+	// The plan covers the two selected clients (AGENTS.md and the Cursor MCP
+	// config) plus the Cursor skill files; the exact count is not pinned so
+	// adding or removing a skill does not break this no-write invariant test.
+	if len(plan.Actions) < 2 {
+		t.Fatalf("actions = %#v, want at least the two selected clients", plan.Actions)
+	}
+	var haveAgents, haveCursorMCP bool
+	for _, a := range plan.Actions {
+		if a.Path == "AGENTS.md" {
+			haveAgents = true
+		}
+		if a.Path == ".cursor/mcp.json" {
+			haveCursorMCP = true
+		}
+	}
+	if !haveAgents || !haveCursorMCP {
+		t.Fatalf("actions = %#v, want AGENTS.md and .cursor/mcp.json", plan.Actions)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".cursor")); !os.IsNotExist(err) {
 		t.Fatalf("planning wrote .cursor: %v", err)

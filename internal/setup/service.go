@@ -407,8 +407,10 @@ func actionsFor(integrations []string) []Action {
 		IntegrationOpenCode: "opencode.json", IntegrationNeovim: ".prowl/editor/nvim.lua", IntegrationHelix: ".helix/languages.toml",
 	}
 	skillRoots := map[string]string{
-		IntegrationOMP:    ".omp/skills",
-		IntegrationClaude: ".claude/skills",
+		IntegrationOMP:      ".omp/skills",
+		IntegrationClaude:   ".claude/skills",
+		IntegrationCursor:   ".cursor/skills",
+		IntegrationOpenCode: ".opencode/skills",
 	}
 	actions := make([]Action, 0, len(integrations))
 	for _, integration := range integrations {

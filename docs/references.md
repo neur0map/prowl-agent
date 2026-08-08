@@ -67,12 +67,41 @@ surveyed via summary, `todo` = not yet reviewed.
   from skill directories, MCP sampling. Skills installed into its skill dir surface
   automatically at session start, so no separate bootstrap hook is required there.
 
+## Deep pass verdicts (per source)
+
+Concrete outcome for every source, so none is left unmined.
+
+- caveman (juliusbrussee): prose compression rules (drop articles, filler,
+  hedging; keep code, paths, commands) for about 65% fewer tokens. Adopted the
+  structural half already (TOON for MCP output). Deferred: applying the prose
+  rules to the context packet summary and "why selected" fields, a smaller
+  recurring win on top of TOON, worth doing once measured.
+- addyosmani/agent-skills: documents skill directories beyond OMP and Claude
+  (`.cursor/skills`, `.opencode/skills`, `.kiro/skills`). Adopted: skill install
+  now also targets `.cursor/skills` and `.opencode/skills`. Its `context-
+  engineering` skill (rules, specs, source, errors, history, dropped
+  independently) validates prowl's bounded, budgeted packet.
+- gstack: a per-project `learnings.jsonl` append log with dedup that compounds
+  across sessions. Overlaps prowl's reviewed OKF knowledge; not adopted to avoid
+  a second, unreviewed memory plane. Revisit if a lighter capture path is wanted.
+- mattpocock/skills, BMAD, get-shit-done: methodology and lifecycle skills.
+  Mined for description phrasing only; their frameworks (personas, phases) do not
+  fit a focused context engine.
+- ponytail: the "least context that answers" ethos, already in the exploration
+  skill; the `ponytail:` shortcut-marker comment is a code-hygiene idea for
+  prowl's own repo, not a product feature.
+- OmniRoute: provider routing stays out of scope; the host owns model choice for
+  sampling-backed rerank.
+
 ## Applied to prowl so far
 
 - Shipped skills with "Use when" descriptions: prowl-repo-exploration,
   prowl-change-safety, prowl-durable-knowledge.
-- `init` installs skills per detected harness skill directory; AGENTS.md is the
-  fallback for harnesses without a skill system.
+- `init` installs skills into the detected harness skill directory
+  (`.omp/skills`, `.claude/skills`, `.cursor/skills`, `.opencode/skills`);
+  AGENTS.md is the fallback. Installed skill files are excluded from the index.
 - `explore` indexes a foreign repo without polluting it.
 - Host-powered rerank via MCP sampling: cheap models fix full-text ranking noise
   (proven on real queries), so semantic-quality relevance needs no local Ollama.
+- MCP tool results reach the model as TOON, not JSON (about 40% fewer tokens),
+  matching the token-lean CLI default.

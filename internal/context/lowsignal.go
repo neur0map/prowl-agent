@@ -36,6 +36,8 @@ func lowSignalClass(path string) string {
 		return "generated"
 	case isLocalePath(p, base):
 		return "locale"
+	case isCIPath(p, base):
+		return "ci"
 	case isDocPath(base):
 		return "docs"
 	}
@@ -58,6 +60,24 @@ func isMinifiedPath(base string) bool {
 		strings.HasSuffix(base, ".min.css") ||
 		strings.HasSuffix(base, ".min.mjs") ||
 		strings.HasSuffix(base, ".map")
+}
+
+// isCIPath reports whether a path is CI or repository-meta configuration
+// (GitHub and other providers) rather than project code. It answers CI
+// questions but is noise for ordinary code queries, so it is down-weighted
+// unless the query names CI.
+func isCIPath(p, base string) bool {
+	if strings.HasPrefix(p, ".github/") || strings.Contains(p, "/.github/") {
+		return true
+	}
+	if strings.HasPrefix(p, ".circleci/") || strings.Contains(p, "/.circleci/") {
+		return true
+	}
+	switch base {
+	case ".gitlab-ci.yml", ".travis.yml", "azure-pipelines.yml", "appveyor.yml", "jenkinsfile", ".pre-commit-config.yaml":
+		return true
+	}
+	return false
 }
 
 func isGeneratedPath(p, base string) bool {
@@ -111,6 +131,8 @@ func queryWantsClass(terms []string, class string) bool {
 		keys = []string{"generated", "generate", "codegen", "protobuf", "proto", "grpc", "schema"}
 	case "minified":
 		keys = []string{"minified", "minify", "bundle", "bundled", "sourcemap"}
+	case "ci":
+		keys = []string{"ci", "cicd", "workflow", "workflows", "action", "actions", "pipeline", "pipelines", "release", "deploy", "deployment"}
 	case "docs":
 		keys = []string{"docs", "doc", "documentation", "readme", "changelog", "guide", "guides", "tutorial", "howto"}
 	}

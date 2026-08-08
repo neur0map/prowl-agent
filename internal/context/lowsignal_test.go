@@ -22,6 +22,11 @@ func TestLowSignalClass(t *testing.T) {
 		{"src/langs/pt.json", "locale"},
 		{"po/de.po", "locale"},
 		{"locale/fr/app.arb", "locale"},
+		{".github/ISSUE_TEMPLATE/feature_request.yml", "ci"},
+		{".github/workflows/release.yml", "ci"},
+		{"pkg/.github/dependabot.yml", "ci"},
+		{".gitlab-ci.yml", "ci"},
+		{"Jenkinsfile", "ci"},
 	}
 	for _, c := range cases {
 		if got := lowSignalClass(c.path); got != c.want {

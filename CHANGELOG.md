@@ -8,6 +8,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Repository-meta and CI configuration (`.github/`, `.gitlab-ci.yml`, CircleCI,
+  Jenkinsfile) is now a low-signal class, so an issue template or workflow stops
+  outranking real code for a code question; a query that names CI (workflow,
+  release, pipeline) still surfaces it. The symbol-authority boost also no longer
+  lifts a low-signal file whose key coincidentally matches the query, so a locale
+  or generated table can't ride the boost back over code.
+
 - Context ranking no longer counts stopwords ("how", "the", "is") in lexical
   scoring, so verbose prose and generated data files stop outranking the actual
   code for a natural-language question. A candidate that *defines* a symbol

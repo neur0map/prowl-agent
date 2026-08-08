@@ -99,7 +99,7 @@ func RankCandidates(candidates []Candidate) []Candidate {
 			score += 8
 			reasons = append(reasons, "related to a changed file")
 		}
-		if candidate.SymbolMatch && !candidate.DirectMatch {
+		if candidate.SymbolMatch && !candidate.DirectMatch && !candidate.LowSignal {
 			score += symbolMatchBoost
 			reasons = append(reasons, "defines a symbol matching the query")
 		}

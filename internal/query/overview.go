@@ -464,10 +464,7 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 		return o, bounded("keybinds", limits.Keybinds)
 	}
 	o.Keybinds = len(kb)
-	o.Hotspots, err = q.s.FanInContext(ctx, limits.Hotspots)
-	if err != nil {
-		return o, err
-	}
+	o.Hotspots = centralFromEdges(dep, limits.Hotspots)
 
 	for _, row := range o.Hotspots {
 		if err := validateOverviewPath(row.File, limits.StringBytes); err != nil {

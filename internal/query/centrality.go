@@ -102,3 +102,36 @@ func centralFiles(files []store.File, edges []store.FileEdge, n int) []store.Fan
 	}
 	return out
 }
+
+// centralFromEdges ranks files by centrality using only the edge set to derive
+// the node universe, so a caller that already holds a bounded edge slice (the
+// overview) needs no extra file read. Non-vendored files rank first; ties break
+// by in-degree then path.
+func centralFromEdges(edges []store.FileEdge, n int) []store.FanRow {
+	nodeSet := make(map[string]bool)
+	for _, e := range edges {
+		nodeSet[e.SrcFile] = true
+		nodeSet[e.DstFile] = true
+	}
+	paths := make([]string, 0, len(nodeSet))
+	for p := range nodeSet {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	score, degree := fileCentrality(paths, edges)
+	ranked := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !isVendored(p) {
+			ranked = append(ranked, p)
+		}
+	}
+	sortByCentrality(ranked, score, degree)
+	out := make([]store.FanRow, 0, n)
+	for _, p := range ranked {
+		out = append(out, store.FanRow{File: p, In: degree[p]})
+		if len(out) >= n {
+			break
+		}
+	}
+	return out
+}

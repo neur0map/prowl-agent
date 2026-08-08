@@ -74,8 +74,9 @@ All notable changes are recorded here. The format follows
   key files to read first (ranked by graph centrality). Use it to warm-start on
   a slice of the repo, or to hand a subagent scoped context, instead of
   re-deriving the shape by reading files.
-- `hotspots` now ranks files by graph centrality (a PageRank over the resolved
-  dependency graph), exposed as a `central` field beside the existing `fan_in`.
+- `hotspots` and the `overview` first-call map now rank files by graph centrality
+  (a PageRank over the resolved dependency graph); `hotspots` exposes it as a
+  `central` field beside the existing `fan_in`.
   Centrality captures the QML/desktop coupling that raw in-degree omits
   (component instantiation and singleton member use), so architectural hubs
   surface first: on a 1,400-file Quickshell repo the top central files are the

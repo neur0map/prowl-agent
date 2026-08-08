@@ -109,6 +109,7 @@ server adds to every request.
 
 ```sh
 prowl-agent overview            # project map: docs to read, roles, entrypoints, clusters (start here)
+prowl-agent brief <path>        # cited orientation for a subsystem: size, languages, guides, key files (warm-start a subagent)
 prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
 prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
 prowl-agent callers <path>      # what includes / imports / execs / binds to a file
@@ -118,7 +119,7 @@ prowl-agent relations <path>    # a file's symbols and include neighbors
 prowl-agent entrypoints <path>  # root files from which this file is reachable
 prowl-agent references <id>     # references to a symbol id (the id column from find)
 prowl-agent clusters [name]     # subsystems (summaries); with a name, that subsystem's files
-prowl-agent hotspots            # structurally central / large / complex files
+prowl-agent hotspots            # files ranked by graph centrality, plus largest and most complex
 prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors
 prowl-agent doctor              # general health: cycles, fan risk, dangling refs, score
 prowl-agent doctor --profile rice # add keybind, desktop command, color, orphan checks
@@ -234,10 +235,12 @@ This is tested against real, popular repositories. A few results:
 | [LocalSend](https://github.com/localsend/localsend) | Dart/Flutter | 977 `package:` imports resolved across a multi-package workspace; `impact` on a shared DTO reaches 73 files |
 | [shadcn/ui](https://github.com/shadcn-ui/ui) | TS, 8869 files | 8382 `@/` tsconfig-alias imports resolved across many per-package configs |
 
-Import resolution is strong for code and configs. It is weaker for QML, where a
-component used by type name is not yet resolved to its file, so `impact` and
-`callers` under-report on QML-heavy projects. External and standard-library
-imports stay informational. More languages are on the way.
+Import resolution is strong for code and configs, and now models QML coupling
+too: a component used by type name (`Button { }`) resolves to its `.qml` file,
+and singleton or type member references (`Config.spacing`, `Theme.accent`)
+resolve to the file that defines them. On a 1,413-file Quickshell repo this took
+`impact` on the `Config.qml` singleton from 0 to 978 dependents. External and
+standard-library imports stay informational. More languages are on the way.
 
 ## What it costs to run
 

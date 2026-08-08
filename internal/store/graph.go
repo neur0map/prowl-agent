@@ -209,25 +209,40 @@ type ChunkHit struct {
 // SearchChunks runs an FTS5 query over text chunks, returning highlighted
 // snippets. It merges three match tiers in precision order -- the exact phrase,
 // then all terms (AND), then any term (OR) -- deduping by chunk and capping at
-// limit. Precision matches lead, and the OR tier fills the remaining slots, so a
-// natural-language question still recalls chunks that share only some terms
-// instead of being masked when a coincidental chunk happens to match all terms.
+// limit. When the FTS tiers leave slots unfilled it appends a substring
+// fallback, so a query for "battery" still recalls chunks that only contain the
+// compound "batteryChargeLevel", which the FTS tokenizer keeps whole.
 func (s *Store) SearchChunks(query string, limit int) ([]ChunkHit, error) {
 	seen := map[string]bool{}
 	var out []ChunkHit
+	push := func(h ChunkHit) bool {
+		key := h.File + "\x00" + strconv.Itoa(h.StartLine)
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		out = append(out, h)
+		return len(out) >= limit
+	}
 	for _, m := range ftsMatchTiers(query) {
 		hits, err := s.searchChunksMatch(m, limit)
 		if err != nil {
 			return nil, err
 		}
 		for _, h := range hits {
-			key := h.File + "\x00" + strconv.Itoa(h.StartLine)
-			if seen[key] {
-				continue
+			if push(h) {
+				return out, nil
 			}
-			seen[key] = true
-			out = append(out, h)
-			if len(out) >= limit {
+		}
+	}
+	if len(out) < limit {
+		terms := searchTerms(query)
+		matches, err := s.chunksBySubstring(terms, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range matches {
+			if push(ChunkHit{File: m.File, StartLine: m.StartLine, EndLine: m.EndLine, Snippet: substringSnippet(m.Text, terms)}) {
 				return out, nil
 			}
 		}
@@ -275,24 +290,39 @@ type ChunkBody struct {
 	Text      string
 }
 
-// SearchChunkText runs the same tiered, merged FTS query as SearchChunks but
-// returns each matched chunk's full text instead of a snippet.
+// SearchChunkText runs the same tiered, merged FTS query as SearchChunks, with
+// the same substring fallback, but returns each matched chunk's full text
+// instead of a snippet.
 func (s *Store) SearchChunkText(query string, limit int) ([]ChunkBody, error) {
 	seen := map[string]bool{}
 	var out []ChunkBody
+	push := func(c ChunkBody) bool {
+		key := c.File + "\x00" + strconv.Itoa(c.StartLine)
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		out = append(out, c)
+		return len(out) >= limit
+	}
 	for _, match := range ftsMatchTiers(query) {
 		hits, err := s.searchChunkTextMatch(match, limit)
 		if err != nil {
 			return nil, err
 		}
 		for _, c := range hits {
-			key := c.File + "\x00" + strconv.Itoa(c.StartLine)
-			if seen[key] {
-				continue
+			if push(c) {
+				return out, nil
 			}
-			seen[key] = true
-			out = append(out, c)
-			if len(out) >= limit {
+		}
+	}
+	if len(out) < limit {
+		matches, err := s.chunksBySubstring(searchTerms(query), limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range matches {
+			if push(ChunkBody{File: m.File, StartLine: m.StartLine, Text: m.Text}) {
 				return out, nil
 			}
 		}
@@ -320,6 +350,81 @@ func (s *Store) searchChunkTextMatch(match string, limit int) ([]ChunkBody, erro
 	return out, rows.Err()
 }
 
+// chunkMatch is a chunk located by literal substring rather than FTS.
+type chunkMatch struct {
+	File      string
+	StartLine int
+	EndLine   int
+	Text      string
+}
+
+// chunksBySubstring finds chunks whose text contains every term as a literal
+// substring (case-insensitive), shortest chunk first. It catches component words
+// the FTS tokenizer keeps inside a compound identifier, e.g. "battery" in
+// "batteryChargeLevel", mirroring SymbolsBySubstring. instr keeps the match
+// literal, so identifier characters like '_' are not treated as wildcards.
+func (s *Store) chunksBySubstring(terms []string, limit int) ([]chunkMatch, error) {
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	where := make([]string, len(terms))
+	args := make([]any, 0, len(terms)+1)
+	for i, t := range terms {
+		where[i] = "instr(lower(c.text), ?) > 0"
+		args = append(args, strings.ToLower(t))
+	}
+	args = append(args, limit)
+	rows, err := s.sql().Query(`
+		SELECT f.rel_path, c.start_line, c.end_line, c.text
+		FROM chunks c JOIN files f ON f.id=c.file_id
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY length(c.text) LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []chunkMatch
+	for rows.Next() {
+		var m chunkMatch
+		if err := rows.Scan(&m.File, &m.StartLine, &m.EndLine, &m.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// substringSnippet returns a short window of text around the first matching term,
+// padded with ellipses, for substring hits that have no FTS match to highlight.
+func substringSnippet(text string, terms []string) string {
+	low := strings.ToLower(text)
+	idx := len(text)
+	for _, t := range terms {
+		if p := strings.Index(low, strings.ToLower(t)); p >= 0 && p < idx {
+			idx = p
+		}
+	}
+	if idx == len(text) {
+		idx = 0
+	}
+	const pad = 60
+	start, end := idx-pad, idx+pad
+	if start < 0 {
+		start = 0
+	}
+	if end > len(text) {
+		end = len(text)
+	}
+	snip := strings.TrimSpace(strings.ToValidUTF8(text[start:end], ""))
+	if start > 0 {
+		snip = " … " + snip
+	}
+	if end < len(text) {
+		snip += " … "
+	}
+	return snip
+}
+
 // ftsQuote wraps a user query as a single FTS5 phrase, escaping embedded quotes,
 // so arbitrary input cannot trigger FTS query-syntax errors.
 func ftsQuote(q string) string {
@@ -333,17 +438,27 @@ var ftsStop = map[string]bool{
 	"is": true, "for": true, "and": true, "or": true, "on": true, "with": true,
 }
 
-// ftsTerms splits a query into individually quoted FTS terms, dropping very
-// short tokens and stopwords, for the AND/OR fallback used when the exact
-// phrase matches nothing. Each term is quoted so punctuation cannot trigger an
-// FTS syntax error.
-func ftsTerms(q string) []string {
+// searchTerms splits a query into meaningful raw terms, dropping very short
+// tokens and stopwords. It underlies both the FTS term tiers and the substring
+// fallback, which needs the terms unquoted for a literal instr match.
+func searchTerms(q string) []string {
 	var out []string
 	for _, f := range strings.Fields(q) {
 		if len(f) < 2 || ftsStop[strings.ToLower(f)] {
 			continue
 		}
-		out = append(out, `"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
+		out = append(out, f)
+	}
+	return out
+}
+
+// ftsTerms quotes each raw term for the AND/OR fallback used when the exact
+// phrase matches nothing, so punctuation cannot trigger an FTS syntax error.
+func ftsTerms(q string) []string {
+	raw := searchTerms(q)
+	out := make([]string, len(raw))
+	for i, f := range raw {
+		out[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
 	}
 	return out
 }

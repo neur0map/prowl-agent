@@ -16,6 +16,13 @@ All notable changes are recorded here. The format follows
   share of multi-line symbols contained in a single chunk rose from 79% to 98%.
   Files with no extracted symbols still chunk into fixed windows.
 
+- Content search now has a substring fallback: when the full-text tiers leave
+  slots unfilled, a query for a word recalls chunks that only contain it inside
+  a camelCase compound (e.g. "battery" in "batteryChargeLevel"), which the FTS
+  tokenizer keeps whole. It runs only after the ranked FTS tiers, so precise
+  matches still lead. This closes a recall gap that previously left content
+  search unable to find component words in compound identifiers.
+
 - `init` now configures MCP clients with the lean `core` tool surface
   (`serve --mcp-surface core`), the curated six-tool set with progressive
   disclosure. The injected config previously launched bare `serve`, which

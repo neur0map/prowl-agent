@@ -343,3 +343,63 @@ func TestGenerationRejectsNestedAndDoesNotPublishRollbackOrCommitFailure(t *test
 		t.Fatalf("failed commit published %q, %v", got, err)
 	}
 }
+
+func TestSearchChunksSubstringFallbackFindsCompound(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mk := func(rel, text string) {
+		fid, err := s.UpsertFile(File{RelPath: rel, Lang: "go", Hash: rel, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil, []Chunk{{StartLine: 1, EndLine: 1, Text: text}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// "battery" appears only inside a camelCase compound; unicode61 keeps it
+	// whole, so only the substring fallback can recall widget.go.
+	mk("widget.go", "func xyzzyBatteryChargeReader() int { return 42 }")
+	// a standalone FTS match that must still rank ahead of the fallback.
+	mk("notes.go", "the battery notes live here in plain words")
+
+	hits, err := s.SearchChunks("battery", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, h := range hits {
+		seen[h.File] = true
+	}
+	if !seen["widget.go"] {
+		t.Fatalf("substring fallback missed the camelCase compound: %v", hits)
+	}
+	if !seen["notes.go"] {
+		t.Fatalf("standalone FTS match missing: %v", hits)
+	}
+	if hits[0].File != "notes.go" {
+		t.Fatalf("FTS match must rank before the substring fallback, got %v", hits)
+	}
+
+	// The full-text packet path shares the fallback.
+	bodies, err := s.SearchChunkText("battery", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range bodies {
+		if b.File == "widget.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("SearchChunkText fallback missed the compound: %v", bodies)
+	}
+
+	// A genuinely absent token still yields nothing (no over-recall).
+	if hits, err := s.SearchChunks("zzznope", 10); err != nil || len(hits) != 0 {
+		t.Fatalf("absent term = %v, %v; want empty", hits, err)
+	}
+}

@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"path"
+	"path/filepath"
 	"time"
 )
 
@@ -48,17 +50,24 @@ func (s *Store) UpsertFile(f File) (int64, error) {
 	return s.FileID(f.RelPath)
 }
 
-// FileID returns the id for a rel_path (sql.ErrNoRows if absent).
+// normalizeRel cleans a repo-relative path so an agent-supplied "./pkg/file.go"
+// or "pkg/../pkg/file.go" resolves to the stored, cleaned "pkg/file.go".
+func normalizeRel(p string) string {
+	return path.Clean(filepath.ToSlash(p))
+}
+
+// FileID returns the id for a rel_path (sql.ErrNoRows if absent). The path is
+// normalized first, so a leading "./" or other slashy noise still resolves.
 func (s *Store) FileID(relPath string) (int64, error) {
 	var id int64
-	err := s.sql().QueryRow(`SELECT id FROM files WHERE rel_path=?`, relPath).Scan(&id)
+	err := s.sql().QueryRow(`SELECT id FROM files WHERE rel_path=?`, normalizeRel(relPath)).Scan(&id)
 	return id, err
 }
 
 // GetFileByPath returns the file row and whether it exists.
 func (s *Store) GetFileByPath(relPath string) (File, bool, error) {
 	f, err := scanFile(s.sql().QueryRow(
-		`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files WHERE rel_path=?`, relPath))
+		`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files WHERE rel_path=?`, normalizeRel(relPath)))
 	if err == sql.ErrNoRows {
 		return File{}, false, nil
 	}

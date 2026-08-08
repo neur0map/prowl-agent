@@ -25,6 +25,12 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Path arguments are normalized before lookup, so a leading `./` or an uncleaned
+  path (`pkg/../pkg/file.go`) resolves like the clean form. Agents routinely pass
+  `./path`; previously `outline`, `impact`, `callers`, `callees`, `relations`,
+  `entrypoints`, and `tests` returned a false "not indexed" or an empty result
+  for it, wasting a tool call. Now they resolve.
+
 - The AGENTS.md guidance Prowl injects on `init` now points agents at `outline`
   (a file's structure without reading it) and `def` (one symbol instead of the
   whole file), and frames the workflow as reading through Prowl rather than

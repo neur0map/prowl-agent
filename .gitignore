@@ -9,8 +9,10 @@
 /web/test-results/
 /web/playwright-report/
 
-# Local-only planning docs (spec/plan); never pushed.
+# Local-only planning and analysis notes (spec/plan/analysis); never pushed.
 /docs/superpowers/
+/docs/references.md
+/docs/[0-9][0-9][0-9][0-9]-*.md
 /.superpowers/
 
 # Isolated feature checkouts.

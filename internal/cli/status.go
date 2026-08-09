@@ -61,6 +61,9 @@ func newStatusCmd(version string) *cobra.Command {
 			}
 			upd := selfupdate.Check(version)
 			perProject, combined := aggregateSavings()
+			for _, w := range unindexedLanguageWarnings(ws.Root) {
+				fmt.Fprintf(out, "Warning: %s\n", w)
+			}
 			if f, ok := out.(*os.File); ok && isTTY(f) {
 				fmt.Fprintln(out, renderStatusCard(version, ws.Root, filepath.Base(ws.Root), st, upd, perProject, combined))
 				return nil

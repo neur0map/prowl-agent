@@ -547,6 +547,24 @@ func checkChurn(s *store.Store, opt Options) []Finding {
 	return findings
 }
 
+// UnindexedLanguageWarnings reports, as human-readable strings, any language
+// that is well represented on disk but barely indexed -- almost always a
+// `languages` filter in .prowl/config.toml silently excluding the repo's real
+// stack. `init` and `status` surface these so the failure is loud and actionable
+// instead of showing up only as empty query results. It returns nil when the
+// index is healthy.
+func UnindexedLanguageWarnings(s *store.Store, root string, ignore []string) []string {
+	findings, err := checkUnindexedLanguages(s, Options{Root: root, Ignore: ignore})
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(findings))
+	for _, f := range findings {
+		out = append(out, f.Detail)
+	}
+	return out
+}
+
 // checkUnindexedLanguages flags a language that is well represented on disk but
 // barely or not indexed. The usual cause is a `languages` filter in
 // .prowl/config.toml that omits the repository's real stack (e.g. a Go project

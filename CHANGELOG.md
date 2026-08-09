@@ -7,6 +7,15 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `init` and `status` now warn when a language is present on disk but excluded
+  from the index by the `languages` filter in `.prowl/config.toml` (usually a
+  config copied from another project). This turns the silent near-empty index --
+  previously visible only as empty query results, or by running `doctor` -- into
+  a loud, actionable message at the moments a user looks.
+- `init --languages <list|auto>` sets the indexed-language filter in one command,
+  so the warning above has a one-line fix (`init --languages auto`) and indexing
+  can be scoped at setup without hand-editing `.prowl/config.toml`.
+
 - External documentation can be ingested and searched. `prowl-agent docs add <url>`
   crawls a documentation site (bounded depth, page cap, rate limit, robots.txt) and
   converts each page to clean Markdown; `docs add <dir> --local` ingests a local

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
@@ -14,7 +15,9 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/index"
+	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
 
@@ -36,6 +39,11 @@ type InitOptions struct {
 	// legacy programmatic default, which keeps all integrations for API callers.
 	Integrations    []string
 	IntegrationsSet bool
+	// Languages overrides the config language filter at init when LanguagesSet.
+	// It gives a one-command fix for the silent-empty-index case (a copied config
+	// excluding the repo's real stack) that the post-init warning points at.
+	Languages    []string
+	LanguagesSet bool
 }
 
 // RunInit creates the workspace, writes config/rules, runs the first index,
@@ -93,6 +101,9 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 		if opt.AssistModel != "" {
 			cfg.AI.AssistModel = opt.AssistModel
 		}
+	}
+	if opt.LanguagesSet {
+		cfg.Languages = opt.Languages
 	}
 
 	if err := config.Save(ws.Path, cfg); err != nil {
@@ -159,9 +170,30 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// unindexedLanguageWarnings reports languages present on disk but excluded from
+// the index by the config `languages` filter. init and status surface these so a
+// silently near-empty index is caught immediately, not discovered as empty query
+// results later.
+func unindexedLanguageWarnings(root string) []string {
+	ws, err := workspace.Resolve(root)
+	if err != nil {
+		return nil
+	}
+	cfg, err := config.Load(ws.Path)
+	if err != nil {
+		return nil
+	}
+	s, err := store.Open(ws.DB)
+	if err != nil {
+		return nil
+	}
+	defer s.Close()
+	return doctor.UnindexedLanguageWarnings(s, root, cfg.Ignore)
+}
+
 func newInitCmd() *cobra.Command {
 	var withAI, noAI, yes, noInput, reconfigure, dryRun, asJSON, remove bool
-	var tier, integrationValue string
+	var tier, integrationValue, languagesValue string
 	c := &cobra.Command{
 		Use:   "init",
 		Short: "Plan, preview, and set up Prowl in the current folder",
@@ -289,7 +321,8 @@ func newInitCmd() *cobra.Command {
 			if !asJSON {
 				fmt.Fprintf(out, "Indexing %s ...\n", root)
 			}
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Integrations: integrations, IntegrationsSet: true})
+			langs, langsSet := parseLanguagesFlag(languagesValue)
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
 			if err != nil {
 				return err
 			}
@@ -309,10 +342,14 @@ func newInitCmd() *cobra.Command {
 				return json.NewEncoder(out).Encode(map[string]any{"root": root, "indexed": sum, "integrations": integrations, "verified": true})
 			}
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
+			for _, w := range unindexedLanguageWarnings(root) {
+				fmt.Fprintf(out, "Warning: %s\n", w)
+			}
 			fmt.Fprintln(out, "Query it from your shell, no server to run:")
 			fmt.Fprintln(out, "  prowl-agent overview        a map of this project")
 			fmt.Fprintln(out, "  prowl-agent find <name>     locate any symbol")
 			fmt.Fprintln(out, "  prowl-agent search <text>   search by meaning or text")
+			fmt.Fprintln(out, "  prowl-agent docs add <url>  index external documentation")
 			fmt.Fprintf(out, "%d selected integration(s) configured; .prowl/ is gitignored.\n", len(integrations))
 			return nil
 		},
@@ -327,8 +364,28 @@ func newInitCmd() *cobra.Command {
 	c.Flags().BoolVar(&remove, "remove-integrations", false, "remove only Prowl-owned entries from selected integrations")
 	c.Flags().StringVar(&integrationValue, "integrations", "auto", "comma-separated integrations, or auto, none, all")
 	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
+	c.Flags().StringVar(&languagesValue, "languages", "", "comma-separated languages to index, or auto (default: keep existing config)")
 	c.MarkFlagsMutuallyExclusive("with-ai", "no-ai")
 	return c
+}
+
+// parseLanguagesFlag turns the --languages value into an explicit language list.
+// An empty value leaves the existing config untouched; "auto" indexes everything.
+func parseLanguagesFlag(value string) ([]string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, false
+	}
+	var langs []string
+	for _, part := range strings.Split(value, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			langs = append(langs, p)
+		}
+	}
+	if len(langs) == 0 {
+		return nil, false
+	}
+	return langs, true
 }
 
 func printSetupPlan(out io.Writer, plan SetupPlan, asJSON, dryRun bool) error {

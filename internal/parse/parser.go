@@ -3,6 +3,7 @@ package parse
 import (
 	"context"
 	"fmt"
+	"sync"
 	"unsafe"
 
 	"github.com/alexaandru/go-sitter-forest/bash"
@@ -69,13 +70,23 @@ var grammars = map[string]func() unsafe.Pointer{
 // HasGrammar reports whether lang has a Tree-sitter grammar.
 func HasGrammar(lang string) bool { _, ok := grammars[lang]; return ok }
 
-// Language returns the sitter.Language for lang, if one exists.
+// languages caches compiled TSLanguage wrappers. A TSLanguage is immutable and
+// safe to share across parsers and goroutines, so each grammar is initialized
+// once per process instead of rebuilt on every parse.
+var languages sync.Map // lang -> *sitter.Language
+
+// Language returns the sitter.Language for lang, if one exists. The compiled
+// language is cached and shared across callers.
 func Language(lang string) (*sitter.Language, bool) {
+	if l, ok := languages.Load(lang); ok {
+		return l.(*sitter.Language), true
+	}
 	g, ok := grammars[lang]
 	if !ok {
 		return nil, false
 	}
-	return sitter.NewLanguage(g()), true
+	actual, _ := languages.LoadOrStore(lang, sitter.NewLanguage(g()))
+	return actual.(*sitter.Language), true
 }
 
 // Parse parses src with the grammar for lang. The caller MUST call tree.Close().

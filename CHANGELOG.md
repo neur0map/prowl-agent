@@ -25,6 +25,14 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Indexing compiles each language's tree-sitter query once per process and
+  caches the compiled grammar, instead of recompiling the query on every file.
+  Query compilation was ~42% of indexing CPU (it ran once per file); caching it
+  roughly halves total indexing CPU. On a 16-core machine the cold-index wall
+  time improves modestly (the serial store writer is now the bound), but the
+  saving is larger on fewer cores and leaves more headroom when the MCP server
+  reindexes while serving queries. The index is byte-identical to before.
+
 - Indexing now parses files in parallel across CPU cores instead of one at a
   time. Reading and tree-sitter extraction (the CPU-bound work) fan out to a
   worker per core while the store stays single-writer; results are consumed in

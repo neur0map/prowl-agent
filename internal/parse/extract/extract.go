@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	sitter "github.com/alexaandru/go-tree-sitter-bare"
 	"github.com/prowl-agent/prowl-agent/internal/parse"
@@ -81,15 +82,15 @@ func queryEach(lang string, src, scm []byte, fn func(caps []capture)) error {
 	if !ok {
 		return fmt.Errorf("no grammar for %q", lang)
 	}
+	q, err := compiledQuery(lang, lng, scm)
+	if err != nil {
+		return fmt.Errorf("query for %s: %w", lang, err)
+	}
 	tree, err := parse.Parse(lang, src)
 	if err != nil {
 		return err
 	}
 	defer tree.Close()
-	q, err := sitter.NewQuery(lng, scm)
-	if err != nil {
-		return fmt.Errorf("query for %s: %w", lang, err)
-	}
 	qc := sitter.NewQueryCursor()
 	matches := qc.Matches(q, tree.RootNode(), src)
 	for {
@@ -104,6 +105,25 @@ func queryEach(lang string, src, scm []byte, fn func(caps []capture)) error {
 		fn(caps)
 	}
 	return nil
+}
+
+// queries caches compiled tree-sitter queries by (lang, scm). A *sitter.Query is
+// immutable and safe to share across goroutines; each caller runs it with its
+// own cursor, so compiling once per process (not once per file) is both correct
+// and much faster on a large tree.
+var queries sync.Map // lang+scm -> *sitter.Query
+
+func compiledQuery(lang string, lng *sitter.Language, scm []byte) (*sitter.Query, error) {
+	key := lang + "\x00" + string(scm)
+	if v, ok := queries.Load(key); ok {
+		return v.(*sitter.Query), nil
+	}
+	q, err := sitter.NewQuery(lng, scm)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := queries.LoadOrStore(key, q)
+	return actual.(*sitter.Query), nil
 }
 
 // capNode returns the node captured under name in this match.

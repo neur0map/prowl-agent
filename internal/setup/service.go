@@ -29,7 +29,11 @@ const (
 	IntegrationOpenCode = "opencode"
 	IntegrationNeovim   = "neovim"
 	IntegrationHelix    = "helix"
-	IntegrationClaude   = "claude"
+	// IntegrationAgentSkills installs prowl's skills into `.agents/skills/`, the
+	// harness-agnostic Agent Skills standard location (agentskills.io) that Prime
+	// Agent and other standard-compliant harnesses discover, not a per-client dir.
+	IntegrationAgentSkills = "agent-skills"
+	IntegrationClaude      = "claude"
 
 	// integrationSkill marks an Action that installs one embedded agent skill.
 	integrationSkill = "skill"
@@ -44,7 +48,7 @@ const (
 )
 
 var allIntegrations = []string{
-	IntegrationAgents, IntegrationClaude, IntegrationCursor, IntegrationFactory, IntegrationGeneric,
+	IntegrationAgents, IntegrationAgentSkills, IntegrationClaude, IntegrationCursor, IntegrationFactory, IntegrationGeneric,
 	IntegrationHelix, IntegrationNeovim, IntegrationOMP, IntegrationOpenCode, IntegrationVSCode,
 }
 
@@ -407,10 +411,11 @@ func actionsFor(integrations []string) []Action {
 		IntegrationOpenCode: "opencode.json", IntegrationNeovim: ".prowl/editor/nvim.lua", IntegrationHelix: ".helix/languages.toml",
 	}
 	skillRoots := map[string]string{
-		IntegrationOMP:      ".omp/skills",
-		IntegrationClaude:   ".claude/skills",
-		IntegrationCursor:   ".cursor/skills",
-		IntegrationOpenCode: ".opencode/skills",
+		IntegrationOMP:         ".omp/skills",
+		IntegrationClaude:      ".claude/skills",
+		IntegrationCursor:      ".cursor/skills",
+		IntegrationOpenCode:    ".opencode/skills",
+		IntegrationAgentSkills: ".agents/skills",
 	}
 	actions := make([]Action, 0, len(integrations))
 	for _, integration := range integrations {
@@ -926,6 +931,7 @@ func DetectIntegrations(root string) []string {
 		{IntegrationAgents, "AGENTS.md"}, {IntegrationGeneric, ".mcp.json"}, {IntegrationCursor, ".cursor"},
 		{IntegrationVSCode, ".vscode"}, {IntegrationOMP, ".omp"}, {IntegrationFactory, ".factory"},
 		{IntegrationOpenCode, "opencode.json"}, {IntegrationNeovim, ".nvim"}, {IntegrationHelix, ".helix"}, {IntegrationClaude, ".claude"},
+		{IntegrationAgentSkills, ".agents"},
 	}
 	out := make([]string, 0, len(checks))
 	for _, check := range checks {

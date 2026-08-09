@@ -7,6 +7,16 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- An `agent-skills` setup integration installs prowl's skills into `.agents/skills/`,
+  the harness-agnostic Agent Skills standard location (agentskills.io) that Prime
+  Agent and other standard-compliant harnesses discover -- not just the per-client
+  dirs (`.claude/skills`, `.cursor/skills`, `.opencode/skills`) prowl already
+  wrote. It is detected when a repo has `.agents/`, selectable via
+  `--integrations agent-skills`, and reversible via `--remove-integrations`. This
+  makes prowl's repo-exploration, change-safety, and durable-knowledge skills
+  auto-discoverable by REPL/programmatic-tool-calling harnesses, which otherwise
+  ship no code-intelligence and fall back to grepping and reading whole files.
+
 - `context`/`search_context` now matches queries against file paths, not just
   symbols and chunk text. Developers name files after their purpose, so the path
   is deterministic concept context (the code-native form of contextual

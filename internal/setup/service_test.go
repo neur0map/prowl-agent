@@ -562,3 +562,48 @@ func flattenOutcome(outcome ApplyOutcome) []string {
 	}
 	return values
 }
+
+// TestSetupAgentSkillsInstallsToStandardLocation proves prowl emits its skills to
+// `.agents/skills/`, the harness-agnostic Agent Skills standard location that
+// Prime Agent and other standard-compliant harnesses discover, when `.agents/`
+// is present (detected) as well as by explicit selection.
+func TestSetupAgentSkillsInstallsToStandardLocation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if detected := DetectIntegrations(root); !contains(detected, IntegrationAgentSkills) {
+		t.Fatalf(".agents/ did not surface the agent-skills integration: %v", detected)
+	}
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationAgentSkills})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "agent-skills",
+	}); err != nil {
+		t.Fatalf("apply agent-skills failed: %v", err)
+	}
+	const skill = "prowl-repo-exploration"
+	want, _ := skillContent(skill)
+	path := filepath.Join(root, ".agents", "skills", skill, "SKILL.md")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("skill not installed at standard location %s: %v", path, err)
+	}
+	if string(got) != want {
+		t.Fatalf("installed skill content mismatch at %s", path)
+	}
+	// Reversible: removal takes the standard-location files back out.
+	if err := service.removeIntegrations([]string{IntegrationAgentSkills}); err != nil {
+		t.Fatalf("remove agent-skills: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("skill file still present after removal: %v", err)
+	}
+}

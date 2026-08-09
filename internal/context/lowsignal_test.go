@@ -27,6 +27,14 @@ func TestLowSignalClass(t *testing.T) {
 		{"pkg/.github/dependabot.yml", "ci"},
 		{".gitlab-ci.yml", "ci"},
 		{"Jenkinsfile", "ci"},
+		{"tests/test_pipeline.py", "test"},
+		{"src/mika/core/config_test.go", "test"},
+		{"web/src/app.spec.ts", "test"},
+		{"dev-testing/harness.py", "test"},
+		{"spec/models/user_spec.rb", "test"},
+		{"internal/store/graph.go", ""},
+		{"src/latest_release.go", ""},
+		{"docs/attestation.md", "docs"},
 	}
 	for _, c := range cases {
 		if got := lowSignalClass(c.path); got != c.want {
@@ -47,6 +55,12 @@ func TestQueryWantsClass(t *testing.T) {
 	}
 	if !queryWantsClass([]string{"protobuf"}, "generated") {
 		t.Error("a protobuf query should want the generated class")
+	}
+	if !queryWantsClass([]string{"how", "tested"}, "test") {
+		t.Error("a testing query should want the test class")
+	}
+	if queryWantsClass([]string{"battery", "charge"}, "test") {
+		t.Error("a behavioral query should not want the test class")
 	}
 }
 

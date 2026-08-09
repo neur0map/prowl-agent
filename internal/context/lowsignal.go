@@ -38,6 +38,8 @@ func lowSignalClass(path string) string {
 		return "locale"
 	case isCIPath(p, base):
 		return "ci"
+	case isTestPath(p):
+		return "test"
 	case isDocPath(base):
 		return "docs"
 	}
@@ -118,6 +120,28 @@ func isDocPath(base string) bool {
 	return false
 }
 
+// testTokens are the delimited path components that mark test code.
+var testTokens = map[string]bool{
+	"test": true, "tests": true, "testing": true, "spec": true, "specs": true, "e2e": true,
+}
+
+// isTestPath reports whether a path is test code. Tests exercise the
+// implementation and match its identifiers densely, so for a "how does X work"
+// question they should rank below the implementation that actually defines the
+// behavior; a query that names testing overrides this. Matching is by delimited
+// path token, so "dev-testing/", "test_x.py", "x_test.go", and "x.spec.ts" count
+// while "attestation" or "latest" do not.
+func isTestPath(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		for _, part := range strings.FieldsFunc(seg, func(r rune) bool { return r == '-' || r == '_' || r == '.' }) {
+			if testTokens[part] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // queryWantsClass reports whether the query itself names a low-signal class, in
 // which case those files are legitimate answers and must not be down-weighted.
 func queryWantsClass(terms []string, class string) bool {
@@ -135,6 +159,8 @@ func queryWantsClass(terms []string, class string) bool {
 		keys = []string{"ci", "cicd", "workflow", "workflows", "action", "actions", "pipeline", "pipelines", "release", "deploy", "deployment"}
 	case "docs":
 		keys = []string{"docs", "doc", "documentation", "readme", "changelog", "guide", "guides", "tutorial", "howto"}
+	case "test":
+		keys = []string{"test", "tests", "tested", "testing", "unit", "integration", "e2e", "fixture", "fixtures", "mock", "mocks", "spec", "specs", "coverage"}
 	}
 	for _, term := range terms {
 		for _, key := range keys {

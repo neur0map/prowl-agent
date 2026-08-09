@@ -34,6 +34,16 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `context`/`search_context` now treats test files as a low-signal class,
+  down-weighting them for "how does X work" questions so the implementation that
+  defines the behavior ranks above the tests that exercise it. Tests match the
+  same identifiers densely and otherwise outrank the real code; a query that
+  names testing (e.g. "how is X tested") exempts them. Detection is by delimited
+  path token (`tests/`, `dev-testing/`, `test_x.py`, `x_test.go`, `x.spec.ts`),
+  so "attestation"/"latest" are unaffected. Found by dogfooding a Python bot
+  where the test harness outranked the real client; the retrieval benchmark is
+  unchanged (recall 1.0).
+
 - `context`/`search_context` ranking now matches inflected query words to
   base-form symbol names when awarding the symbol-authority boost: "how are
   files parsed in parallel during indexing" now recognizes that `index.go`

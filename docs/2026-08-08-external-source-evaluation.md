@@ -73,3 +73,39 @@ an add-on.
   also confirmed the scored resolution-accuracy gap (Python/TS dangling edges) is
   real and addressable (import-chain symbol resolution, import maps, confidence
   gating) -- logged as the top future improvement, not built this loop.
+
+## Usability + adoption scorecard (2026-08-08)
+
+Measured with the released binary on local repos (glazepkg Go 260 files, ryomotion
+TS 351, mika-bot Python 246) and remote docs (mkdocs.org, docusaurus.io,
+fastapi, hono.dev).
+
+Observed:
+- Index speed 0.17-0.50s for 240-350 file repos; query latency 19-51ms.
+- Languages resolved cleanly vary: dangling-edge rate Go 17%, TS 38%, Python 65%.
+- `doctor` caught a stale `.prowl/config.toml` that indexed 0 of 237 Go files.
+- docs: local + remote ingest, llms.txt fast path (hono.dev 1 fetch ~1s),
+  injection quarantine, cited budget-bounded search, no model required.
+- Surface: 10 core / 19 legacy MCP tools, 30+ CLI commands, LSP, knowledge, docs.
+
+Scores:
+- Usability (agent / power user): 8.5/10. Fast, cited, token-efficient,
+  deterministic, single binary, broad. Docked for Python/TS graph accuracy,
+  code-tuned docs ranking, and semantic retrieval needing a model.
+- Adoption (new / average user): 6.5/10. Foot-guns and onboarding friction.
+
+What would raise the score, prioritized:
+1. Stop the silent stale-config empty index: have `init`/`status` warn loudly
+   (not only `doctor`) when a dominant on-disk language is unindexed, or default
+   it into the allowlist. (adoption)
+2. Improve Python/TS import resolution (cut dangling edges): trace symbols along
+   import chains (aliases, re-exports, barrels), use TS import maps, and add
+   module-local tables + confidence gating for Python. (usability)
+3. Docs-aware ranking (docs are currently down-weighted as low-signal) and strip
+   heading-permalink / nav noise from crawled Markdown. (usability)
+4. Onboarding: a first-run quickstart, `update` that can target stable releases,
+   and the compact core MCP surface by default. (adoption)
+5. Optional semantic retrieval: guidance or a bundled local embedder so
+   "how do I X" queries get vector recall, not only lexical. (usability)
+6. Docs follow-ups: remote-repo ingestion, tiered L0/L1/L2 summaries, concurrent
+   crawl, incremental re-crawl/refresh. (usability)

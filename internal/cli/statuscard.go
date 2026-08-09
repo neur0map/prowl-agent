@@ -14,19 +14,38 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/selfupdate"
 )
 
-var (
-	cAccent = lipgloss.Color("#89b4fa")
-	cGood   = lipgloss.Color("#a6e3a1")
-	cWarn   = lipgloss.Color("#f9e2af")
-	cMuted  = lipgloss.Color("#9399b2")
-	cFaint  = lipgloss.Color("#585b70")
+// Card geometry. Content is laid out to exactly cardW columns so nothing wraps
+// and every column aligns; the border and padding sit outside that.
+const (
+	cardW    = 60
+	langBarW = 32
+)
 
-	stTitle = lipgloss.NewStyle().Bold(true).Foreground(cAccent)
-	stLabel = lipgloss.NewStyle().Foreground(cMuted)
-	stNum   = lipgloss.NewStyle().Bold(true).Foreground(cAccent)
-	stBig   = lipgloss.NewStyle().Bold(true).Foreground(cGood)
-	stWarn  = lipgloss.NewStyle().Foreground(cWarn)
-	stFaint = lipgloss.NewStyle().Foreground(cFaint)
+const (
+	hexAccent = "#89b4fa"
+	hexGood   = "#a6e3a1"
+)
+
+var (
+	cAccent = lipgloss.Color(hexAccent) // blue: structure, counts
+	cGood   = lipgloss.Color(hexGood)   // green: savings
+	cWarn   = lipgloss.Color("#f9e2af") // yellow: attention
+	cText   = lipgloss.Color("#cdd6f4") // primary text
+	cSub    = lipgloss.Color("#a6adc8") // section headers
+	cMuted  = lipgloss.Color("#9399b2") // labels
+	cFaint  = lipgloss.Color("#585b70") // rules, hints
+
+	stTitle   = lipgloss.NewStyle().Bold(true).Foreground(cAccent)
+	stName    = lipgloss.NewStyle().Bold(true).Foreground(cText)
+	stSection = lipgloss.NewStyle().Bold(true).Foreground(cSub)
+	stGutter  = lipgloss.NewStyle().Foreground(cAccent)
+	stLabel   = lipgloss.NewStyle().Foreground(cMuted)
+	stNum     = lipgloss.NewStyle().Bold(true).Foreground(cAccent)
+	stVal     = lipgloss.NewStyle().Foreground(cText)
+	stBig     = lipgloss.NewStyle().Bold(true).Foreground(cGood)
+	stGood    = lipgloss.NewStyle().Foreground(cGood)
+	stWarn    = lipgloss.NewStyle().Foreground(cWarn)
+	stFaint   = lipgloss.NewStyle().Foreground(cFaint)
 )
 
 // isTTY reports whether f is an interactive terminal (so we render the card; a
@@ -103,6 +122,94 @@ func relTime(meta string) string {
 	}
 }
 
+// truncate limits s to w display columns, ending in an ellipsis when cut.
+func truncate(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	return string(r[:w-1]) + "…"
+}
+
+// truncateLeft keeps the tail of s (the informative end of a path) within w.
+func truncateLeft(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	return "…" + string(r[len(r)-(w-1):])
+}
+
+// padRight fits s to exactly w display columns (truncating or right-padding),
+// operating on plain text so a later style wrap preserves alignment.
+func padRight(s string, w int) string {
+	s = truncate(s, w)
+	if d := lipgloss.Width(s); d < w {
+		s += strings.Repeat(" ", w-d)
+	}
+	return s
+}
+
+// padLeft right-aligns s within w display columns.
+func padLeft(s string, w int) string {
+	s = truncate(s, w)
+	if d := lipgloss.Width(s); d < w {
+		s = strings.Repeat(" ", w-d) + s
+	}
+	return s
+}
+
+// section renders an accent-gutter header with a faint rule filling the width.
+func section(title string) string {
+	head := stGutter.Render("▌") + " " + stSection.Render(title)
+	dashes := cardW - 3 - lipgloss.Width(title)
+	if dashes < 0 {
+		dashes = 0
+	}
+	return head + " " + stFaint.Render(strings.Repeat("─", dashes))
+}
+
+// cleanVersion collapses a nightly "SHA-SHA" build id to a single SHA.
+func cleanVersion(v string) string {
+	if v == "" {
+		return "dev"
+	}
+	if i := strings.IndexByte(v, '-'); i > 0 && v[:i] == v[i+1:] {
+		return v[:i]
+	}
+	return v
+}
+
+// collapseHome shortens a path under the home directory to ~/….
+func collapseHome(p string) string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" && strings.HasPrefix(p, h) {
+		return "~" + p[len(h):]
+	}
+	return p
+}
+
+// kv renders a "label value" pair with fixed label and value widths so columns
+// line up across rows. valW <= 0 leaves the value unpadded (a trailing column).
+func kv(label, val string, labelW, valW int) string {
+	if valW <= 0 {
+		return stLabel.Render(padRight(label, labelW)) + stNum.Render(val)
+	}
+	return stLabel.Render(padRight(label, labelW)) + stNum.Render(padRight(val, valW))
+}
+
+// langBars renders the top languages as aligned proportional bars.
 func langBars(langs map[string]int) []string {
 	type lc struct {
 		l string
@@ -125,10 +232,18 @@ func langBars(langs map[string]int) []string {
 	if len(arr) > 6 {
 		arr = arr[:6]
 	}
+	countW := 1
+	for _, e := range arr {
+		if w := len(comma(e.n)); w > countW {
+			countW = w
+		}
+	}
 	out := make([]string, 0, len(arr))
 	for _, e := range arr {
-		out = append(out, "  "+stLabel.Width(7).Render(e.l)+
-			bar(float64(e.n)/float64(maxN), 18, "#89b4fa")+"  "+stFaint.Render(strconv.Itoa(e.n)))
+		row := "  " + stVal.Render(padRight(e.l, 11)) + " " +
+			bar(float64(e.n)/float64(maxN), langBarW, hexAccent) + " " +
+			stFaint.Render(padLeft(comma(e.n), countW))
+		out = append(out, row)
 	}
 	return out
 }
@@ -137,75 +252,85 @@ func langBars(langs map[string]int) []string {
 func renderStatusCard(version, root, name string, st query.Status, upd selfupdate.Result, perProject []projSaving, combined query.Savings) string {
 	c := st.Counts
 	var L []string
-	L = append(L, stTitle.Render("prowl-agent")+"  "+stFaint.Render(version))
-	L = append(L, stNum.Render(name)+"  "+stFaint.Render(root))
+
+	// Header: name, version, and home-relative path.
+	L = append(L, stTitle.Render("prowl-agent")+"  "+stFaint.Render(cleanVersion(version)))
+	L = append(L, stName.Render(truncate(name, cardW)))
+	L = append(L, stFaint.Render(truncateLeft(collapseHome(root), cardW)))
 	L = append(L, "")
 
+	// INDEX: a two-column key/value grid.
 	resolvedFrac := 0.0
 	if c.Edges > 0 {
 		resolvedFrac = float64(c.Resolved) / float64(c.Edges)
 	}
-	ai := "off"
+	ai := stFaint.Render("off")
 	if st.AIEnabled {
-		ai = "on"
+		ai = stGood.Render("on")
 	}
-	L = append(L, stLabel.Render("INDEX"))
-	L = append(L, "  "+stLabel.Width(9).Render("files")+stNum.Width(12).Render(comma(c.Files))+
-		stLabel.Width(9).Render("symbols")+stNum.Render(comma(c.Symbols)))
-	L = append(L, "  "+stLabel.Width(9).Render("edges")+stNum.Width(12).Render(comma(c.Edges))+
-		stLabel.Width(9).Render("resolved")+bar(resolvedFrac, 12, "#89b4fa")+fmt.Sprintf(" %3.0f%%", resolvedFrac*100))
-	L = append(L, "  "+stLabel.Width(9).Render("updated")+stFaint.Width(12).Render(relTime(st.LastIndex))+
-		stLabel.Width(9).Render("ai")+stFaint.Render(ai))
+	L = append(L, section("INDEX"))
+	L = append(L, "  "+kv("files", comma(c.Files), 9, 12)+kv("symbols", comma(c.Symbols), 9, 0))
+	L = append(L, "  "+kv("edges", comma(c.Edges), 9, 12)+stLabel.Render(padRight("resolved", 9))+
+		bar(resolvedFrac, 12, hexAccent)+stNum.Render(fmt.Sprintf(" %3.0f%%", resolvedFrac*100)))
+	L = append(L, "  "+stLabel.Render(padRight("updated", 9))+stVal.Render(padRight(relTime(st.LastIndex), 12))+
+		stLabel.Render(padRight("ai", 9))+ai)
 	L = append(L, "")
 
-	L = append(L, stLabel.Render("LANGUAGES"))
+	// LANGUAGES: aligned proportional bars.
+	L = append(L, section("LANGUAGES"))
 	L = append(L, langBars(c.Langs)...)
 	L = append(L, "")
 
+	// TOKENS SAVED: the hero stat.
 	sv := st.Savings
-	L = append(L, stLabel.Render("TOKENS SAVED ")+stFaint.Render("(estimated)"))
-	L = append(L, "  "+stBig.Render("~"+humanTokens(sv.SavedTokens)))
-	denom := sv.SavedTokens + sv.AnswerTokens
-	frac := 0.0
-	if denom > 0 {
-		frac = float64(sv.SavedTokens) / float64(denom)
-	}
-	L = append(L, "  "+bar(frac, 28, "#a6e3a1"))
-	if sv.Queries > 0 {
-		avg := sv.AnswerTokens / sv.Queries
-		L = append(L, "  "+stFaint.Render(fmt.Sprintf("across %s answers · ~%s tokens each vs reading the files",
-			comma(int(sv.Queries)), humanTokens(avg))))
-	} else if combined.SavedTokens > 0 {
+	L = append(L, section("TOKENS SAVED"))
+	switch {
+	case sv.SavedTokens > 0:
+		denom := sv.SavedTokens + sv.AnswerTokens
+		frac := 0.0
+		if denom > 0 {
+			frac = float64(sv.SavedTokens) / float64(denom)
+		}
+		L = append(L, "  "+stBig.Render("~"+humanTokens(sv.SavedTokens))+stFaint.Render("  saved by cited retrieval"))
+		L = append(L, "  "+bar(frac, cardW-2, hexGood))
+		if sv.Queries > 0 {
+			avg := sv.AnswerTokens / sv.Queries
+			L = append(L, "  "+stFaint.Render(truncate(fmt.Sprintf("across %s answers · ~%s tokens each vs reading files",
+				comma(int(sv.Queries)), humanTokens(avg)), cardW-2)))
+		}
+	case combined.SavedTokens > 0:
 		L = append(L, "  "+stFaint.Render("none in this project yet; ~"+humanTokens(combined.SavedTokens)+" across your projects"))
-	} else {
+	default:
 		L = append(L, "  "+stFaint.Render("no queries yet; savings grow as your agent uses prowl"))
 	}
 
+	// ACROSS YOUR PROJECTS: per-project savings with a combined total.
 	if len(perProject) >= 1 && combined.Queries > sv.Queries {
 		L = append(L, "")
-		L = append(L, stLabel.Render("ACROSS YOUR PROJECTS"))
+		L = append(L, section("ACROSS YOUR PROJECTS"))
 		shown := perProject
 		if len(shown) > 4 {
 			shown = shown[:4]
 		}
 		for _, p := range shown {
-			L = append(L, "  "+stLabel.Width(18).Render(p.Name)+stNum.Render("~"+humanTokens(p.Saved)))
+			L = append(L, "  "+stLabel.Render(padRight(p.Name, 22))+stNum.Render("~"+humanTokens(p.Saved)))
 		}
 		if len(perProject) >= 2 {
-			L = append(L, "  "+stLabel.Width(18).Render("combined")+stBig.Render("~"+humanTokens(combined.SavedTokens)))
+			L = append(L, "  "+stFaint.Render(strings.Repeat("─", 30)))
+			L = append(L, "  "+stVal.Render(padRight("combined", 22))+stBig.Render("~"+humanTokens(combined.SavedTokens)))
 		}
 	}
 
-	if upd.Available {
-		L = append(L, "")
-		L = append(L, stWarn.Render("update available")+stFaint.Render("  ·  run ")+stNum.Render("prowl-agent update"))
-	} else if upd.Checked {
-		L = append(L, "")
-		L = append(L, stFaint.Render("up to date"))
-	}
-
+	// Footer: status dot and where to verify.
 	L = append(L, "")
-	L = append(L, stFaint.Render("measure it yourself: "+tokensDocURL))
+	switch {
+	case upd.Available:
+		L = append(L, stWarn.Render("● update available")+stFaint.Render("  ·  run ")+stNum.Render("prowl-agent update"))
+	case upd.Checked:
+		L = append(L, stGood.Render("●")+stFaint.Render(" up to date"))
+	}
+	L = append(L, stFaint.Render("measure it yourself"))
+	L = append(L, stFaint.Render(truncate(tokensDocURL, cardW)))
 
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cFaint).Padding(0, 2)
 	return box.Render(lipgloss.JoinVertical(lipgloss.Left, L...))

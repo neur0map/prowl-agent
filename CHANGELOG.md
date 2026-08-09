@@ -10,6 +10,12 @@ All notable changes are recorded here. The format follows
 - `init` no longer reports "0 symbols, 0 edges" on a re-init that changed nothing.
   The summary showed the incremental delta instead of the index totals; it now
   reports the real indexed files, symbols, and edges.
+- The `status` card no longer wraps text mid-word. Language names (`javascript`,
+  `markdown`) and long project names were rendered into a column narrower than
+  the text, so they wrapped and knocked every bar out of alignment. The card was
+  rebuilt on a fixed content width where each column truncates instead of wraps,
+  so labels, proportional bars, and counts line up. It also gains accent section
+  headers, a token-savings hero, home-relative paths, and a status dot.
 
 ### Added
 - `init` now indexes a project's real stack even when `.prowl/config.toml` carries

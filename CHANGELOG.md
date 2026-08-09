@@ -7,6 +7,15 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `doctor` now flags a language that is present on disk but unindexed -- almost
+  always a `languages` filter in `.prowl/config.toml` that omits the repo's real
+  stack (e.g. a Go project carrying a config copied from a QML/rice setup), which
+  otherwise leaves prowl with a near-empty index and *no* symptom except empty
+  query results. It compares the ignore-aware file walk against the indexed
+  languages and warns, e.g. "237 go files present but 0 indexed -- the
+  `languages` filter likely omits \"go\"". Found by dogfooding on a real Go repo
+  whose stale config indexed 0 of its 238 Go files while `doctor` reported a
+  perfect 100/100.
 
 - `prowl-agent outline <path>` and the `outline` MCP tool return a file's
   structure -- every symbol with its kind, signature, nesting depth, and line

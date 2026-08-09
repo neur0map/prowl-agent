@@ -47,7 +47,7 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rep, err := doctor.Run(project.Store, rules, doctor.Options{Root: project.Workspace.Root, Profile: profile})
+			rep, err := doctor.Run(project.Store, rules, doctor.Options{Root: project.Workspace.Root, Ignore: project.Config.Ignore, Profile: profile})
 			if err != nil {
 				return err
 			}

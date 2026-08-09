@@ -5,6 +5,7 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/index"
+	"github.com/prowl-agent/prowl-agent/internal/parse"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -54,6 +57,7 @@ type Options struct {
 	FanInThreshold  int
 	FanOutThreshold int
 	ChurnCommits    int
+	Ignore          []string
 	ExcludePaths    []string
 }
 
@@ -86,7 +90,7 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	opt = opt.withDefaults()
 	var f []Finding
 	for _, fn := range []func(*store.Store, Options) ([]Finding, error){
-		checkCycles, checkFan, checkOversized, checkDangling,
+		checkCycles, checkFan, checkOversized, checkDangling, checkUnindexedLanguages,
 	} {
 		got, err := fn(s, opt)
 		if err != nil {
@@ -541,4 +545,51 @@ func checkChurn(s *store.Store, opt Options) []Finding {
 			Detail: fmt.Sprintf("changed %d times recently; review for stability", c.n)})
 	}
 	return findings
+}
+
+// checkUnindexedLanguages flags a language that is well represented on disk but
+// barely or not indexed. The usual cause is a `languages` filter in
+// .prowl/config.toml that omits the repository's real stack (e.g. a Go project
+// carrying a config copied from a QML/rice setup), which silently leaves prowl
+// with a near-empty index and no other symptom -- every query just comes back
+// empty. Detection is by file extension (no reads) over the same ignore-aware
+// walk the indexer uses, so the on-disk-vs-indexed gap isolates the language
+// filter's effect.
+func checkUnindexedLanguages(s *store.Store, opt Options) ([]Finding, error) {
+	if opt.Root == "" {
+		return nil, nil
+	}
+	files, err := s.AllFiles()
+	if err != nil {
+		return nil, err
+	}
+	indexed := map[string]int{}
+	for _, f := range files {
+		indexed[f.Lang]++
+	}
+	rels, err := index.WalkContext(context.Background(), opt.Root, opt.Ignore)
+	if err != nil {
+		return nil, nil // a transient walk failure is not a health finding
+	}
+	onDisk := map[string]int{}
+	for _, rel := range rels {
+		if lang := parse.Detect(rel, nil); lang != "" && parse.HasGrammar(lang) {
+			onDisk[lang]++
+		}
+	}
+	var out []Finding
+	for lang, n := range onDisk {
+		// Present in force but under a fifth indexed: the language filter is
+		// almost certainly excluding it. 10-file floor avoids incidental files.
+		if n >= 10 && indexed[lang]*5 < n {
+			out = append(out, Finding{
+				Check:    "unindexed-language",
+				Severity: SevWarn,
+				Detail: fmt.Sprintf("%d %s files present but %d indexed -- the `languages` filter in .prowl/config.toml likely omits %q; add it or set languages to [\"auto\"]",
+					n, lang, indexed[lang], lang),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Detail < out[j].Detail })
+	return out, nil
 }

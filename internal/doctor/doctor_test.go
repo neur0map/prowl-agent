@@ -1,6 +1,8 @@
 package doctor
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -105,5 +107,45 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestCheckUnindexedLanguages proves doctor flags a language present on disk but
+// missing from the index (the silent language-filter misconfiguration), and does
+// not warn when that language is indexed.
+func TestCheckUnindexedLanguages(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 12; i++ {
+		p := filepath.Join(root, fmt.Sprintf("f%d.go", i))
+		if err := os.WriteFile(p, []byte("package p\nfunc F() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	unindexed, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unindexed.Close()
+	got, err := checkUnindexedLanguages(unindexed, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Check != "unindexed-language" || got[0].Severity != SevWarn {
+		t.Fatalf("want one unindexed-language warning, got %+v", got)
+	}
+
+	indexed, err := store.Open(filepath.Join(t.TempDir(), "i2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer indexed.Close()
+	for i := 0; i < 12; i++ {
+		if _, err := indexed.UpsertFile(store.File{RelPath: fmt.Sprintf("f%d.go", i), Lang: "go", Hash: fmt.Sprint(i), Size: 1, MTime: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := checkUnindexedLanguages(indexed, Options{Root: root}); err != nil || len(got) != 0 {
+		t.Fatalf("indexed go must not warn: got %+v err %v", got, err)
 	}
 }

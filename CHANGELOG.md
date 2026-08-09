@@ -34,6 +34,15 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Indexing now skips generated dependency lockfiles (`package-lock.json`,
+  `go.sum`, `Cargo.lock`, `*.lock`, ...) and minified bundles (`*.min.js`,
+  `*.map`) entirely. These carry no code-intelligence value but expand into
+  thousands of meaningless "setting" symbols -- a single `package-lock.json`
+  emitted 9,022 symbols on a real TS repo, 90% of its whole index -- which bloat
+  storage and pollute `find`. Their real information (declared dependencies)
+  lives in the manifest, which is still indexed. On that repo the symbol count
+  dropped from 18,280 to 9,258. Found by dogfooding a TypeScript/Electron app.
+
 - `context`/`search_context` now treats test files as a low-signal class,
   down-weighting them for "how does X work" questions so the implementation that
   defines the behavior ranks above the tests that exercise it. Tests match the

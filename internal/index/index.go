@@ -298,6 +298,9 @@ type fileParse struct {
 // database access -- the skip decision uses the pre-loaded hash map -- so it is
 // safe to run concurrently: parse.Parse builds a fresh parser per call.
 func parseFile(root, rel string, opt Options, force bool, known map[string]string) fileParse {
+	if isGeneratedArtifact(rel) {
+		return fileParse{rel: rel} // lockfile / minified bundle: skip before reading
+	}
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	data, err := os.ReadFile(full)
 	if err != nil {
@@ -342,6 +345,30 @@ func parseFile(root, rel string, opt Options, force bool, known map[string]strin
 	}
 	fp.res = res
 	return fp
+}
+
+// isGeneratedArtifact reports whether rel is a generated dependency lockfile or a
+// minified bundle. These carry no code-intelligence value -- a single
+// package-lock.json expands into thousands of meaningless "setting" symbols that
+// flood the index and pollute find -- so the indexer skips them entirely. Their
+// real information (declared dependencies) lives in the manifest, which is indexed.
+func isGeneratedArtifact(rel string) bool {
+	base := strings.ToLower(rel)
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	switch base {
+	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
+		"go.sum", "cargo.lock", "gemfile.lock", "poetry.lock", "composer.lock",
+		"pipfile.lock", "flake.lock", "bun.lockb", "packages.lock.json",
+		"pubspec.lock", "mix.lock", "gradle.lockfile":
+		return true
+	}
+	if strings.HasSuffix(base, ".lock") {
+		return true
+	}
+	return strings.HasSuffix(base, ".min.js") || strings.HasSuffix(base, ".min.css") ||
+		strings.HasSuffix(base, ".min.mjs") || strings.HasSuffix(base, ".map")
 }
 
 func IndexWithOptionsContext(ctx context.Context, s *store.Store, root string, opt Options) (Summary, error) {
@@ -812,6 +839,9 @@ func ValidateSnapshotWithExpectedContext(ctx context.Context, s *store.Store, ro
 	for _, rel := range expected {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if isGeneratedArtifact(rel) {
+			continue // the indexer skips these; they are never expected in the store
 		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {

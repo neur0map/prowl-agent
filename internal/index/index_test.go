@@ -702,3 +702,35 @@ func TestIndexParallelDeterministicIDs(t *testing.T) {
 		t.Fatalf("file IDs not deterministic across runs:\n a=%v\n b=%v", a, b)
 	}
 }
+
+// TestIndexSkipsGeneratedArtifacts proves lockfiles and minified bundles are not
+// indexed: a package-lock.json would otherwise emit thousands of "setting"
+// symbols that flood the index, while the real source beside it is still indexed.
+func TestIndexSkipsGeneratedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("package-lock.json", `{"packages":{"a":{"version":"1"},"b":{"version":"2"}}}`)
+	write("web/app.min.js", `var a=1,b=2;function d(){return a+b}`)
+	write("main.go", "package main\nfunc Main() {}\n")
+
+	s := openStore(t)
+	if _, err := Index(s, root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.GetFileByPath("main.go"); err != nil || !ok {
+		t.Fatalf("main.go should be indexed (ok=%v err=%v)", ok, err)
+	}
+	for _, rel := range []string{"package-lock.json", "web/app.min.js"} {
+		if _, ok, _ := s.GetFileByPath(rel); ok {
+			t.Errorf("%s is a generated artifact and must be skipped, but was indexed", rel)
+		}
+	}
+}

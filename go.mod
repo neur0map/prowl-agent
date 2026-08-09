@@ -7,6 +7,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.1
 	charm.land/log/v2 v2.0.0
 	github.com/BurntSushi/toml v1.6.0
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/alexaandru/go-sitter-forest/bash v1.9.6
 	github.com/alexaandru/go-sitter-forest/c_sharp v1.9.6
 	github.com/alexaandru/go-sitter-forest/cpp v1.9.5
@@ -43,13 +44,15 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/spf13/cobra v1.10.2
 	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
-	golang.org/x/sys v0.42.0
+	golang.org/x/net v0.55.0
+	golang.org/x/sys v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	charm.land/bubbles/v2 v2.0.0 // indirect
 	charm.land/bubbletea/v2 v2.0.2 // indirect
+	github.com/JohannesKaufmann/dom v0.3.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/catppuccin/go v0.2.0 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect
@@ -66,7 +69,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect

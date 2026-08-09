@@ -28,7 +28,7 @@ func TestParseSurfaceRejectsUnknownValues(t *testing.T) {
 	}
 }
 
-func TestCoreSurfaceIsSmallerAndLegacyStaysEighteen(t *testing.T) {
+func TestCoreSurfaceIsSmallerAndLegacyStaysNineteen(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "index.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -44,10 +44,10 @@ func TestCoreSurfaceIsSmallerAndLegacyStaysEighteen(t *testing.T) {
 
 	legacyTools := listToolDescriptors(t, legacy)
 	coreTools := listToolDescriptors(t, core)
-	if len(legacyTools) != 18 {
-		t.Fatalf("legacy tool count = %d, want 18", len(legacyTools))
+	if len(legacyTools) != 19 {
+		t.Fatalf("legacy tool count = %d, want 19", len(legacyTools))
 	}
-	want := []string{"analyze_change", "find_references", "get_context", "outline", "propose_knowledge_change", "read_symbol", "search_capabilities", "search_context", "validate_knowledge"}
+	want := []string{"analyze_change", "find_references", "get_context", "outline", "propose_knowledge_change", "read_symbol", "search_capabilities", "search_context", "search_docs", "validate_knowledge"}
 	got := make([]string, len(coreTools))
 	for index, tool := range coreTools {
 		got[index] = tool.Name
@@ -59,7 +59,7 @@ func TestCoreSurfaceIsSmallerAndLegacyStaysEighteen(t *testing.T) {
 	legacyJSON, _ := json.Marshal(legacyTools)
 	coreJSON, _ := json.Marshal(coreTools)
 	legacyDigest := fmt.Sprintf("%x", sha256.Sum256(legacyJSON))
-	if legacyDigest != "0f576b9618f499e971d5ca00343cd9cee8e37ae3b335994ced0644fc03c388f3" {
+	if legacyDigest != "b56c321d7c7121ed452002bcb13c90450ea3c4c88c2a65a00448dd1f03c7043d" {
 		t.Fatalf("legacy descriptor digest = %s", legacyDigest)
 	}
 	if len(coreJSON) >= len(legacyJSON) {

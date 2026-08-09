@@ -7,6 +7,17 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- External documentation can be ingested and searched. `prowl-agent docs add <url>`
+  crawls a documentation site (bounded depth, page cap, rate limit, robots.txt) and
+  converts each page to clean Markdown; `docs add <dir> --local` ingests a local
+  Markdown tree. Pages are stored in a shared per-machine corpus and indexed, then
+  `docs search <question>` (and the `search_docs` MCP tool) return a small, cited,
+  budget-bounded context packet with the same engine used for code, so an agent
+  queries library docs without pulling whole pages into context. Retrieval needs no
+  model. Crawled content is untrusted, so pages containing prompt-injection
+  directives are quarantined out of the searchable corpus. `docs list` and
+  `docs remove` manage sources.
+
 - Knowledge can be captured from structured fields instead of hand-authored OKF.
   `knowledge propose` takes `--type`, `--title`, `--body`/`--body-file`,
   `--resource`, `--tag`, and `--anchor path#symbol` (or `path:start-end`), and the

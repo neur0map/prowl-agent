@@ -13,6 +13,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prowl-agent/prowl-agent/internal/capability"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
+	"github.com/prowl-agent/prowl-agent/internal/docs"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
@@ -28,6 +29,7 @@ func readOnlyAnnotations(title string) *sdk.ToolAnnotations {
 func registerCoreTools(server *sdk.Server, h *handlers) {
 	sdk.AddTool(server, &sdk.Tool{Name: "search_context", Description: "Answer a 'where/how does X work' question about this repo with a small, cited context packet (file:line evidence) instead of reading or grepping whole files, which is far cheaper on tokens. Prowl reindexes changed files before answering, so results reflect the current working tree. Ranks by full text; for a relevance-sensitive question set rerank=true to have your own model reorder candidates (one extra model call, no local model needed). Prefer this over reading files to locate code, then call get_context for a chosen item.", Annotations: readOnlyAnnotations("Search context")}, tracked(h, h.searchContext))
 	sdk.AddTool(server, &sdk.Tool{Name: "get_context", Description: "Fetch fuller detail for specific context IDs returned by search_context, within an explicit token budget (mode compact, standard, or full). Use after search_context when the packet summary is not enough for a chosen item. This does not search; call search_context to find items first.", Annotations: readOnlyAnnotations("Get context")}, tracked(h, h.getContext))
+	sdk.AddTool(server, &sdk.Tool{Name: "search_docs", Description: "Answer a question from external documentation ingested with `prowl-agent docs add` (library/framework docs crawled to Markdown, or a local Markdown tree): a small, cited, budget-bounded context packet instead of fetching whole doc pages. Searches the shared documentation corpus, not this repo's code; use search_context for code. Read-only.", Annotations: readOnlyAnnotations("Search docs")}, tracked(h, h.searchDocs))
 	sdk.AddTool(server, &sdk.Tool{Name: "analyze_change", Description: "Report the structural blast radius of a project-relative file: which files and subsystems depend on it and would be affected if you change it. Use before editing to size the risk. Read-only; returns dependents, not file contents.", Annotations: readOnlyAnnotations("Analyze change")}, tracked(h, h.analyzeChange))
 	sdk.AddTool(server, &sdk.Tool{Name: "propose_knowledge_change", Description: "Propose durable project knowledge for human review (an OKF proposal); a person approves it later. This never writes accepted knowledge. Use to record a lasting architecture fact or decision, not transient notes.", Annotations: &sdk.ToolAnnotations{Title: "Propose knowledge change", ReadOnlyHint: false, DestructiveHint: &falseHint, OpenWorldHint: &falseHint}}, tracked(h, h.proposeKnowledge))
 	sdk.AddTool(server, &sdk.Tool{Name: "validate_knowledge", Description: "Check that stored project knowledge is well-formed: evidence anchors still resolve, links are valid, and entries are current. Use before relying on or proposing knowledge. Read-only.", Annotations: readOnlyAnnotations("Validate knowledge")}, tracked(h, h.validateKnowledge))
@@ -213,6 +215,28 @@ func (h *handlers) getContext(_ context.Context, _ *sdk.CallToolRequest, in cont
 	packet, err := h.context.Get(contextpacket.Request{IDs: in.IDs, Mode: mode, BudgetTokens: in.BudgetTokens, BudgetBytes: in.BudgetBytes})
 	packet = contextpacket.CanonicalProjection(packet)
 	return packetResourceLinks(packet), packet, err
+}
+
+type docsSearchIn struct {
+	Query        string `json:"query" jsonschema:"question to answer from ingested documentation"`
+	BudgetTokens int    `json:"budget_tokens,omitempty" jsonschema:"estimated token budget (default 1800)"`
+}
+
+func (h *handlers) searchDocs(_ context.Context, _ *sdk.CallToolRequest, in docsSearchIn) (*sdk.CallToolResult, contextpacket.Packet, error) {
+	home, err := docs.Home()
+	if err != nil {
+		return nil, contextpacket.Packet{}, err
+	}
+	budget := in.BudgetTokens
+	if budget == 0 {
+		budget = 1800
+	}
+	packet, err := docs.Search(home, in.Query, budget)
+	if err != nil {
+		return nil, contextpacket.Packet{}, err
+	}
+	packet = contextpacket.CanonicalProjection(packet)
+	return packetResourceLinks(packet), packet, nil
 }
 
 func (h *handlers) analyzeChange(_ context.Context, _ *sdk.CallToolRequest, in pathIn) (*sdk.CallToolResult, query.BlastSummary, error) {

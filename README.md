@@ -171,6 +171,24 @@ concept types round-trip without loss.
 See [Durable knowledge and OKF](docs/KNOWLEDGE.md) for the storage contract,
 review lifecycle, lint codes, and migration safeguards.
 
+## Search external documentation
+
+Point prowl at a library's docs once and query them offline, cited and token-
+bounded, the same way you query code:
+
+```bash
+prowl-agent docs add https://docs.example.com   # crawl a docs site to Markdown
+prowl-agent docs add ./vendor/docs --local      # or ingest a local Markdown tree
+prowl-agent docs list
+prowl-agent docs search "how do I configure retries"
+```
+
+Crawls are bounded and polite (depth, page cap, rate limit, robots.txt), and
+pages are stored in a shared per-machine corpus, so a library's docs are crawled
+once and reused across projects. Retrieval needs no model. Crawled pages are
+untrusted, so any carrying prompt-injection directives are quarantined out of the
+searchable corpus. Agents get the same over MCP through `search_docs`.
+
 ## One index, three ways to use it
 
 The same `.prowl/index.db` is served three ways, so you pick the integration that
@@ -180,9 +198,9 @@ fits and the answers stay identical and cited:
   prowl. Nothing to start, and none of MCP's upfront per-call tool-schema cost.
 - **MCP server.** For agents that prefer typed tools, select the standard
   `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, or OpenCode integration
-  during setup. The compatibility surface exposes 18 tools; MCP Resources and
+  during setup. The compatibility surface exposes 19 tools; MCP Resources and
   Prompts are additive on every surface. Use `prowl-agent serve --mcp-surface
-  core` for six intent-oriented tools, or `--mcp-surface all` during migration.
+  core` for ten intent-oriented tools, or `--mcp-surface all` during migration.
   Point any other agent at one command, `prowl-agent serve`.
 - **Editor language server.** `prowl-agent lsp` gives a human go-to-definition,
   find-references, hover (with use counts), document and workspace symbols, code

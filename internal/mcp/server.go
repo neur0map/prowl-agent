@@ -82,6 +82,8 @@ func newLegacyServer(h *handlers, version string) *sdk.Server {
 		Description: "Search file content. Hybrid vector and full-text when the semantic layer is enabled, else full-text. Returns cited snippets."}, tracked(h, h.similarCode))
 	sdk.AddTool(s, &sdk.Tool{Name: "smart_search",
 		Description: "Assist-augmented search: rewrites the query, runs hybrid retrieval, and reranks. Best for fuzzy/natural-language queries. Falls back to full-text when the semantic layer is off."}, tracked(h, h.smartSearch))
+	sdk.AddTool(s, &sdk.Tool{Name: "search_docs",
+		Description: "Search external documentation ingested via `prowl-agent docs add` (crawled library/framework docs or a local Markdown tree): a small, cited, budget-bounded context packet. For this repo's code use search_context or similar_code."}, tracked(h, h.searchDocs))
 	sdk.AddTool(s, &sdk.Tool{Name: "architecture_violations",
 		Description: "Dangling references, orphan scripts, and hardcoded colors."}, tracked(h, h.architectureViolations))
 	sdk.AddTool(s, &sdk.Tool{Name: "repo_hotspots",

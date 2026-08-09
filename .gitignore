@@ -11,6 +11,14 @@
 
 # Local-only planning docs (spec/plan); never pushed.
 /docs/superpowers/
+/.superpowers/
 
 # Isolated feature checkouts.
 /.worktrees/
+
+# Build output.
+/bin/
+
+# Prowl-generated local artifacts (from dogfooding in this repo).
+/AGENTS.md
+.prowl-setup.lock

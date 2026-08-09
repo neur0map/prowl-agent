@@ -95,19 +95,16 @@ Lint findings use stable namespaced codes and include:
 
 A source anchor pins a claim to code in one of two ways:
 
-- **Line range** (`line_start`/`line_end`, 1-based inclusive). Robust to edits
-  elsewhere in the file, but a line inserted *above* the region shifts it and
-  false-flags `stale_anchor`.
-- **Symbol** (`symbol: <name>`, a function/class/component). On every `propose`
-  and `lint` the symbol's current line range is re-resolved from the extractor
-  and hashed, so the anchor tracks the symbol across line shifts and stales only
-  when the symbol's own body changes. Prefer this for anchors to named code.
+- **Line range** (`line_start`/`line_end`, 1-based inclusive). A line inserted
+  above the region shifts it and reports `stale_anchor`.
+- **Symbol** (`symbol: <name>`). The symbol's range is re-resolved from the index
+  on each `propose` and `lint`. The anchor follows the symbol when lines move
+  above it and goes stale only when the symbol's body changes.
 
 Anchor hashes are SHA-256 over the region; CRLF and LF normalize to LF, and the
-final newline does not affect the digest. You do not author the hash: when a
-candidate anchor gives only a `path` plus a `symbol` or line range and omits
-`content_hash`, `propose` computes it from the current source. An unreadable
-path or an unresolvable symbol is left for lint to report.
+final newline does not affect the digest. Omit `content_hash` in a candidate and
+`propose` computes it from the current source. An unreadable path or an
+unresolved symbol is reported by lint.
 
 ## Migration safety
 

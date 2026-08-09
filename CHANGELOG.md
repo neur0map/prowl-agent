@@ -6,12 +6,18 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `init` no longer reports "0 symbols, 0 edges" on a re-init that changed nothing.
+  The summary showed the incremental delta instead of the index totals; it now
+  reports the real indexed files, symbols, and edges.
+
 ### Added
-- `init` and `status` now warn when a language is present on disk but excluded
-  from the index by the `languages` filter in `.prowl/config.toml` (usually a
-  config copied from another project). This turns the silent near-empty index --
-  previously visible only as empty query results, or by running `doctor` -- into
-  a loud, actionable message at the moments a user looks.
+- `init` now indexes a project's real stack even when `.prowl/config.toml` carries
+  a stale `languages` filter copied from another project. When the filter would
+  leave more of the repo's code unindexed than indexed, init resets it to `auto`
+  (with a notice) so the dominant language is not silently excluded; a filter that
+  keeps the majority of the code is respected. `init` and `status` still warn
+  about any language that is present on disk but excluded from the index.
 - `init --languages <list|auto>` sets the indexed-language filter in one command,
   so the warning above has a one-line fix (`init --languages auto`) and indexing
   can be scoped at setup without hand-editing `.prowl/config.toml`.

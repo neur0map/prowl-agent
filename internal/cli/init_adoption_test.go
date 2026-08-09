@@ -51,3 +51,27 @@ func TestParseLanguagesFlag(t *testing.T) {
 		t.Errorf("list parse: %v %v", langs, set)
 	}
 }
+
+// TestLanguageFilterMostlyExcludes proves the auto-heal fires only when a filter
+// excludes the majority of the repo's code (a stale/copied config), and leaves a
+// deliberately narrow filter that keeps the majority untouched.
+func TestLanguageFilterMostlyExcludes(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 20; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("g%d.go", i)), []byte("package m\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !languageFilterMostlyExcludes(root, nil, []string{"lua"}) {
+		t.Error("expected heal: filter excludes the Go majority")
+	}
+	if languageFilterMostlyExcludes(root, nil, []string{"go"}) {
+		t.Error("no heal expected: filter keeps the majority")
+	}
+	if languageFilterMostlyExcludes(root, nil, []string{"auto"}) {
+		t.Error("auto must never heal")
+	}
+	if languageFilterMostlyExcludes(root, nil, nil) {
+		t.Error("empty filter must not heal")
+	}
+}

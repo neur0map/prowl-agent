@@ -17,6 +17,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/index"
+	"github.com/prowl-agent/prowl-agent/internal/parse"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
@@ -134,10 +135,13 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	defer project.Close()
 	sum := project.InitialRefresh.Summary
 	if sum.Indexed == 0 {
-		// A current re-init still reports the existing index size without forcing
-		// another mutation pass.
+		// A current re-init reports the existing index totals (files, symbols,
+		// edges) without forcing another mutation pass, so the summary reflects
+		// what is indexed rather than an empty no-change delta.
 		if status, statusErr := project.Query.Status(); statusErr == nil {
 			sum.Indexed = status.Counts.Files
+			sum.Symbols = status.Counts.Symbols
+			sum.Edges = status.Counts.Edges
 		}
 	}
 	integrations := append([]string(nil), allIntegrations...)
@@ -189,6 +193,58 @@ func unindexedLanguageWarnings(root string) []string {
 	}
 	defer s.Close()
 	return doctor.UnindexedLanguageWarnings(s, root, cfg.Ignore)
+}
+
+// shouldHealLanguages reports the language list init should use when the existing
+// config's filter is almost certainly stale -- it excludes more of the repo's
+// code than it includes (e.g. a rice/QML config copied into a Go project). In
+// that case indexing defaults back to auto so init "just works"; a deliberately
+// narrow filter (which keeps the majority of the code) is left untouched.
+func shouldHealLanguages(root string) ([]string, bool) {
+	ws, err := workspace.Resolve(root)
+	if err != nil {
+		return nil, false
+	}
+	cfg, err := config.Load(ws.Path)
+	if err != nil {
+		return nil, false
+	}
+	if languageFilterMostlyExcludes(root, cfg.Ignore, cfg.Languages) {
+		return []string{"auto"}, true
+	}
+	return nil, false
+}
+
+// languageFilterMostlyExcludes reports whether a non-auto languages filter would
+// leave more on-disk code files unindexed than indexed.
+func languageFilterMostlyExcludes(root string, ignore, languages []string) bool {
+	if len(languages) == 0 {
+		return false
+	}
+	allow := make(map[string]bool, len(languages))
+	for _, l := range languages {
+		if l == "auto" {
+			return false
+		}
+		allow[l] = true
+	}
+	rels, err := index.WalkContext(context.Background(), root, ignore)
+	if err != nil {
+		return false
+	}
+	var allowed, excluded int
+	for _, rel := range rels {
+		lang := parse.Detect(rel, nil)
+		if lang == "" || !parse.HasGrammar(lang) {
+			continue
+		}
+		if allow[lang] {
+			allowed++
+		} else {
+			excluded++
+		}
+	}
+	return excluded > allowed && excluded >= 10
 }
 
 func newInitCmd() *cobra.Command {
@@ -322,6 +378,12 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintf(out, "Indexing %s ...\n", root)
 			}
 			langs, langsSet := parseLanguagesFlag(languagesValue)
+			healed := false
+			if !langsSet {
+				if healedLangs, ok := shouldHealLanguages(root); ok {
+					langs, langsSet, healed = healedLangs, true, true
+				}
+			}
 			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
 			if err != nil {
 				return err
@@ -342,6 +404,9 @@ func newInitCmd() *cobra.Command {
 				return json.NewEncoder(out).Encode(map[string]any{"root": root, "indexed": sum, "integrations": integrations, "verified": true})
 			}
 			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
+			if healed {
+				fmt.Fprintln(out, "Notice: .prowl/config.toml indexed only a minority of this repo, so indexing was reset to all detected languages (languages = auto). Run 'prowl-agent init --languages <list>' to keep a narrow set.")
+			}
 			for _, w := range unindexedLanguageWarnings(root) {
 				fmt.Fprintf(out, "Warning: %s\n", w)
 			}

@@ -232,7 +232,7 @@ func (h *handlers) proposeKnowledge(ctx context.Context, request *sdk.CallToolRe
 		return nil, proposalOut{}, err
 	}
 	inbox := knowledge.NewReviewInbox(filepath.Join(filepath.Dir(h.knowledge.Root), "proposals"), h.knowledge)
-	proposal, diff, err := inbox.Propose(stagedPath, in.Target, in.Author, time.Now())
+	proposal, diff, err := inbox.Propose(stagedPath, in.Target, in.Author, h.root, time.Now())
 	return resourceLinkResult(knowledgeIndexLink()), proposalOut{Proposal: proposal, Diff: diff}, err
 }
 

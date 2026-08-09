@@ -54,6 +54,15 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `knowledge propose` (and the `propose_knowledge_change` tool) now compute a
+  source anchor's `content_hash` from the current file when the author supplies
+  only a `path` and line range. Authoring durable knowledge no longer requires
+  hashing the region by hand -- the friction that previously left anchors with no
+  hash, which lint then reported as permanently `stale_anchor` ("changed") even
+  though the code never changed. Anchors that already carry a hash are untouched;
+  an unreadable path or out-of-range span is left for lint. Rewritten anchors now
+  also serialize `line_start`/`line_end` as YAML integers, not quoted strings.
+
 - Go `_test.go` files are no longer treated as part of a package's imported
   surface. The cross-package `pkg` fan-out was linking every external importer to
   every file of the imported package, including its test files -- so a test file

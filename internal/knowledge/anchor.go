@@ -43,6 +43,33 @@ func HashRegion(data []byte, lineStart, lineEnd int) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+// FillMissingAnchorHashes computes content_hash for any anchor that specifies a
+// path and line range but omits the hash, reading the current source under
+// sourceRoot. Authoring knowledge is about the code as it stands now, so the
+// anchor is pinned to the current region; drift is detected later when that
+// region changes. This removes the need for an author (human or agent) to hash
+// the region by hand -- the friction that otherwise leaves anchors untracked and
+// permanently reported stale. An unreadable path or out-of-range span is left
+// empty for lint to report.
+func FillMissingAnchorHashes(doc *Document, sourceRoot string) {
+	if doc == nil {
+		return
+	}
+	for i := range doc.Prowl.Anchors {
+		a := &doc.Prowl.Anchors[i]
+		if a.ContentHash != "" || a.Path == "" || a.LineStart < 1 || a.LineEnd < a.LineStart {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(sourceRoot, filepath.FromSlash(a.Path)))
+		if err != nil {
+			continue
+		}
+		if hash, err := HashRegion(data, a.LineStart, a.LineEnd); err == nil {
+			a.ContentHash = hash
+		}
+	}
+}
+
 // CheckAnchor checks a source anchor relative to sourceRoot without mutating it.
 func CheckAnchor(sourceRoot string, anchor Anchor) AnchorCheck {
 	result := AnchorCheck{Anchor: anchor, Expected: anchor.ContentHash}

@@ -207,11 +207,11 @@ func newKnowledgeProposeCmd() *cobra.Command {
 			if target == "" {
 				target = filepath.Base(file)
 			}
-			_, _, inbox, err := knowledgeWorkspace()
+			ws, _, inbox, err := knowledgeWorkspace()
 			if err != nil {
 				return err
 			}
-			proposal, diff, err := inbox.Propose(file, target, author, time.Now().UTC())
+			proposal, diff, err := inbox.Propose(file, target, author, ws.Root, time.Now().UTC())
 			if err != nil {
 				return err
 			}

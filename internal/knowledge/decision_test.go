@@ -23,7 +23,7 @@ func TestExpectedVersionRequiresCurrentProposalAndPersistsImmutableAudit(t *test
 		t.Fatal(err)
 	}
 	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
-	proposal, _, err := inbox.Propose(candidate, "decisions/candidate.md", "tester", time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	proposal, _, err := inbox.Propose(candidate, "decisions/candidate.md", "tester", "", time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestDecisionRecoversCanonicalAcceptBeforeProposalCommit(t *testing.T) {
 	}
 	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
 	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	proposal, _, err := inbox.Propose(candidatePath, "decisions/recovery.md", "tester", createdAt)
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/recovery.md", "tester", "", createdAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestDecisionPreservesExternallyChangedDerivedFile(t *testing.T) {
 	if err := os.WriteFile(candidatePath, []byte("---\ntype: Note\ntitle: Conflict\n---\nCandidate body.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := inbox.Propose(candidatePath, "decisions/conflict.md", "tester", time.Now())
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/conflict.md", "tester", "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestDecisionRecoveryPreservesChangedCandidateAndRollsBack(t *testing.T) {
 	if err := os.WriteFile(candidatePath, []byte("---\ntype: Note\ntitle: Recovery\n---\nOriginal candidate.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := inbox.Propose(candidatePath, "decisions/recovery-conflict.md", "tester", time.Now())
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/recovery-conflict.md", "tester", "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestDecideSerializesConflictingAcceptAndReject(t *testing.T) {
 	}
 	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	proposal, _, err := inbox.Propose(candidatePath, "decisions/serialized.md", "tester", now)
+	proposal, _, err := inbox.Propose(candidatePath, "decisions/serialized.md", "tester", "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestRollbackDecisionLeavesProposalProposedWithoutAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	inbox := NewReviewInbox(filepath.Join(root, "proposals"), repository)
-	proposal, _, err := inbox.Propose(candidate, "decisions/rollback.md", "tester", time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
+	proposal, _, err := inbox.Propose(candidate, "decisions/rollback.md", "tester", "", time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

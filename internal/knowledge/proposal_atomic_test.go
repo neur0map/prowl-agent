@@ -58,7 +58,7 @@ func TestAcceptRestoresAllCanonicalFilesAfterPostWriteFailure(t *testing.T) {
 	if err := os.WriteFile(candidate, []byte("---\ntype: Note\ntitle: Proposed\n---\nProposed body.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := inbox.Propose(candidate, "existing.md", "test", time.Now())
+	proposal, _, err := inbox.Propose(candidate, "existing.md", "test", "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestAcceptReportsRollbackFailure(t *testing.T) {
 	if err := os.WriteFile(candidate, []byte("---\ntype: Note\ntitle: Proposed\n---\nProposed.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := inbox.Propose(candidate, "nested/existing.md", "test", time.Now())
+	proposal, _, err := inbox.Propose(candidate, "nested/existing.md", "test", "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

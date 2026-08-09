@@ -44,7 +44,7 @@ func NewReviewInbox(root string, repository *Repository) *ReviewInbox {
 }
 
 // Propose validates and stores a candidate without changing accepted knowledge.
-func (inbox *ReviewInbox) Propose(candidateFile, targetPath, author string, now time.Time) (*Proposal, string, error) {
+func (inbox *ReviewInbox) Propose(candidateFile, targetPath, author, sourceRoot string, now time.Time) (*Proposal, string, error) {
 	if inbox.Repository == nil || inbox.Repository.Codec == nil {
 		return nil, "", fmt.Errorf("knowledge repository is required")
 	}
@@ -60,6 +60,7 @@ func (inbox *ReviewInbox) Propose(candidateFile, targetPath, author string, now 
 	if err != nil {
 		return nil, "", err
 	}
+	FillMissingAnchorHashes(doc, sourceRoot)
 	normalized, err := inbox.Repository.Codec.Marshal(doc)
 	if err != nil {
 		return nil, "", err

@@ -233,6 +233,24 @@ func setStringSequence(mapping *yaml.Node, key string, values []string) {
 	mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, seq)
 }
 
+// setIntScalar sets key to an unquoted integer scalar (or removes it when value
+// is not positive), so line numbers round-trip as YAML ints, not quoted strings.
+func setIntScalar(mapping *yaml.Node, key string, value int) {
+	idx := keyIndex(mapping, key)
+	if value <= 0 {
+		if idx >= 0 {
+			mapping.Content = append(mapping.Content[:idx], mapping.Content[idx+2:]...)
+		}
+		return
+	}
+	n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(value)}
+	if idx >= 0 {
+		mapping.Content[idx+1] = n
+	} else {
+		mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, n)
+	}
+}
+
 func keyIndex(mapping *yaml.Node, key string) int {
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		if mapping.Content[i].Value == key {
@@ -301,12 +319,8 @@ func setAnchors(p *yaml.Node, anchors []knowledge.Anchor) {
 	for _, anchor := range anchors {
 		m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		setScalar(m, "path", anchor.Path)
-		if anchor.LineStart > 0 {
-			setScalar(m, "line_start", strconv.Itoa(anchor.LineStart))
-		}
-		if anchor.LineEnd > 0 {
-			setScalar(m, "line_end", strconv.Itoa(anchor.LineEnd))
-		}
+		setIntScalar(m, "line_start", anchor.LineStart)
+		setIntScalar(m, "line_end", anchor.LineEnd)
 		setScalar(m, "content_hash", anchor.ContentHash)
 		setScalar(m, "symbol", anchor.Symbol)
 		seq.Content = append(seq.Content, m)

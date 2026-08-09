@@ -703,10 +703,13 @@ func resolveGoPackages(s *store.Store, files []store.File, byID map[int64]store.
 	if module == "" {
 		return nil
 	}
-	// Index the .go files in each package directory.
+	// Index the importable .go files in each package directory. `_test.go` files
+	// are never part of a package's imported surface, so external importers must
+	// not get dependency edges into them (that would falsely give test files a
+	// package's whole in-degree -- inflating impact, hotspots, and brief).
 	goDirFiles := map[string][]int64{}
 	for _, f := range files {
-		if f.Lang == "go" {
+		if f.Lang == "go" && !strings.HasSuffix(f.RelPath, "_test.go") {
 			goDirFiles[path.Dir(f.RelPath)] = append(goDirFiles[path.Dir(f.RelPath)], f.ID)
 		}
 	}

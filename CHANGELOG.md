@@ -54,6 +54,15 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Go `_test.go` files are no longer treated as part of a package's imported
+  surface. The cross-package `pkg` fan-out was linking every external importer to
+  every file of the imported package, including its test files -- so a test file
+  inherited the package's whole in-degree. `impact` on a test file falsely
+  reported dozens of dependents (e.g. `service_test.go` showed 23), and test
+  files surfaced among `brief`'s "key files to read first" and inflated
+  `hotspots`. Now importers link only to the package's non-test files: a test
+  file's blast radius is correctly empty, and `brief` leads with implementation.
+
 - Package/namespace imports that resolve to an in-repo target (Go packages, C#
   and Elixir namespaces) are now marked resolved instead of being left as
   unresolved import edges. They fan out to per-file `pkg` edges for

@@ -26,6 +26,7 @@ func TestResolveGoPackages(t *testing.T) {
 	}
 	st1 := mk("internal/store/store.go")
 	st2 := mk("internal/store/queries.go")
+	stTest := mk("internal/store/store_test.go") // never part of the imported surface
 	cli := mk("internal/cli/run.go")
 
 	// internal/cli/run.go imports package store (in-module) and fmt (stdlib).
@@ -46,6 +47,12 @@ func TestResolveGoPackages(t *testing.T) {
 		if len(in) != 1 || in[0].File != "internal/cli/run.go" {
 			t.Fatalf("pkg edge into store file %d = %+v, want one from internal/cli/run.go", dst, in)
 		}
+	}
+	// The package's _test.go file is NOT part of the imported surface, so no
+	// external importer gets a dependency edge into it (else its impact/hotspot
+	// centrality would be falsely inflated to the package's whole in-degree).
+	if in, _ := s.IncomingEdges("file", stTest, "pkg"); len(in) != 0 {
+		t.Fatalf("pkg edge into a _test.go file = %+v, want none", in)
 	}
 	// Blast radius of any store file now reaches the importer.
 	dep, _ := s.TransitiveDependents(st2)

@@ -135,6 +135,130 @@ func applySymbolMatch(candidates []Candidate, target *store.Store, query string)
 	}
 }
 
+// pathMatchBoost lifts a file whose PATH names the query concept. Developers name
+// files after their purpose (cursorRenderer.ts, projectPersistence.ts), so the
+// path is deterministic context -- the code-native form of contextual retrieval.
+// A file whose body never repeats its own filename would otherwise be missed
+// entirely by chunk and symbol search.
+const pathMatchBoost = 8
+
+// pathScore scores a repo-relative path against the query terms: basename matches
+// count double (a file named for the concept is the answer), directory matches
+// add context.
+func pathScore(terms []string, rel string) float64 {
+	rel = strings.ToLower(filepath.ToSlash(rel))
+	base := rel
+	dir := ""
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base, dir = rel[i+1:], rel[:i]
+	}
+	return lexicalScore(terms, base)*2 + lexicalScore(terms, dir)
+}
+
+// namesToConcept reports whether a file's basename contains enough distinct query
+// terms to be considered named for the concept: at least two for a multi-word
+// query (projectPersistence -> "project"+"persistence"), or the sole term for a
+// single-word query. Requiring the basename and two terms keeps incidental
+// single-term matches (rank.go for a query mentioning "ranking") from flooding.
+func namesToConcept(terms []string, rel string) bool {
+	base := strings.ToLower(filepath.ToSlash(rel))
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	need := 2
+	if len(terms) < 2 {
+		need = 1
+	}
+	distinct := 0
+	for _, t := range terms {
+		if len(t) >= 3 && strings.Contains(base, t) {
+			distinct++
+		}
+	}
+	return distinct >= need
+}
+
+// applyPathMatch flags every candidate whose basename names the query concept and
+// adds the path evidence to its lexical score. Run over the full candidate set so
+// the signal survives dedup regardless of which same-file candidate is kept.
+func applyPathMatch(candidates []Candidate, query string) {
+	terms := queryTerms(query)
+	for i := range candidates {
+		if len(candidates[i].Citations) == 0 {
+			continue
+		}
+		path := candidates[i].Citations[0].Path
+		if namesToConcept(terms, path) {
+			candidates[i].PathMatch = true
+			candidates[i].LexicalScore += pathScore(terms, path)
+		}
+	}
+}
+
+// pathCandidates recalls files whose path names the query concept but that chunk
+// and symbol search missed (their body never repeats the filename). Excludes
+// paths already covered; scoring is applied later by applyPathMatch.
+func pathCandidates(target *store.Store, query string, exclude map[string]bool, limit int) ([]Candidate, error) {
+	if target == nil || limit <= 0 {
+		return nil, nil
+	}
+	terms := queryTerms(query)
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	files, err := target.AllFiles()
+	if err != nil {
+		return nil, err
+	}
+	type scored struct {
+		path  string
+		score float64
+	}
+	matched := make([]scored, 0, 8)
+	for _, f := range files {
+		if exclude[f.RelPath] {
+			continue
+		}
+		if !namesToConcept(terms, f.RelPath) {
+			continue
+		}
+		matched = append(matched, scored{f.RelPath, pathScore(terms, f.RelPath)})
+	}
+	sort.SliceStable(matched, func(i, j int) bool {
+		if matched[i].score == matched[j].score {
+			return matched[i].path < matched[j].path
+		}
+		return matched[i].score > matched[j].score
+	})
+	if len(matched) > limit {
+		matched = matched[:limit]
+	}
+	out := make([]Candidate, 0, len(matched))
+	for _, m := range matched {
+		chunk, found, err := target.FirstChunk(m.path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		end := citationEndLine(chunk.StartLine, chunk.Text)
+		idPayload := filepath.ToSlash(m.path) + ":" + itoa(chunk.StartLine)
+		id := "source:" + base64.RawURLEncoding.EncodeToString([]byte(idPayload))
+		out = append(out, Candidate{
+			Item: Item{
+				ID: id, Kind: "source", Title: filepath.ToSlash(m.path), Summary: firstParagraph([]byte(chunk.Text)),
+				WhySelected: []string{"file path names the query concept"}, Freshness: "current", Confidence: 1,
+				Audience:       []string{"assistant", "user"},
+				Citations:      []Citation{{URI: sourceResourceURI(m.path), Path: filepath.ToSlash(m.path), LineStart: chunk.StartLine, LineEnd: end}},
+				DetailResource: sourceResourceURI(m.path),
+			},
+			CompactContent: firstParagraph([]byte(chunk.Text)), StandardContent: chunk.Text, FullContent: chunk.Text,
+		})
+	}
+	return out, nil
+}
+
 // termForms returns a query term plus light morphological stems, so an inflected
 // query word still matches a base-form symbol name under substring matching:
 // "indexing" -> "index" (indexWithOptions), "parsed" -> "pars" (parseFile),

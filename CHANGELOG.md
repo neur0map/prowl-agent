@@ -7,6 +7,16 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `context`/`search_context` now matches queries against file paths, not just
+  symbols and chunk text. Developers name files after their purpose, so the path
+  is deterministic concept context (the code-native form of contextual
+  retrieval): a query like "project persistence" now finds `projectPersistence.ts`
+  even when the file's body never repeats its own name. A file whose basename
+  carries the query's concept terms is recalled and ranked up; the gate requires
+  two distinct terms for multi-word queries so incidental single-term hits don't
+  flood results. Found by dogfooding a TS repo where `projectPersistence.ts` was a
+  total recall miss; the retrieval benchmark is unchanged (recall 1.0).
+
 - `doctor` now flags a language that is present on disk but unindexed -- almost
   always a `languages` filter in `.prowl/config.toml` that omits the repo's real
   stack (e.g. a Go project carrying a config copied from a QML/rice setup), which

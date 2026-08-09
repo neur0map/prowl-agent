@@ -20,6 +20,7 @@ type Candidate struct {
 	LowSignal       bool
 	LowSignalClass  string
 	SymbolMatch     bool
+	PathMatch       bool
 }
 
 // SemanticReranker optionally assigns normalized relevance scores. Implementations
@@ -102,6 +103,10 @@ func RankCandidates(candidates []Candidate) []Candidate {
 		if candidate.SymbolMatch && !candidate.DirectMatch && !candidate.LowSignal {
 			score += symbolMatchBoost
 			reasons = append(reasons, "defines a symbol matching the query")
+		}
+		if candidate.PathMatch && !candidate.DirectMatch && !candidate.LowSignal {
+			score += pathMatchBoost
+			reasons = append(reasons, "file path names the query concept")
 		}
 		candidate.WhySelected = uniqueStrings(reasons)
 		ranked = append(ranked, scored{candidate: candidate, score: score})

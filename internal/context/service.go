@@ -69,7 +69,19 @@ func (service *Service) Search(request Request) (packet Packet, err error) {
 		return Packet{}, err
 	}
 	candidates := append(append(curated, sources...), graph...)
+	covered := map[string]bool{}
+	for _, candidate := range candidates {
+		if len(candidate.Citations) > 0 {
+			covered[candidate.Citations[0].Path] = true
+		}
+	}
+	paths, err := pathCandidates(service.Store, request.Question, covered, 8)
+	if err != nil {
+		return Packet{}, err
+	}
+	candidates = append(candidates, paths...)
 	applySymbolMatch(candidates, service.Store, request.Question)
+	applyPathMatch(candidates, request.Question)
 	reranker := service.Reranker
 	if request.Reranker != nil {
 		reranker = request.Reranker

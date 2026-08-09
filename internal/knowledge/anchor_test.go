@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 )
 
 func TestHashRegionNormalizesLineEndings(t *testing.T) {
@@ -87,7 +89,7 @@ func TestFillMissingAnchorHashes(t *testing.T) {
 		{Path: "pkg/foo.go", LineStart: 3, LineEnd: 3, ContentHash: "sha256:keep"},
 		{Path: "pkg/missing.go", LineStart: 1, LineEnd: 1},
 	}}}
-	FillMissingAnchorHashes(doc, root)
+	FillMissingAnchorHashes(doc, root, nil)
 	want, err := HashRegion([]byte(body), 1, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -100,5 +102,48 @@ func TestFillMissingAnchorHashes(t *testing.T) {
 	}
 	if got := doc.Prowl.Anchors[2].ContentHash; got != "" {
 		t.Errorf("unreadable-path anchor got a hash: %q", got)
+	}
+}
+
+// TestSymbolAnchorTracksLineShift proves a symbol-based anchor re-resolves its
+// line range from the current source, so inserting lines above the symbol does
+// not stale it, while changing the symbol's body does.
+func TestSymbolAnchorTracksLineShift(t *testing.T) {
+	root := t.TempDir()
+	resolve := func(path string, data []byte, symbol string) (int, int, bool) {
+		return extract.SymbolRange(path, data, symbol)
+	}
+	orig := "package foo\n\nfunc Foo() {\n\treturn\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := &Document{Prowl: Metadata{Anchors: []Anchor{{Path: "foo.go", Symbol: "Foo"}}}}
+	FillMissingAnchorHashes(doc, root, resolve)
+	anchor := doc.Prowl.Anchors[0]
+	if anchor.ContentHash == "" {
+		t.Fatal("symbol anchor was not filled")
+	}
+
+	// Insert a line above the symbol: line range shifts, symbol body is unchanged.
+	shifted := "package foo\n\nvar x = 1\n\nfunc Foo() {\n\treturn\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte(shifted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckAnchorResolved(root, anchor, resolve); got.Status != AnchorCurrent {
+		t.Errorf("symbol anchor staled on line shift: status=%v msg=%q", got.Status, got.Message)
+	}
+	// A line-range anchor over the original range would false-stale here.
+	rangeAnchor := Anchor{Path: "foo.go", LineStart: 3, LineEnd: 5, ContentHash: anchor.ContentHash}
+	if got := CheckAnchorResolved(root, rangeAnchor, nil); got.Status != AnchorStale {
+		t.Errorf("line-range control should have staled on shift: status=%v", got.Status)
+	}
+
+	// Change the symbol body: the symbol anchor must stale.
+	changed := "package foo\n\nvar x = 1\n\nfunc Foo() {\n\tpanic(\"x\")\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckAnchorResolved(root, anchor, resolve); got.Status != AnchorStale {
+		t.Errorf("symbol anchor did not stale on body change: status=%v", got.Status)
 	}
 }

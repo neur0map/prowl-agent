@@ -163,8 +163,10 @@ prowl-agent knowledge export ./knowledge-export
 ```
 
 Every proposal shows a deterministic diff before acceptance. Source anchors flag
-stale evidence when the code region they point at changes. Unknown OKF v0.1 fields
-and future concept types round-trip without loss.
+stale evidence when the code region they point at changes; anchor a claim to a
+`symbol` (function/class/component) and it tracks that symbol across line shifts,
+staling only when its body changes. Unknown OKF v0.1 fields and future concept
+types round-trip without loss.
 
 See [Durable knowledge and OKF](docs/KNOWLEDGE.md) for the storage contract,
 review lifecycle, lint codes, and migration safeguards.

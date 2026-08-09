@@ -14,6 +14,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
+	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
@@ -174,7 +175,7 @@ func newKnowledgeLintCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			findings, err := repo.Lint(ws.Root)
+			findings, err := repo.Lint(ws.Root, extract.SymbolRange)
 			if err != nil {
 				return err
 			}
@@ -211,7 +212,7 @@ func newKnowledgeProposeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			proposal, diff, err := inbox.Propose(file, target, author, ws.Root, time.Now().UTC())
+			proposal, diff, err := inbox.Propose(file, target, author, ws.Root, extract.SymbolRange, time.Now().UTC())
 			if err != nil {
 				return err
 			}

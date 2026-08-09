@@ -7,6 +7,15 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Knowledge source anchors can pin to a `symbol` (a function/class/component name)
+  instead of a fixed `line_start`/`line_end`. A symbol anchor re-resolves the
+  symbol's current range from the extractor on every `knowledge propose`/`lint`
+  and hashes that, so it tracks the symbol across line shifts and stales only
+  when the symbol's body changes. Previously line-range anchors false-flagged
+  `stale_anchor` whenever any line was inserted above the anchored region. The
+  `Anchor.Symbol` field already existed in the model but was never resolved; it
+  is now wired through `CheckAnchorResolved` and the CLI/MCP propose + lint paths.
+
 - An `agent-skills` setup integration installs prowl's skills into `.agents/skills/`,
   the harness-agnostic Agent Skills standard location (agentskills.io) that Prime
   Agent and other standard-compliant harnesses discover -- not just the per-client

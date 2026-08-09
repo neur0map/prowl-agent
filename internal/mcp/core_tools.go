@@ -14,6 +14,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/capability"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
+	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 )
 
@@ -232,7 +233,7 @@ func (h *handlers) proposeKnowledge(ctx context.Context, request *sdk.CallToolRe
 		return nil, proposalOut{}, err
 	}
 	inbox := knowledge.NewReviewInbox(filepath.Join(filepath.Dir(h.knowledge.Root), "proposals"), h.knowledge)
-	proposal, diff, err := inbox.Propose(stagedPath, in.Target, in.Author, h.root, time.Now())
+	proposal, diff, err := inbox.Propose(stagedPath, in.Target, in.Author, h.root, extract.SymbolRange, time.Now())
 	return resourceLinkResult(knowledgeIndexLink()), proposalOut{Proposal: proposal, Diff: diff}, err
 }
 
@@ -266,7 +267,7 @@ func (h *handlers) validateKnowledge(_ context.Context, _ *sdk.CallToolRequest, 
 	if h.knowledge == nil {
 		return nil, findingsOut{Findings: []knowledge.Finding{}}, fmt.Errorf("knowledge repository unavailable")
 	}
-	findings, err := h.knowledge.Lint(h.root)
+	findings, err := h.knowledge.Lint(h.root, extract.SymbolRange)
 	return resourceLinkResult(knowledgeIndexLink()), findingsOut{Findings: findings}, err
 }
 

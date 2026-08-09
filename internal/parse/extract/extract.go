@@ -69,6 +69,29 @@ func For(lang string) (Extractor, bool) {
 	return nil, false
 }
 
+// SymbolRange returns the 1-based inclusive line range of the first symbol named
+// `symbol` in data, detecting the language from path + content. It lets a caller
+// resolve a symbol-based source anchor to the symbol's CURRENT range, so the
+// anchor tracks the symbol across line shifts and stales only when its body
+// changes. ok is false when the language has no extractor or no such symbol.
+func SymbolRange(path string, data []byte, symbol string) (int, int, bool) {
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	ex, ok := For(parse.Detect(path, head))
+	if !ok {
+		return 0, 0, false
+	}
+	res, _ := ex.Extract(data)
+	for _, s := range res.Symbols {
+		if s.Name == symbol {
+			return s.StartLine, s.EndLine, true
+		}
+	}
+	return 0, 0, false
+}
+
 // capture is a named capture node from a query match.
 type capture struct {
 	Name string

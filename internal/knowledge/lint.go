@@ -24,7 +24,7 @@ type Finding struct {
 
 // Lint validates a bundle permissively. Malformed documents and stale evidence
 // become findings; one bad concept does not make the rest unreadable.
-func (r *Repository) Lint(sourceRoot string) ([]Finding, error) {
+func (r *Repository) Lint(sourceRoot string, resolve SymbolResolver) ([]Finding, error) {
 	type parsed struct {
 		doc   *Document
 		links []string
@@ -108,10 +108,14 @@ func (r *Repository) Lint(sourceRoot string) ([]Finding, error) {
 			}
 		}
 		for _, anchor := range doc.Prowl.Anchors {
-			check := CheckAnchor(sourceRoot, anchor)
+			check := CheckAnchorResolved(sourceRoot, anchor, resolve)
 			switch check.Status {
 			case AnchorStale:
-				findings = append(findings, Finding{Code: "knowledge.stale_anchor", Severity: "warning", Path: doc.Path, Message: fmt.Sprintf("%s:%d-%d changed", anchor.Path, anchor.LineStart, anchor.LineEnd)})
+				where := fmt.Sprintf("%s:%d-%d", anchor.Path, anchor.LineStart, anchor.LineEnd)
+				if anchor.Symbol != "" {
+					where = fmt.Sprintf("%s (symbol %s)", anchor.Path, anchor.Symbol)
+				}
+				findings = append(findings, Finding{Code: "knowledge.stale_anchor", Severity: "warning", Path: doc.Path, Message: where + " changed"})
 			case AnchorMissing:
 				findings = append(findings, Finding{Code: "knowledge.missing_anchor", Severity: "warning", Path: doc.Path, Message: fmt.Sprintf("source is missing: %s", anchor.Path)})
 			case AnchorInvalid:

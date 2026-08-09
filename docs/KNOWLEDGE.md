@@ -93,7 +93,21 @@ Lint findings use stable namespaced codes and include:
 - `knowledge.invalid_anchor`
 - `knowledge.missing_evidence`
 
-Source anchor hashes are SHA-256 over a 1-based inclusive line range. CRLF and LF normalize to LF, and the final newline does not affect the digest. Changes elsewhere in the file do not stale the anchor; changes inside the selected region do.
+A source anchor pins a claim to code in one of two ways:
+
+- **Line range** (`line_start`/`line_end`, 1-based inclusive). Robust to edits
+  elsewhere in the file, but a line inserted *above* the region shifts it and
+  false-flags `stale_anchor`.
+- **Symbol** (`symbol: <name>`, a function/class/component). On every `propose`
+  and `lint` the symbol's current line range is re-resolved from the extractor
+  and hashed, so the anchor tracks the symbol across line shifts and stales only
+  when the symbol's own body changes. Prefer this for anchors to named code.
+
+Anchor hashes are SHA-256 over the region; CRLF and LF normalize to LF, and the
+final newline does not affect the digest. You do not author the hash: when a
+candidate anchor gives only a `path` plus a `symbol` or line range and omits
+`content_hash`, `propose` computes it from the current source. An unreadable
+path or an unresolvable symbol is left for lint to report.
 
 ## Migration safety
 

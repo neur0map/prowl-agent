@@ -42,7 +42,7 @@ func TestProposalCreateDiffAcceptAndReject(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 23, 17, 0, 0, 0, time.UTC)
-	proposal, diff, err := inbox.Propose(candidate, "decisions/reviewed.md", "agent", "", now)
+	proposal, diff, err := inbox.Propose(candidate, "decisions/reviewed.md", "agent", "", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestProposalCreateDiffAcceptAndReject(t *testing.T) {
 	if err := os.WriteFile(rejectCandidate, []byte("---\ntype: Note\ntitle: Reject\n---\nNo.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rejectedProposal, _, err := inbox.Propose(rejectCandidate, "notes/reject.md", "agent", "", now)
+	rejectedProposal, _, err := inbox.Propose(rejectCandidate, "notes/reject.md", "agent", "", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestProposalCollisionLeavesProposalReviewable(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 23, 18, 0, 0, 0, time.UTC)
-	proposal, _, err := inbox.Propose(candidate, "collision.md", "", "", now)
+	proposal, _, err := inbox.Propose(candidate, "collision.md", "", "", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestProposalRejectsSymlinkTargetWithoutDisclosingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	inbox := knowledge.NewReviewInbox(filepath.Join(root, "proposals"), repo)
-	proposal, diff, err := inbox.Propose(candidate, "linked.md", "", "", time.Now())
+	proposal, diff, err := inbox.Propose(candidate, "linked.md", "", "", nil, time.Now())
 	if err == nil || proposal != nil || strings.Contains(diff, "TOP SECRET") {
 		t.Fatalf("symlink target proposal = %+v diff=%q err=%v", proposal, diff, err)
 	}
@@ -150,7 +150,7 @@ func TestProposalRejectsUnsafeTarget(t *testing.T) {
 	inbox := knowledge.NewReviewInbox(filepath.Join(root, "proposals"), repo)
 	candidate := filepath.Join(root, "candidate.md")
 	_ = os.WriteFile(candidate, []byte("---\ntype: Note\n---\n"), 0o644)
-	if _, _, err := inbox.Propose(candidate, "../outside.md", "", "", time.Now()); err == nil {
+	if _, _, err := inbox.Propose(candidate, "../outside.md", "", "", nil, time.Now()); err == nil {
 		t.Fatal("unsafe proposal path accepted")
 	}
 }
@@ -166,7 +166,7 @@ func TestProposalAcceptRejectsIntermediateDirectorySymlinkSwap(t *testing.T) {
 	if err := os.WriteFile(candidate, []byte("---\ntype: Note\ntitle: Candidate\n---\nSafe.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := inbox.Propose(candidate, "nested/candidate.md", "", "", time.Now())
+	proposal, _, err := inbox.Propose(candidate, "nested/candidate.md", "", "", nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestProposalAcceptRejectsChangedUpdateBase(t *testing.T) {
 	if err := os.WriteFile(candidate, []byte("---\ntype: Note\ntitle: Proposed\n---\nProposed.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := inbox.Propose(candidate, "existing.md", "", "", time.Now())
+	proposal, _, err := inbox.Propose(candidate, "existing.md", "", "", nil, time.Now())
 	if err != nil || proposal.BaseHash == "" {
 		t.Fatalf("proposal = %+v err=%v", proposal, err)
 	}

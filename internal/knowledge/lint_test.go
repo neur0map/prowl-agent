@@ -37,7 +37,7 @@ func TestLintSurfacesHealthFindingsWithoutRejectingBundle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "source.txt"), []byte("one\nchanged region\nthree\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	findings, err := repo.Lint(root)
+	findings, err := repo.Lint(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestLintAcceptsUnknownTypesAndCurrentEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := knowledge.NewRepository(bundle, okfv01.Codec{})
-	findings, err := repo.Lint(root)
+	findings, err := repo.Lint(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,6 +25,14 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Indexing writes each file's symbols, resources, edges, and chunks with
+  batched multi-row INSERTs instead of one statement per row, collapsing the
+  per-row CGO and prepare round-trips that had become the dominant cold-index
+  cost. On a 1,413-file repo the cold index dropped from 6.7s to 2.9s (with the
+  earlier parallel-parse and query-cache work, 13.8s to 2.9s overall -- ~4.75x).
+  The published index is byte-identical (same symbols, edges, chunks, and
+  resolution); incremental reindex is unaffected.
+
 - Indexing compiles each language's tree-sitter query once per process and
   caches the compiled grammar, instead of recompiling the query on every file.
   Query compilation was ~42% of indexing CPU (it ran once per file); caching it

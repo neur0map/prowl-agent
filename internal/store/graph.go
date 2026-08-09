@@ -41,20 +41,44 @@ func (s *Store) ReplaceFileGraph(fileID int64, syms []Symbol, res []Resource, ed
 		if err := deleteFileChildren(tx, fileID); err != nil {
 			return err
 		}
+		// Batch the row inserts: multi-row statements collapse the per-row CGO and
+		// prepare round-trips (the dominant cold-index cost on a large tree) into
+		// one per group. Symbol ids are read back by name afterward instead of via
+		// per-row LastInsertId; SQLite assigns contiguous rowids in VALUES order, so
+		// the id-by-insertion-order mapping (first wins on duplicate names) holds.
+		if err := batchInsert(tx,
+			`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity) VALUES `,
+			`(?,?,?,?,?,?,?)`, 7, len(syms), func(i int) []any {
+				sym := syms[i]
+				return []any{fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity}
+			}); err != nil {
+			return err
+		}
 
 		nameToID := make(map[string]int64, len(syms))
-		for _, sym := range syms {
-			r, err := tx.Exec(
-				`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity) VALUES(?,?,?,?,?,?,?)`,
-				fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity)
+		if len(syms) > 0 {
+			rows, err := tx.Query(`SELECT id, name FROM symbols WHERE file_id=? ORDER BY id`, fileID)
 			if err != nil {
 				return err
 			}
-			id, _ := r.LastInsertId()
-			if _, dup := nameToID[sym.Name]; !dup {
-				nameToID[sym.Name] = id
+			for rows.Next() {
+				var id int64
+				var name string
+				if err := rows.Scan(&id, &name); err != nil {
+					rows.Close()
+					return err
+				}
+				if _, dup := nameToID[name]; !dup {
+					nameToID[name] = id
+				}
 			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			rows.Close() // must fully close before further writes on the same tx
 		}
+
 		for _, sym := range syms {
 			if sym.ParentName == "" {
 				continue
@@ -66,33 +90,73 @@ func (s *Store) ReplaceFileGraph(fileID int64, syms []Symbol, res []Resource, ed
 				}
 			}
 		}
-		for _, rsc := range res {
-			if _, err := tx.Exec(`INSERT INTO resources(kind,name,value,file_id,line) VALUES(?,?,?,?,?)`,
-				rsc.Kind, nullStr(rsc.Name), nullStr(rsc.Value), fileID, rsc.Line); err != nil {
-				return err
-			}
+
+		if err := batchInsert(tx,
+			`INSERT INTO resources(kind,name,value,file_id,line) VALUES `,
+			`(?,?,?,?,?)`, 5, len(res), func(i int) []any {
+				rsc := res[i]
+				return []any{rsc.Kind, nullStr(rsc.Name), nullStr(rsc.Value), fileID, rsc.Line}
+			}); err != nil {
+			return err
 		}
-		for _, e := range edges {
-			srcType, srcID := "file", fileID
-			if e.SrcName != "" {
-				if id, ok := nameToID[e.SrcName]; ok {
-					srcType, srcID = "symbol", id
+
+		if err := batchInsert(tx,
+			`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw) VALUES `,
+			`(?,?,NULL,NULL,?,?,?,0,?)`, 6, len(edges), func(i int) []any {
+				e := edges[i]
+				srcType, srcID := "file", fileID
+				if e.SrcName != "" {
+					if id, ok := nameToID[e.SrcName]; ok {
+						srcType, srcID = "symbol", id
+					}
 				}
-			}
-			if _, err := tx.Exec(
-				`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,file_id,line,resolved,raw) VALUES(?,?,NULL,NULL,?,?,?,0,?)`,
-				srcType, srcID, e.Kind, fileID, e.Line, e.Raw); err != nil {
-				return err
-			}
+				return []any{srcType, srcID, e.Kind, fileID, e.Line, e.Raw}
+			}); err != nil {
+			return err
 		}
-		for _, c := range chunks {
-			if _, err := tx.Exec(`INSERT INTO chunks(file_id,start_line,end_line,text) VALUES(?,?,?,?)`,
-				fileID, c.StartLine, c.EndLine, c.Text); err != nil {
-				return err
-			}
-		}
-		return nil
+
+		return batchInsert(tx,
+			`INSERT INTO chunks(file_id,start_line,end_line,text) VALUES `,
+			`(?,?,?,?)`, 4, len(chunks), func(i int) []any {
+				c := chunks[i]
+				return []any{fileID, c.StartLine, c.EndLine, c.Text}
+			})
 	})
+}
+
+// batchInsert executes prefix + VALUES for n rows as multi-row statements, each
+// bounded to a conservative SQLite parameter limit so no single statement
+// exceeds it. group is one row's placeholder list (e.g. "(?,?,?)"); argsPerRow
+// is the number of ? it contains; row(i) returns row i's bound values in order.
+func batchInsert(tx writeRunner, prefix, group string, argsPerRow, n int, row func(i int) []any) error {
+	if n == 0 {
+		return nil
+	}
+	const maxParams = 900 // safe under SQLite's historical 999-variable floor
+	perBatch := maxParams / argsPerRow
+	if perBatch < 1 {
+		perBatch = 1
+	}
+	for start := 0; start < n; start += perBatch {
+		end := start + perBatch
+		if end > n {
+			end = n
+		}
+		var sb strings.Builder
+		sb.WriteString(prefix)
+		vals := make([]any, 0, (end-start)*argsPerRow)
+		for i := start; i < end; i++ {
+			if i > start {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(group)
+			vals = append(vals, row(i)...)
+		}
+		if _, err := tx.Exec(sb.String(), vals...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SymbolHit is a search/lookup result for a symbol. Signature and EndLine are

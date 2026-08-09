@@ -42,6 +42,7 @@ type sqlRunner interface {
 
 type writeRunner interface {
 	Exec(string, ...any) (sql.Result, error)
+	Query(string, ...any) (*sql.Rows, error)
 	Prepare(string) (*sql.Stmt, error)
 	QueryRow(string, ...any) *sql.Row
 }

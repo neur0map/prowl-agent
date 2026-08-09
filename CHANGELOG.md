@@ -25,6 +25,15 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `context`/`search_context` ranking now matches inflected query words to
+  base-form symbol names when awarding the symbol-authority boost: "how are
+  files parsed in parallel during indexing" now recognizes that `index.go`
+  defines `parseFile`/`indexWithOptions` (via light stemming -- "parsed"->"pars",
+  "indexing"->"index", "files"->"file"), so the file that actually defines the
+  queried concept ranks first instead of a file with only a coincidental plural
+  match. Found by dogfooding on a Go codebase; the retrieval benchmark is
+  unchanged (recall 1.0).
+
 - Indexing writes each file's symbols, resources, edges, and chunks with
   batched multi-row INSERTs instead of one statement per row, collapsing the
   per-row CGO and prepare round-trips that had become the dominant cold-index

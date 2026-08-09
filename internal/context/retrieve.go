@@ -112,15 +112,17 @@ func applySymbolMatch(candidates []Candidate, target *store.Store, query string)
 	}
 	files := map[string]bool{}
 	for _, term := range queryTerms(query) {
-		if len(term) < 4 {
-			continue
-		}
-		hits, err := target.SymbolsBySubstring(term, 50)
-		if err != nil {
-			continue
-		}
-		for _, h := range hits {
-			files[h.File] = true
+		for _, form := range termForms(term) {
+			if len(form) < 4 {
+				continue
+			}
+			hits, err := target.SymbolsBySubstring(form, 50)
+			if err != nil {
+				continue
+			}
+			for _, h := range hits {
+				files[h.File] = true
+			}
 		}
 	}
 	if len(files) == 0 {
@@ -131,6 +133,22 @@ func applySymbolMatch(candidates []Candidate, target *store.Store, query string)
 			candidates[i].SymbolMatch = true
 		}
 	}
+}
+
+// termForms returns a query term plus light morphological stems, so an inflected
+// query word still matches a base-form symbol name under substring matching:
+// "indexing" -> "index" (indexWithOptions), "parsed" -> "pars" (parseFile),
+// "files" -> "file" (parseFile). Substring matching means an approximate stem
+// still hits; forms shorter than 4 chars are dropped by the caller to avoid
+// matching common fragments.
+func termForms(term string) []string {
+	forms := []string{term}
+	for _, suf := range []string{"ing", "ed", "es", "s"} {
+		if strings.HasSuffix(term, suf) {
+			forms = append(forms, term[:len(term)-len(suf)])
+		}
+	}
+	return forms
 }
 
 func graphCandidates(target *store.Store, direct []Candidate, limit int) ([]Candidate, error) {

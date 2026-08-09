@@ -54,6 +54,16 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Package/namespace imports that resolve to an in-repo target (Go packages, C#
+  and Elixir namespaces) are now marked resolved instead of being left as
+  unresolved import edges. They fan out to per-file `pkg` edges for
+  callers/impact, but the originating import edge stayed `resolved:false` -- so
+  `callees` showed a file's own internal dependencies as unresolved (identical to
+  external stdlib), and the dangling-edge count was inflated. On prowl-agent's Go
+  tree this cut false danglings by 251 (1,334 -> 1,083) and `callees` now marks
+  internal imports `resolved:true`; `callers`/impact counts are unchanged (the
+  import is resolved to a non-file target, so it is not double-counted).
+
 - `--format json` now renders an empty result as `[]` instead of `null` (and
   TOON as an empty collection). An agent consuming prowl programmatically -- the
   norm in REPL / programmatic-tool-calling harnesses -- can iterate a `find`,

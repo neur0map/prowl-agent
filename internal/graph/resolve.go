@@ -659,18 +659,38 @@ func resolveNamespaceImports(s *store.Store, byID map[int64]store.File, lang str
 		return err
 	}
 	var pkgEdges []store.PkgEdge
+	var resolvedImports []int64
 	for _, e := range inc {
 		if byID[e.FileID].Lang != lang {
 			continue
 		}
+		resolvedToNamespace := false
 		for _, dst := range nsFiles[e.Raw] {
-			if dst == e.FileID || byID[dst].Lang != lang {
+			if byID[dst].Lang != lang {
+				continue
+			}
+			resolvedToNamespace = true // the import names an in-repo namespace
+			if dst == e.FileID {
 				continue
 			}
 			pkgEdges = append(pkgEdges, store.PkgEdge{FileID: e.FileID, DstFileID: dst, Line: e.Line, Raw: e.Raw})
 		}
+		if resolvedToNamespace {
+			// Mark the import resolved (non-"file" dst type, like Go packages) so it
+			// is not miscounted as dangling and callees shows it as an internal
+			// dependency, while the per-file "pkg" fan-out stays the caller source.
+			resolvedImports = append(resolvedImports, e.ID)
+		}
 	}
-	return s.AddPackageEdges(pkgEdges)
+	if err := s.AddPackageEdges(pkgEdges); err != nil {
+		return err
+	}
+	for _, id := range resolvedImports {
+		if err := s.SetEdgeResolved(id, "package", 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveGoPackages materializes Go package dependencies. A Go file importing an
@@ -695,6 +715,7 @@ func resolveGoPackages(s *store.Store, files []store.File, byID map[int64]store.
 		return err
 	}
 	var pkgEdges []store.PkgEdge
+	var resolvedImports []int64
 	for _, e := range inc {
 		if byID[e.FileID].Lang != "go" {
 			continue
@@ -703,6 +724,15 @@ func resolveGoPackages(s *store.Store, files []store.File, byID map[int64]store.
 		if !ok {
 			continue // stdlib or external import
 		}
+		if len(goDirFiles[dir]) == 0 {
+			continue // in-module path but no indexed files; leave unresolved
+		}
+		// The import resolved to an in-repo package. Mark the originating
+		// includes edge resolved (so it is not miscounted as dangling and callees
+		// shows it as an internal dependency) using a non-"file" dst type, so the
+		// per-file "pkg" fan-out below stays the single source of file-level
+		// caller/impact edges and callers are not double-counted.
+		resolvedImports = append(resolvedImports, e.ID)
 		for _, dst := range goDirFiles[dir] {
 			if dst == e.FileID {
 				continue
@@ -710,7 +740,15 @@ func resolveGoPackages(s *store.Store, files []store.File, byID map[int64]store.
 			pkgEdges = append(pkgEdges, store.PkgEdge{FileID: e.FileID, DstFileID: dst, Line: e.Line, Raw: e.Raw})
 		}
 	}
-	return s.AddPackageEdges(pkgEdges)
+	if err := s.AddPackageEdges(pkgEdges); err != nil {
+		return err
+	}
+	for _, id := range resolvedImports {
+		if err := s.SetEdgeResolved(id, "package", 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // moduleImportDir maps an in-module Go import path to its repo-relative package

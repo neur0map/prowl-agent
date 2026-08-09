@@ -63,6 +63,19 @@ func TestResolveGoPackages(t *testing.T) {
 	if !fmtUnresolved {
 		t.Fatalf("stdlib import fmt should remain unresolved, got %+v", dang)
 	}
+	// The in-module import is marked resolved (not dangling), so it is distinct
+	// from stdlib and callees shows it as an internal dependency.
+	for _, e := range dang {
+		if e.Raw == "example.com/proj/internal/store" {
+			t.Fatalf("in-module import should be resolved, still unresolved: %+v", e)
+		}
+	}
+	// Resolving the import must not double-count callers: the store file has
+	// exactly one incoming dependency edge from the importer (the pkg fan-out),
+	// not also a resolved includes edge to the same file.
+	if in, _ := s.IncomingEdges("file", st2, "includes", "pkg"); len(in) != 1 {
+		t.Fatalf("store file incoming dep edges = %d, want 1 (pkg only, no double-count): %+v", len(in), in)
+	}
 }
 
 func TestResolveGoPackagesNoModule(t *testing.T) {

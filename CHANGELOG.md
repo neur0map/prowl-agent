@@ -7,6 +7,15 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- `search` (and the `similar_code` / `smart_search` MCP tools) now surface files
+  whose path names the concept. It ranked purely by full-text over chunk bodies,
+  so a file literally named `stash-download.sh` never surfaced for "download" if
+  another file merely mentioned the word more often, and an exact-token search
+  for "downloader" missed the file's "download" entirely. Search now injects
+  files whose path matches the query terms (lightly stemmed, so "downloader"
+  finds `download`) and floats path-named matches to the top of their tier, so
+  the file that implements what you searched for leads instead of tangential
+  mentions.
 - `init` no longer reports "0 symbols, 0 edges" on a re-init that changed nothing.
   The summary showed the incremental delta instead of the index totals; it now
   reports the real indexed files, symbols, and edges.

@@ -337,6 +337,53 @@ func (s *Store) SearchChunks(query string, limit int) ([]ChunkHit, error) {
 	return out, nil
 }
 
+// ChunksByPathTerms returns a representative (first) chunk for each file whose
+// path contains one of terms. It surfaces files named after the searched
+// concept -- stash-download.sh for "download" -- even when their content does
+// not lexically match the query, which pure FTS-over-text ranking misses.
+func (s *Store) ChunksByPathTerms(terms []string, limit int) ([]ChunkHit, error) {
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	where := make([]string, 0, len(terms))
+	args := make([]any, 0, len(terms)+1)
+	for _, t := range terms {
+		where = append(where, `lower(f.rel_path) LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+esc.Replace(strings.ToLower(t))+"%")
+	}
+	args = append(args, limit)
+	rows, err := s.sql().Query(`
+		SELECT f.rel_path, c.start_line, c.end_line, c.text
+		FROM files f JOIN chunks c ON c.file_id = f.id
+		WHERE (`+strings.Join(where, " OR ")+`)
+		  AND c.start_line = (SELECT min(c2.start_line) FROM chunks c2 WHERE c2.file_id = f.id)
+		ORDER BY f.rel_path LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChunkHit
+	for rows.Next() {
+		var h ChunkHit
+		var text string
+		if err := rows.Scan(&h.File, &h.StartLine, &h.EndLine, &text); err != nil {
+			return nil, err
+		}
+		for _, line := range strings.Split(text, "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				if len(t) > 100 {
+					t = t[:100]
+				}
+				h.Snippet = t
+				break
+			}
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // ftsMatchTiers returns FTS match strings in precision order: the exact phrase,
 // then all terms (AND), then any term (OR). Only multi-term queries add the
 // AND/OR tiers.

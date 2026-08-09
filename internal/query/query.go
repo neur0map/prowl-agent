@@ -819,13 +819,99 @@ func (q *Querier) searchChunksRanked(text string, limit int) ([]store.ChunkHit, 
 	if err != nil {
 		return nil, err
 	}
+	// Surface files whose path names the concept (stash-download.sh for
+	// "download"), even when their text does not match the exact query tokens --
+	// the case pure FTS-over-text ranking misses entirely, so the file never
+	// appears at any rank.
+	terms := conceptTerms(text)
+	if len(terms) > 0 {
+		if pathHits, perr := q.s.ChunksByPathTerms(terms, 40); perr == nil {
+			seen := make(map[string]bool, len(hits))
+			for _, h := range hits {
+				seen[h.File+"\x00"+strconv.Itoa(h.StartLine)] = true
+			}
+			for _, h := range pathHits {
+				if k := h.File + "\x00" + strconv.Itoa(h.StartLine); !seen[k] {
+					seen[k] = true
+					hits = append(hits, h)
+				}
+			}
+		}
+	}
+	// Rank project source first (tier), then float files whose path names the
+	// concept, keeping the FTS order within equal buckets.
 	sort.SliceStable(hits, func(i, j int) bool {
-		return searchTier(hits[i].File) < searchTier(hits[j].File)
+		if ti, tj := searchTier(hits[i].File), searchTier(hits[j].File); ti != tj {
+			return ti < tj
+		}
+		return pathConceptScore(terms, hits[i].File) > pathConceptScore(terms, hits[j].File)
 	})
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
 	return hits, nil
+}
+
+var searchStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "how": true, "does": true,
+	"this": true, "that": true, "from": true, "into": true, "use": true, "using": true,
+	"get": true, "set": true, "new": true, "add": true, "are": true, "was": true,
+	"you": true, "your": true, "what": true, "where": true, "when": true,
+}
+
+// conceptTerms extracts distinctive lowercase terms from a query, plus a light
+// stem of each (downloader -> download), for matching against file paths.
+func conceptTerms(text string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fields {
+		if len(f) < 3 || searchStopwords[f] {
+			continue
+		}
+		for _, v := range []string{f, stemTerm(f)} {
+			if len(v) >= 3 && !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// stemTerm strips a common English suffix, keeping a stem of at least 4 chars.
+func stemTerm(s string) string {
+	for _, suf := range []string{"ing", "ers", "er", "ed", "es", "s"} {
+		if strings.HasSuffix(s, suf) && len(s)-len(suf) >= 4 {
+			return s[:len(s)-len(suf)]
+		}
+	}
+	return s
+}
+
+// pathConceptScore scores how strongly a file path names the query concept: a
+// term in the basename counts double, a term elsewhere in the path counts one.
+func pathConceptScore(terms []string, path string) int {
+	if len(terms) == 0 {
+		return 0
+	}
+	lp := strings.ToLower(path)
+	base := lp
+	if i := strings.LastIndexByte(lp, '/'); i >= 0 {
+		base = lp[i+1:]
+	}
+	score := 0
+	for _, t := range terms {
+		switch {
+		case strings.Contains(base, t):
+			score += 2
+		case strings.Contains(lp, t):
+			score++
+		}
+	}
+	return score
 }
 
 // searchTier ranks a path for content search so a project's own implementation

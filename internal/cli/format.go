@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -86,6 +87,7 @@ func (o outputOptions) resolve(w io.Writer) (outputFormat, error) {
 // json:"-" exclusions). TOON then re-encodes that generic JSON value, so the
 // TOON and JSON outputs describe the identical data; TOON is just token-leaner.
 func formatValue(v any, format outputFormat) (string, error) {
+	v = normalizeEmptySlice(v)
 	data, err := json.Marshal(v)
 	if err != nil {
 		return "", err
@@ -108,6 +110,19 @@ func formatValue(v any, format outputFormat) (string, error) {
 		return "", err
 	}
 	return toon.MarshalString(generic)
+}
+
+// normalizeEmptySlice replaces a nil top-level result slice with an empty slice
+// of the same type, so JSON renders `[]` and TOON an empty collection instead of
+// `null`. An agent consuming `--format json` programmatically (the norm in REPL /
+// programmatic-tool-calling harnesses) can then iterate the result without a nil
+// guard -- `null` otherwise raises "not iterable" on an empty find/callers/search.
+func normalizeEmptySlice(v any) any {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && rv.IsNil() {
+		return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+	}
+	return v
 }
 
 func formatOverview(o query.Overview, markdown bool) string {

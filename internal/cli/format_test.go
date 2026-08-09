@@ -135,3 +135,25 @@ func TestFormatOverviewMarkdown(t *testing.T) {
 		t.Fatalf("unexpected markdown overview:\n%s", got)
 	}
 }
+
+// TestFormatValueEmptySliceIsBracket pins the programmatic-consumption contract:
+// a nil result slice must serialize as `[]`, never `null`, so an agent parsing
+// --format json in a REPL can iterate the result without a nil guard.
+func TestFormatValueEmptySliceIsBracket(t *testing.T) {
+	var empty []store.SymbolHit // nil slice, as an empty find returns
+	got, err := formatValue(empty, formatJSON)
+	if err != nil {
+		t.Fatalf("formatValue json: %v", err)
+	}
+	if got != "[]" {
+		t.Errorf("empty slice JSON = %q, want %q", got, "[]")
+	}
+	// A populated slice is unaffected.
+	got, err = formatValue([]store.SymbolHit{{ID: 1, Name: "x"}}, formatJSON)
+	if err != nil {
+		t.Fatalf("formatValue json: %v", err)
+	}
+	if !strings.HasPrefix(got, "[{") {
+		t.Errorf("populated slice JSON = %q, want a JSON array of objects", got)
+	}
+}

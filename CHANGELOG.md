@@ -44,6 +44,12 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `--format json` now renders an empty result as `[]` instead of `null` (and
+  TOON as an empty collection). An agent consuming prowl programmatically -- the
+  norm in REPL / programmatic-tool-calling harnesses -- can iterate a `find`,
+  `callers`, or `search` result directly without a nil guard; `null` previously
+  raised "not iterable" on any empty result. Populated results are unchanged.
+
 - Indexing now skips generated dependency lockfiles (`package-lock.json`,
   `go.sum`, `Cargo.lock`, `*.lock`, ...) and minified bundles (`*.min.js`,
   `*.map`) entirely. These carry no code-intelligence value but expand into

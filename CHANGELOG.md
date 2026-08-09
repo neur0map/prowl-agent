@@ -7,6 +7,19 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Knowledge can be captured from structured fields instead of hand-authored OKF.
+  `knowledge propose` takes `--type`, `--title`, `--body`/`--body-file`,
+  `--resource`, `--tag`, and `--anchor path#symbol` (or `path:start-end`), and the
+  `propose_knowledge_change` MCP tool takes the same fields; prowl assembles a
+  valid document and runs it through the normal review, diff, and anchor-hashing
+  path. This removes the need to know the OKF frontmatter layout to record a
+  decision or claim.
+- A candidate that places a prowl field (`anchors`, `status`, `confidence`,
+  `related`, `valid_from`, `valid_to`) at the top level instead of under `prowl:`
+  is now rejected with a clear error. It was previously parsed and the misplaced
+  field silently ignored, so an author could believe an anchor was recorded when
+  it was not.
+
 - Knowledge source anchors can pin to a `symbol` (function, class, or component
   name) instead of `line_start`/`line_end`. The symbol's range is re-resolved
   from the index on each `knowledge propose` and `lint`, so the anchor follows

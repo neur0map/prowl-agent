@@ -14,6 +14,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/capability"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
+	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/query"
 )
@@ -52,10 +53,23 @@ type contextGetIn struct {
 	BudgetBytes  int      `json:"budget_bytes,omitempty"`
 }
 
+type anchorIn struct {
+	Path      string `json:"path" jsonschema:"bundle-relative source path"`
+	Symbol    string `json:"symbol,omitempty" jsonschema:"symbol to track (preferred over a line range)"`
+	LineStart int    `json:"line_start,omitempty"`
+	LineEnd   int    `json:"line_end,omitempty"`
+}
+
 type proposalIn struct {
-	Target    string `json:"target" jsonschema:"bundle-relative destination path"`
-	Candidate string `json:"candidate" jsonschema:"complete OKF Markdown candidate"`
-	Author    string `json:"author,omitempty"`
+	Target    string     `json:"target" jsonschema:"bundle-relative destination path"`
+	Candidate string     `json:"candidate,omitempty" jsonschema:"complete OKF Markdown candidate; omit to author from the fields below"`
+	Type      string     `json:"type,omitempty" jsonschema:"candidate type when authoring from fields (Decision, Claim, ...)"`
+	Title     string     `json:"title,omitempty" jsonschema:"candidate title when authoring from fields"`
+	Body      string     `json:"body,omitempty" jsonschema:"candidate body text when authoring from fields"`
+	Resource  string     `json:"resource,omitempty" jsonschema:"resource evidence URI (e.g. file://path)"`
+	Tags      []string   `json:"tags,omitempty"`
+	Anchors   []anchorIn `json:"anchors,omitempty" jsonschema:"source anchors; each needs a path plus a symbol or line range"`
+	Author    string     `json:"author,omitempty"`
 }
 
 type capabilitySearchIn struct {
@@ -213,7 +227,21 @@ func (h *handlers) proposeKnowledge(ctx context.Context, request *sdk.CallToolRe
 	if h.knowledge == nil {
 		return nil, proposalOut{}, fmt.Errorf("knowledge repository unavailable")
 	}
-	if int64(len([]byte(in.Candidate))) > knowledge.MaxDocumentBytes {
+	candidate := in.Candidate
+	if candidate == "" {
+		anchors := make([]knowledge.Anchor, 0, len(in.Anchors))
+		for _, a := range in.Anchors {
+			anchors = append(anchors, knowledge.Anchor{Path: a.Path, Symbol: a.Symbol, LineStart: a.LineStart, LineEnd: a.LineEnd})
+		}
+		built, err := okfv01.BuildCandidate(okfv01.CaptureInput{
+			Type: in.Type, Title: in.Title, Body: in.Body, Resource: in.Resource, Tags: in.Tags, Anchors: anchors,
+		})
+		if err != nil {
+			return nil, proposalOut{}, err
+		}
+		candidate = string(built)
+	}
+	if int64(len(candidate)) > knowledge.MaxDocumentBytes {
 		return nil, proposalOut{}, fmt.Errorf("knowledge candidate exceeds %d bytes", knowledge.MaxDocumentBytes)
 	}
 	if err := approveProposal(ctx, request, in.Target); err != nil {
@@ -225,7 +253,7 @@ func (h *handlers) proposeKnowledge(ctx context.Context, request *sdk.CallToolRe
 	}
 	stagedPath := staged.Name()
 	defer os.Remove(stagedPath)
-	if _, err := staged.WriteString(in.Candidate); err != nil {
+	if _, err := staged.WriteString(candidate); err != nil {
 		staged.Close()
 		return nil, proposalOut{}, err
 	}

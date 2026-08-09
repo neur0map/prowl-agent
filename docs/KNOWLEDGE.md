@@ -68,6 +68,23 @@ prowl-agent knowledge reject <proposal-id>
 
 `propose` validates the candidate and prints a deterministic diff without modifying accepted knowledge. `accept` prints the same diff, writes atomically, appends `log.md`, refreshes the marker-owned index, and only then marks the proposal accepted. Destination collisions are refused. A failed later write restores the prior accepted document, index, and log.
 
+Instead of authoring the OKF file, pass the fields and prowl assembles it:
+
+```bash
+prowl-agent knowledge propose \
+  --type Claim \
+  --title "Foo guards empty input" \
+  --body "Foo returns early when input is empty." \
+  --anchor internal/foo/foo.go#Foo \
+  --target claims/foo.md
+```
+
+`--anchor` takes `path#symbol` (tracks the symbol) or `path:start-end`. The same
+fields are available on the `propose_knowledge_change` MCP tool. A candidate that
+puts a prowl field (`anchors`, `status`, `confidence`, `related`, `valid_from`,
+`valid_to`) at the top level instead of under `prowl:` is rejected rather than
+silently ignored.
+
 ## Inspect and validate
 
 ```bash

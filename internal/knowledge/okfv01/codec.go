@@ -39,6 +39,9 @@ func (Codec) Parse(path string, data []byte) (*knowledge.Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", clean, err)
 	}
+	if err := checkMisplacedProwlFields(mapping); err != nil {
+		return nil, fmt.Errorf("%s: %w", clean, err)
+	}
 	doc := &knowledge.Document{
 		Path: clean, Body: append([]byte(nil), body...), Frontmatter: cloneNode(&root),
 		Type: scalar(mapping, "type"), Title: scalar(mapping, "title"),
@@ -109,6 +112,23 @@ func (Codec) Marshal(doc *knowledge.Document) ([]byte, error) {
 	out.WriteString("---\n")
 	out.Write(doc.Body)
 	return out.Bytes(), nil
+}
+
+// prowlNamespacedFields are OKF fields that must live under `prowl:`. Finding one
+// at the top level is almost always a nesting mistake that the codec would
+// otherwise ignore silently, dropping the author's intent, so it is rejected.
+var prowlNamespacedFields = map[string]bool{
+	"anchors": true, "status": true, "confidence": true,
+	"valid_from": true, "valid_to": true, "related": true,
+}
+
+func checkMisplacedProwlFields(mapping *yaml.Node) error {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if key := mapping.Content[i].Value; prowlNamespacedFields[key] {
+			return fmt.Errorf("field %q must be nested under `prowl:`, not at the top level", key)
+		}
+	}
+	return nil
 }
 
 func safePath(path string) (string, error) {

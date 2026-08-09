@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -199,11 +201,52 @@ func newKnowledgeLintCmd() *cobra.Command {
 func newKnowledgeProposeCmd() *cobra.Command {
 	var file, target, author string
 	var asJSON bool
+	var kind, title, body, bodyFile, resource string
+	var tags, anchorFlags []string
 	command := &cobra.Command{
 		Use: "propose", Short: "Add a validated candidate to the review inbox",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if file == "" {
-				return fmt.Errorf("--file is required")
+			structured := kind != "" || title != "" || body != "" || bodyFile != "" || resource != "" || len(tags) > 0 || len(anchorFlags) > 0
+			switch {
+			case file == "" && !structured:
+				return fmt.Errorf("provide --file, or --type and --title to author a candidate inline")
+			case file != "" && structured:
+				return fmt.Errorf("use --file or the inline authoring flags, not both")
+			}
+			if structured {
+				if target == "" {
+					return fmt.Errorf("--target is required when authoring a candidate inline")
+				}
+				if bodyFile != "" {
+					raw, err := os.ReadFile(bodyFile)
+					if err != nil {
+						return err
+					}
+					body = string(raw)
+				}
+				anchors, err := parseAnchorFlags(anchorFlags)
+				if err != nil {
+					return err
+				}
+				candidate, err := okfv01.BuildCandidate(okfv01.CaptureInput{
+					Type: kind, Title: title, Body: body, Resource: resource, Tags: tags, Anchors: anchors,
+				})
+				if err != nil {
+					return err
+				}
+				tmp, err := os.CreateTemp("", ".prowl-candidate-*.md")
+				if err != nil {
+					return err
+				}
+				file = tmp.Name()
+				defer os.Remove(file)
+				if _, err := tmp.Write(candidate); err != nil {
+					tmp.Close()
+					return err
+				}
+				if err := tmp.Close(); err != nil {
+					return err
+				}
 			}
 			if target == "" {
 				target = filepath.Base(file)
@@ -226,8 +269,61 @@ func newKnowledgeProposeCmd() *cobra.Command {
 	command.Flags().StringVar(&file, "file", "", "candidate OKF Markdown file")
 	command.Flags().StringVar(&target, "target", "", "bundle-relative destination path")
 	command.Flags().StringVar(&author, "author", "", "proposal author or source")
+	command.Flags().StringVar(&kind, "type", "", "candidate type when authoring inline (Decision, Claim, ...)")
+	command.Flags().StringVar(&title, "title", "", "candidate title when authoring inline")
+	command.Flags().StringVar(&body, "body", "", "candidate body text when authoring inline")
+	command.Flags().StringVar(&bodyFile, "body-file", "", "read candidate body from a file when authoring inline")
+	command.Flags().StringVar(&resource, "resource", "", "resource evidence URI (e.g. file://path) when authoring inline")
+	command.Flags().StringSliceVar(&tags, "tag", nil, "candidate tag when authoring inline (repeatable)")
+	command.Flags().StringArrayVar(&anchorFlags, "anchor", nil, "source anchor as path#symbol or path:start-end (repeatable)")
 	command.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return command
+}
+
+// parseAnchorFlags turns --anchor strings into anchors. Each is either
+// path#symbol (tracks the symbol) or path:start-end / path:line (a line range).
+func parseAnchorFlags(flags []string) ([]knowledge.Anchor, error) {
+	anchors := make([]knowledge.Anchor, 0, len(flags))
+	for _, raw := range flags {
+		if i := strings.LastIndex(raw, "#"); i >= 0 {
+			path, symbol := raw[:i], raw[i+1:]
+			if path == "" || symbol == "" {
+				return nil, fmt.Errorf("invalid anchor %q: want path#symbol", raw)
+			}
+			anchors = append(anchors, knowledge.Anchor{Path: path, Symbol: symbol})
+			continue
+		}
+		if i := strings.LastIndex(raw, ":"); i >= 0 {
+			path, span := raw[:i], raw[i+1:]
+			start, end, err := parseLineSpan(span)
+			if path == "" || err != nil {
+				return nil, fmt.Errorf("invalid anchor %q: want path:start-end", raw)
+			}
+			anchors = append(anchors, knowledge.Anchor{Path: path, LineStart: start, LineEnd: end})
+			continue
+		}
+		return nil, fmt.Errorf("invalid anchor %q: want path#symbol or path:start-end", raw)
+	}
+	return anchors, nil
+}
+
+func parseLineSpan(span string) (int, int, error) {
+	if lo, hi, ok := strings.Cut(span, "-"); ok {
+		start, err := strconv.Atoi(lo)
+		if err != nil {
+			return 0, 0, err
+		}
+		end, err := strconv.Atoi(hi)
+		if err != nil {
+			return 0, 0, err
+		}
+		return start, end, nil
+	}
+	line, err := strconv.Atoi(span)
+	if err != nil {
+		return 0, 0, err
+	}
+	return line, line, nil
 }
 
 func newKnowledgeAcceptCmd() *cobra.Command {

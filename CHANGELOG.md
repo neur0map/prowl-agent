@@ -16,7 +16,10 @@ All notable changes are recorded here. The format follows
   queries library docs without pulling whole pages into context. Retrieval needs no
   model. Crawled content is untrusted, so pages containing prompt-injection
   directives are quarantined out of the searchable corpus. `docs list` and
-  `docs remove` manage sources.
+  `docs remove` manage sources. When a site publishes an `llms.txt` / `llms-full.txt`
+  (the agent-friendly documentation convention), `docs add` uses it directly: one
+  fetch of the whole docs as Markdown, or the curated page list, instead of
+  crawling navigation. `--no-llms` forces a plain crawl.
 
 - Knowledge can be captured from structured fields instead of hand-authored OKF.
   `knowledge propose` takes `--type`, `--title`, `--body`/`--body-file`,

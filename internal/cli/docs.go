@@ -26,7 +26,7 @@ func newDocsAddCmd() *cobra.Command {
 	var name string
 	var depth, maxPages int
 	var rate float64
-	var local bool
+	var local, noLLMS bool
 	command := &cobra.Command{
 		Use:   "add <url-or-path>",
 		Short: "Crawl a docs site or ingest a local Markdown tree",
@@ -45,7 +45,7 @@ func newDocsAddCmd() *cobra.Command {
 					return fmt.Errorf("invalid URL: %w", err)
 				}
 				cfg := docs.CrawlConfig{
-					MaxDepth: depth, MaxPages: maxPages, Rate: rate, SamePathPrefix: true,
+					MaxDepth: depth, MaxPages: maxPages, Rate: rate, SamePathPrefix: true, NoLLMS: noLLMS,
 					Progress: func(pages, quarantined int, _ string) {
 						if pages%10 == 0 && pages > 0 {
 							fmt.Fprintf(command.ErrOrStderr(), "\rcrawled %d pages (%d quarantined)...", pages, quarantined)
@@ -81,6 +81,7 @@ func newDocsAddCmd() *cobra.Command {
 	command.Flags().IntVar(&maxPages, "max-pages", 200, "maximum pages to crawl (remote only)")
 	command.Flags().Float64Var(&rate, "rate", 5, "requests per second (remote only)")
 	command.Flags().BoolVar(&local, "local", false, "treat the argument as a local directory")
+	command.Flags().BoolVar(&noLLMS, "no-llms", false, "skip the llms.txt / llms-full.txt fast path (remote only)")
 	return command
 }
 

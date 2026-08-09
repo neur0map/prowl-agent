@@ -187,7 +187,9 @@ Crawls are bounded and polite (depth, page cap, rate limit, robots.txt), and
 pages are stored in a shared per-machine corpus, so a library's docs are crawled
 once and reused across projects. Retrieval needs no model. Crawled pages are
 untrusted, so any carrying prompt-injection directives are quarantined out of the
-searchable corpus. Agents get the same over MCP through `search_docs`.
+searchable corpus. Agents get the same over MCP through `search_docs`. When a site
+publishes an `llms.txt` or `llms-full.txt`, `docs add` uses it directly (one fetch
+of the whole docs, no crawl); pass `--no-llms` to force a plain crawl.
 
 ## One index, three ways to use it
 

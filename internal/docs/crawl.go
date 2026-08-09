@@ -27,6 +27,7 @@ type CrawlConfig struct {
 	Rate           float64 // requests per second (default 5)
 	UserAgent      string
 	SamePathPrefix bool // restrict to Start's path prefix (default true)
+	NoLLMS         bool // skip the llms.txt / llms-full.txt fast paths
 	Progress       func(pages, quarantined int, current string)
 }
 
@@ -59,6 +60,14 @@ func Crawl(ctx context.Context, cfg CrawlConfig) (CrawlStats, error) {
 	cfg.applyDefaults()
 	client := &http.Client{Timeout: 20 * time.Second}
 	robots := fetchRobots(ctx, client, cfg.Start, cfg.UserAgent)
+	if !cfg.NoLLMS {
+		if md, ok := tryLLMSFull(ctx, client, cfg.Start, cfg.UserAgent); ok {
+			return writeLLMSFull(cfg, md)
+		}
+		if links, ok := tryLLMSIndex(ctx, client, cfg.Start, cfg.UserAgent); ok {
+			return crawlSeeds(ctx, client, robots, cfg, links)
+		}
+	}
 	interval := time.Duration(float64(time.Second) / cfg.Rate)
 	startPrefix := strings.TrimSuffix(cfg.Start.Path, "/")
 

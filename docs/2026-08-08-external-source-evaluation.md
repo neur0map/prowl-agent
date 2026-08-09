@@ -63,3 +63,13 @@ an add-on.
   increment 1. REFERENCE/REJECT sources yielded nothing further to port. Possible
   later increments (not required): tiered L0/L1/L2 per-directory summaries
   (OpenViking), remote-repo doc ingestion, concurrent fetch pool.
+- 2026-08-08: Final web search validated the docs-ingestion approach (crawl to
+  Markdown + budget-bounded retrieval is 2026 best practice; ~2,500-token context
+  cliff makes precise retrieval essential) and surfaced one concrete enhancement:
+  the `llms.txt` / `llms-full.txt` convention. Built it: `docs add` now prefers a
+  site's `llms-full.txt` (whole docs in one fetch) or `llms.txt` (curated page
+  list), falling back to the crawl; `--no-llms` opts out. Verified on hono.dev
+  (1 fetch, 0.5s) with correct text/html rejection (docs.cursor.com). The search
+  also confirmed the scored resolution-accuracy gap (Python/TS dangling edges) is
+  real and addressable (import-chain symbol resolution, import maps, confidence
+  gating) -- logged as the top future improvement, not built this loop.

@@ -47,7 +47,7 @@ type contextSearchIn struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty" jsonschema:"estimated token budget"`
 	BudgetBytes  int    `json:"budget_bytes,omitempty" jsonschema:"optional byte budget"`
 	Synthesize   bool   `json:"synthesize,omitempty" jsonschema:"request optional client-side semantic synthesis"`
-	Rerank       bool   `json:"rerank,omitempty" jsonschema:"reorder results with your own model for better relevance; needs no local model and is ignored when the client does not support sampling"`
+	Rerank       bool   `json:"rerank,omitempty" jsonschema:"reorder results for better relevance; uses the local model when AI is enabled, else your host model via sampling if supported"`
 }
 
 type contextGetIn struct {
@@ -127,7 +127,11 @@ func (h *handlers) searchContext(ctx context.Context, request *sdk.CallToolReque
 		in.BudgetTokens = 1800
 	}
 	searchRequest := contextpacket.Request{Question: in.Query, Mode: mode, BudgetTokens: in.BudgetTokens, BudgetBytes: in.BudgetBytes}
-	if in.Rerank && request != nil && sessionSupportsSampling(request.Session) {
+	// Reranking prefers the local model (a direct LLM integration -- the MCP
+	// 2026-07-28 replacement for deprecated sampling), which the service already
+	// applies when AI is enabled. Fall back to host sampling only when no local
+	// model is configured and the client advertises the capability.
+	if in.Rerank && (h.context.Reranker == nil) && request != nil && sessionSupportsSampling(request.Session) {
 		searchRequest.Reranker = samplingReranker{ctx: ctx, session: request.Session}
 	}
 	packet, err := h.context.Search(searchRequest)

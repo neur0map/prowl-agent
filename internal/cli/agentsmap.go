@@ -16,8 +16,8 @@ import (
 // setup's static guidance block, so it can be refreshed on each index without
 // disturbing the guidance and survives a setup re-run.
 const (
-	agentsMapMarker    = "<!-- prowl-agent:map -->"
-	agentsMapEndMarker = "<!-- /prowl-agent:map -->"
+	agentsMapMarker    = setup.AgentsMapMarker
+	agentsMapEndMarker = setup.AgentsMapEndMarker
 )
 
 // projectMapBlock renders the always-on repository map embedded in AGENTS.md: a

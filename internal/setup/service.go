@@ -1079,6 +1079,11 @@ const agentsEndMarker = "<!-- /prowl-agent -->"
 
 const AgentsMarker = agentsMarker
 const AgentsEndMarker = agentsEndMarker
+
+// The map block is written by the CLI (overview/init) but removed here, so its
+// markers are canonical in the setup package.
+const AgentsMapMarker = "<!-- prowl-agent:map -->"
+const AgentsMapEndMarker = "<!-- /prowl-agent:map -->"
 const agentsBlock = agentsMarker + `
 ## Prowl project context
 
@@ -1267,15 +1272,12 @@ func removeAgentsBlock(root *os.Root, rel string) error {
 		return err
 	}
 	content := string(data)
-	start := strings.Index(content, agentsMarker)
-	if start < 0 {
+	if !strings.Contains(content, agentsMarker) && !strings.Contains(content, AgentsMapMarker) {
 		return nil
 	}
-	offset := strings.Index(content[start:], agentsEndMarker)
-	if offset < 0 {
-		return errors.New("malformed setup marker")
-	}
-	updated := strings.TrimSpace(content[:start] + content[start+offset+len(agentsEndMarker):])
+	content = stripMarkedRegion(content, agentsMarker, agentsEndMarker)
+	content = stripMarkedRegion(content, AgentsMapMarker, AgentsMapEndMarker)
+	updated := strings.TrimSpace(content)
 	if updated == "" {
 		clean, err := validateRootPath(root, rel)
 		if err != nil {
@@ -1284,6 +1286,21 @@ func removeAgentsBlock(root *os.Root, rel string) error {
 		return root.Remove(clean)
 	}
 	return writeRootFile(root, rel, []byte(updated+"\n"), 0o644)
+}
+
+// stripMarkedRegion removes every start..end region (inclusive) from content.
+func stripMarkedRegion(content, start, end string) string {
+	for {
+		s := strings.Index(content, start)
+		if s < 0 {
+			return content
+		}
+		off := strings.Index(content[s:], end)
+		if off < 0 {
+			return content
+		}
+		content = content[:s] + content[s+off+len(end):]
+	}
 }
 
 func removeOwnedFile(root *os.Root, rel, expected string) error {

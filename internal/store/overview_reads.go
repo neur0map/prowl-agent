@@ -189,12 +189,14 @@ func (s *Store) CountsContext(ctx context.Context, limits OverviewCountLimits) (
 		{&counts.Resources, `SELECT count(*) FROM (SELECT 1 FROM resources LIMIT ?)`, limits.Resources},
 		{&counts.Chunks, `SELECT count(*) FROM (SELECT 1 FROM chunks LIMIT ?)`, limits.Chunks},
 		{&counts.Resolved, `SELECT count(*) FROM (SELECT 1 FROM edges WHERE resolved=1 LIMIT ?)`, limits.Edges},
-		{&counts.Dangling, `SELECT count(*) FROM (SELECT 1 FROM edges WHERE resolved=0 LIMIT ?)`, limits.Edges},
 	}
 	for _, item := range queries {
 		if *item.dst, err = scalar(item.sql, item.limit); err != nil {
 			return counts, err
 		}
+	}
+	if counts.External, counts.Unresolved, err = s.edgeResolutionSplit(); err != nil {
+		return counts, err
 	}
 	rows, err := s.sql().QueryContext(ctx, `WITH bounded_files AS (SELECT lang FROM files ORDER BY id LIMIT ?)
 		SELECT lang, count(*) FROM bounded_files GROUP BY lang ORDER BY lang LIMIT ?`, limits.Files, limits.Languages)

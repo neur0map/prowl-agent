@@ -369,14 +369,15 @@ func (s *Store) FanIn(limit int, exclude ...string) ([]FanRow, error) {
 
 // Counts is an index summary for status().
 type Counts struct {
-	Files     int            `json:"files"`
-	Symbols   int            `json:"symbols"`
-	Edges     int            `json:"edges"`
-	Resources int            `json:"resources"`
-	Chunks    int            `json:"chunks"`
-	Resolved  int            `json:"resolved_edges"`
-	Dangling  int            `json:"dangling_edges"`
-	Langs     map[string]int `json:"langs"`
+	Files      int            `json:"files"`
+	Symbols    int            `json:"symbols"`
+	Edges      int            `json:"edges"`
+	Resources  int            `json:"resources"`
+	Chunks     int            `json:"chunks"`
+	Resolved   int            `json:"resolved_edges"`   // point to a repo file
+	External   int            `json:"external_edges"`   // module/package deps (expected, not broken)
+	Unresolved int            `json:"unresolved_edges"` // genuinely could not be placed
+	Langs      map[string]int `json:"langs"`
 }
 
 // Counts computes index summary statistics.
@@ -406,7 +407,7 @@ func (s *Store) Counts() (Counts, error) {
 	if c.Resolved, err = scalar(`SELECT count(*) FROM edges WHERE resolved=1`); err != nil {
 		return c, err
 	}
-	if c.Dangling, err = scalar(`SELECT count(*) FROM edges WHERE resolved=0`); err != nil {
+	if c.External, c.Unresolved, err = s.edgeResolutionSplit(); err != nil {
 		return c, err
 	}
 	rows, err := s.sql().Query(`SELECT lang, count(*) FROM files GROUP BY lang`)
@@ -423,6 +424,34 @@ func (s *Store) Counts() (Counts, error) {
 		c.Langs[lang] = n
 	}
 	return c, rows.Err()
+}
+
+// edgeResolutionSplit classifies unresolved (resolved=0) edges into external
+// module/package dependencies (an unresolved import in a toolchain-module
+// language: expected, not broken) and genuinely unresolved references (the real
+// gap to watch). It groups by (kind, lang) so the classification runs over a
+// tiny result set and reuses ModuleImportLang as the single source of truth.
+func (s *Store) edgeResolutionSplit() (external, unresolved int, err error) {
+	rows, err := s.sql().Query(`SELECT e.kind, IFNULL(f.lang,''), count(*)
+		FROM edges e JOIN files f ON f.id=e.file_id WHERE e.resolved=0
+		GROUP BY e.kind, f.lang`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, lang string
+		var n int
+		if err := rows.Scan(&kind, &lang, &n); err != nil {
+			return 0, 0, err
+		}
+		if kind == "includes" && ModuleImportLang(lang) {
+			external += n
+		} else {
+			unresolved += n
+		}
+	}
+	return external, unresolved, rows.Err()
 }
 
 // ResetResolution clears all edge resolution so a fresh global pass can run. It

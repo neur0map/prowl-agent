@@ -81,7 +81,7 @@ func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdat
 	fmt.Fprintf(out, "Project:   %s\n", root)
 	fmt.Fprintf(out, "Files:     %d\n", c.Files)
 	fmt.Fprintf(out, "Symbols:   %d\n", c.Symbols)
-	fmt.Fprintf(out, "Edges:     %d (resolved %d, dangling %d)\n", c.Edges, c.Resolved, c.Dangling)
+	fmt.Fprintf(out, "Edges:     %d (resolved %d, external %d, unresolved %d)\n", c.Edges, c.Resolved, c.External, c.Unresolved)
 	fmt.Fprintf(out, "Resources: %d\n", c.Resources)
 	langs := make([]string, 0, len(c.Langs))
 	for l := range c.Langs {

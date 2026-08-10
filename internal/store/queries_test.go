@@ -65,8 +65,38 @@ func TestEdgeQueriesAndBlastRadius(t *testing.T) {
 	}
 
 	cn, _ := s.Counts()
-	if cn.Files != 3 || cn.Edges != 2 || cn.Resolved != 2 || cn.Dangling != 0 {
+	if cn.Files != 3 || cn.Edges != 2 || cn.Resolved != 2 || cn.External != 0 || cn.Unresolved != 0 {
 		t.Fatalf("counts = %+v", cn)
+	}
+}
+
+// TestCountsResolutionSplit proves unresolved edges are classified honestly: an
+// unresolved import in a module-language (Go) is an external dependency, not a
+// broken reference, while an unresolved edge of another kind is a genuine gap.
+func TestCountsResolutionSplit(t *testing.T) {
+	s := openTmp(t)
+	goFile, err := s.UpsertFile(File{RelPath: "main.go", Lang: "go", Hash: "g", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.UpsertFile(File{RelPath: "app.conf", Lang: "hyprlang", Hash: "c", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Go import of an external package: unresolved but expected (external).
+	if err := s.ReplaceFileGraph(goFile, nil, nil, []RawEdge{{Kind: "includes", Raw: "fmt", Line: 1}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A keybind to a missing script: genuinely unresolved.
+	if err := s.ReplaceFileGraph(cfg, nil, nil, []RawEdge{{Kind: "binds", Raw: "missing.sh", Line: 1}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	cn, err := s.Counts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cn.External != 1 || cn.Unresolved != 1 {
+		t.Fatalf("resolution split = external %d unresolved %d, want 1/1 (%+v)", cn.External, cn.Unresolved, cn)
 	}
 }
 

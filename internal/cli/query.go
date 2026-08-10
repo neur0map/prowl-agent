@@ -110,9 +110,43 @@ func newOutlineCmd() *cobra.Command {
 		func(_ context.Context, q *query.Querier, a []string) (any, error) { return q.Outline(a[0]) })
 }
 
+// newOverviewCmd maps the whole project and, as a side effect, refreshes the
+// always-on Prowl map embedded in AGENTS.md (only when the repo opted into
+// Prowl), so the passive context an agent reasons from stays current.
 func newOverviewCmd() *cobra.Command {
-	return newQueryCmd("overview", "High-level map of the project (roles, entrypoints, clusters, hotspots)", false, cobra.NoArgs,
-		func(_ context.Context, q *query.Querier, _ []string) (any, error) { return q.Overview() })
+	var output outputOptions
+	var limit int
+	c := &cobra.Command{
+		Use:   "overview",
+		Short: "High-level map of the project (roles, entrypoints, clusters, hotspots); refreshes the AGENTS.md map",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := output.resolve(cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
+			q, ws, s, closer, err := openQuerier(cmd.Context(), false)
+			if err != nil {
+				return err
+			}
+			defer closer()
+			ov, err := q.Overview()
+			if err != nil {
+				return err
+			}
+			_ = s.RecordAnswer(ov)
+			_ = refreshAgentsMap(ws.Root, ov)
+			str, err := formatValue(capSlice(ov, limit), format)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), str)
+			return err
+		},
+	}
+	output.addFlags(c)
+	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
+	return c
 }
 
 func newBriefCmd() *cobra.Command {

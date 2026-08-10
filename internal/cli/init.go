@@ -155,6 +155,11 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err := ApplySetupPlan(plan); err != nil {
 		return sum, err
 	}
+	// Seed the always-on Prowl map now that setup has written the AGENTS.md
+	// guidance block; best-effort, never fails init.
+	if ov, ovErr := project.Query.Overview(); ovErr == nil {
+		_ = refreshAgentsMap(root, ov)
+	}
 	if err := workspace.EnsureDerivedIgnored(root); err != nil {
 		return sum, err
 	}

@@ -129,6 +129,8 @@ prowl-agent doctor --profile rice # add keybind, desktop command, color, orphan 
 prowl-agent tests <path>        # configs/keybinds that launch or reload a file
 prowl-agent changed             # your git changes mapped to the files they could affect
 prowl-agent wip                 # uncommitted work: touched files, TODO/FIXME markers, blast radius
+prowl-agent graph               # interactive HTML dependency graph (self-contained, opens offline)
+prowl-agent bench               # token efficiency: cited packets vs reading files vs whole repo
 prowl-agent explore <path>      # index a repo you do not own, answer, and leave it untouched
 prowl-agent context search <question> --mode compact --budget-tokens 1800 --json
 prowl-agent capabilities search <query> # discover workflows without loading every schema

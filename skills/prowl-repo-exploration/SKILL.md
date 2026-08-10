@@ -29,7 +29,9 @@ grep or glob for literal string or filename scans.
 5. See a UI: `prowl-agent sketch <component-or-path>` renders how a UI looks and behaves without a screenshot or running it -- QML and React (jsx/tsx) as an element tree with visual properties, handlers, and animations; a Go/lipgloss TUI or CSS as its palette, styles, and design tokens -- so you understand or replicate a screen without reading the whole file.
 
 Output is compact TOON by default; add `--format json` when you need to parse it.
-Every query re-indexes what changed first, so answers are current.
+Every query re-indexes what changed first, so answers are current. `overview`
+also refreshes the always-on project map in `AGENTS.md`, so that passive context
+stays current for the next turn.
 
 ## A repo you do not own
 

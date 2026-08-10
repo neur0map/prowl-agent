@@ -22,6 +22,32 @@ All notable changes are recorded here. The format follows
   structured model. This answers
   "how does this screen look" -- the hardest thing to convey to an agent in
   plain text -- in prowl's currency: deterministic, cited, token-lean.
+- Always-on project map in `AGENTS.md`. `init` seeds, and every `overview`
+  refreshes, a compact map block (size, languages, subsystems, entrypoints,
+  central files, guides) so a coding agent reasons from current, passive context
+  by default instead of guessing or grepping. Written only when the repo already
+  opted into Prowl, never clobbering, and excluded from the index.
+- `graph` writes a self-contained interactive HTML dependency graph (files as
+  nodes colored by subsystem and sized by dependents, resolved edges as links,
+  vanilla-JS force layout with zoom/pan/drag/search). No external assets; opens
+  offline; a visual map to hand a human or drop in a review.
+- `bench` measures token efficiency with zero external services: per question,
+  the tokens in Prowl's cited packet vs reading the cited files whole vs the
+  whole repo. On this repo, cited packets are ~97% smaller than the files they
+  cite. See `BENCHMARKS.md`.
+- `doctor` gains `--format sarif` (GitHub code scanning), `--format shields`
+  (badge endpoint), `--baseline` (report only findings new since a prior report),
+  and `--fail-on` (CI gate). A composite GitHub Action and example workflow run
+  doctor on every pull request and upload SARIF, surfacing new issues inline.
+
+### Changed
+- `status` and `overview` no longer lump external module imports with broken
+  references under one scary "dangling" count. Edges are now reported as
+  resolved (point to a repo file), external (module/package deps, expected), and
+  unresolved (genuine gaps) -- the last is the number to watch.
+- MCP reranking prefers the local model (a direct LLM integration, the MCP
+  2026-07-28 replacement for deprecated sampling) and falls back to host
+  sampling only when no local model is configured.
 
 ### Fixed
 - `search` (and the `similar_code` / `smart_search` MCP tools) now surface files

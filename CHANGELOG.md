@@ -48,6 +48,10 @@ All notable changes are recorded here. The format follows
 - MCP reranking prefers the local model (a direct LLM integration, the MCP
   2026-07-28 replacement for deprecated sampling) and falls back to host
   sampling only when no local model is configured.
+- `init` prints a compact, bordered "ready" card (indexed counts, language mix,
+  integrations, next steps) on a terminal instead of a wall of per-skill-file
+  plan lines; the `--dry-run` plan collapses the per-agent skills into one line.
+  Piped/`--json` output is unchanged.
 
 ### Fixed
 - `search` (and the `similar_code` / `smart_search` MCP tools) now surface files

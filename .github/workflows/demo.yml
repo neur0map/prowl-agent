@@ -1,0 +1,33 @@
+name: demo
+
+# Renders demo/prowl.tape into a GIF with VHS and uploads it as a build
+# artifact. Run it from the Actions tab, download prowl-demo-gif, and drop it
+# into the README. Manual (workflow_dispatch) so generated GIFs never bloat git.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gif:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build prowl-agent
+        run: CGO_ENABLED=1 go build -tags sqlite_fts5 -o "$HOME/.local/bin/prowl-agent" ./cmd/prowl-agent
+      - name: Add prowl-agent to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Render GIF
+        uses: charmbracelet/vhs-action@v2
+        with:
+          path: demo/prowl.tape
+      - name: Upload GIF
+        uses: actions/upload-artifact@v4
+        with:
+          name: prowl-demo-gif
+          path: demo/prowl.gif

@@ -306,11 +306,6 @@ func newInitCmd() *cobra.Command {
 				fmt.Fprintf(out, "Removed Prowl-owned entries from %d integration(s).\n", len(integrations))
 				return nil
 			}
-			if !asJSON {
-				if err := printSetupPlan(out, plan, false, false); err != nil {
-					return err
-				}
-			}
 
 			// What do we already know? A project config and/or a remembered global
 			// default mean we should not re-prompt unless --reconfigure is passed.
@@ -408,19 +403,34 @@ func newInitCmd() *cobra.Command {
 			if asJSON {
 				return json.NewEncoder(out).Encode(map[string]any{"root": root, "indexed": sum, "integrations": integrations, "verified": true})
 			}
-			fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
+			if f, ok := out.(*os.File); ok && isTTY(f) {
+				// Pull languages and the resolution split for the card; the index
+				// just ran, so this open is a fast no-op refresh.
+				var langs map[string]int
+				resolved := 0
+				if q, _, s, closer, e := openQuerier(cmd.Context(), false); e == nil {
+					if st, e2 := q.Status(); e2 == nil {
+						langs, resolved, sum.Edges = st.Counts.Langs, st.Counts.Resolved, st.Counts.Edges
+					}
+					_ = s
+					_ = closer()
+				}
+				fmt.Fprintln(out, renderInitCard(filepath.Base(root), sum.Indexed, sum.Symbols, sum.Edges, resolved, langs, integrations, ai))
+			} else {
+				fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
+				fmt.Fprintln(out, "Query it from your shell, no server to run:")
+				fmt.Fprintln(out, "  prowl-agent overview        a map of this project")
+				fmt.Fprintln(out, "  prowl-agent find <name>     locate any symbol")
+				fmt.Fprintln(out, "  prowl-agent search <text>   search by meaning or text")
+				fmt.Fprintln(out, "  prowl-agent docs add <url>  index external documentation")
+				fmt.Fprintf(out, "%d selected integration(s) configured; .prowl/ is gitignored.\n", len(integrations))
+			}
 			if healed {
 				fmt.Fprintln(out, "Notice: .prowl/config.toml indexed only a minority of this repo, so indexing was reset to all detected languages (languages = auto). Run 'prowl-agent init --languages <list>' to keep a narrow set.")
 			}
 			for _, w := range unindexedLanguageWarnings(root) {
 				fmt.Fprintf(out, "Warning: %s\n", w)
 			}
-			fmt.Fprintln(out, "Query it from your shell, no server to run:")
-			fmt.Fprintln(out, "  prowl-agent overview        a map of this project")
-			fmt.Fprintln(out, "  prowl-agent find <name>     locate any symbol")
-			fmt.Fprintln(out, "  prowl-agent search <text>   search by meaning or text")
-			fmt.Fprintln(out, "  prowl-agent docs add <url>  index external documentation")
-			fmt.Fprintf(out, "%d selected integration(s) configured; .prowl/ is gitignored.\n", len(integrations))
 			return nil
 		},
 	}
@@ -462,11 +472,26 @@ func printSetupPlan(out io.Writer, plan SetupPlan, asJSON, dryRun bool) error {
 	if asJSON {
 		return json.NewEncoder(out).Encode(map[string]any{"dry_run": dryRun, "plan": plan})
 	}
-	fmt.Fprintf(out, "Setup plan for %s\n", plan.Root)
+	fmt.Fprintf(out, "Setup plan for %s\n", collapseHome(plan.Root))
 	fmt.Fprintln(out, "  • create or refresh the local .prowl workspace and index")
 	fmt.Fprintln(out, "  • preserve existing project configuration and rules")
+	// Collapse the per-file skill actions (one per SKILL.md per agent) into a
+	// single summary line so the plan stays scannable instead of a wall.
+	var skillClients []string
+	seenClient := map[string]bool{}
 	for _, action := range plan.Actions {
+		if action.Integration == "skill" {
+			client := strings.TrimPrefix(strings.SplitN(action.Path, "/", 2)[0], ".")
+			if client != "" && !seenClient[client] {
+				seenClient[client] = true
+				skillClients = append(skillClients, client)
+			}
+			continue
+		}
 		fmt.Fprintf(out, "  • %-12s %s\n", action.Integration, action.Path)
+	}
+	if len(skillClients) > 0 {
+		fmt.Fprintf(out, "  • %-12s prowl skills for %s\n", "skills", strings.Join(skillClients, ", "))
 	}
 	if len(plan.Actions) == 0 {
 		fmt.Fprintln(out, "  • no client or editor integrations selected")

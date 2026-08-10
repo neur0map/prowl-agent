@@ -69,6 +69,13 @@ CGO_ENABLED=1 go build -tags sqlite_fts5 -o prowl-agent ./cmd/prowl-agent
 Update in place with `prowl-agent update`. `prowl-agent status` tells you when a
 new build is out, through a quick anonymous checksum check cached for a day.
 
+## Demo
+
+A short terminal recording (`init`, `overview`, `bench`, `graph`) lives at
+[`demo/prowl.gif`](demo/prowl.gif), rendered from [`demo/prowl.tape`](demo/prowl.tape)
+with [VHS](https://github.com/charmbracelet/vhs). Regenerate it locally with
+`vhs demo/prowl.tape`, or from the Actions tab via the `demo` workflow.
+
 ## Set up in one command
 
 Run this once inside any project (a code repo, a dotfiles folder, `~/.config`):

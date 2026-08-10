@@ -71,10 +71,11 @@ new build is out, through a quick anonymous checksum check cached for a day.
 
 ## Demo
 
-A short terminal recording (`init`, `overview`, `bench`, `graph`) lives at
-[`demo/prowl.gif`](demo/prowl.gif), rendered from [`demo/prowl.tape`](demo/prowl.tape)
-with [VHS](https://github.com/charmbracelet/vhs). Regenerate it locally with
-`vhs demo/prowl.tape`, or from the Actions tab via the `demo` workflow.
+![prowl-agent demo](demo/prowl.gif)
+
+A short terminal recording of `init`, `overview`, `bench`, and `graph`, rendered
+from [`demo/prowl.tape`](demo/prowl.tape) with [VHS](https://github.com/charmbracelet/vhs).
+Regenerate it with `vhs demo/prowl.tape`, or from the Actions tab via the `demo` workflow.
 
 ## Set up in one command
 

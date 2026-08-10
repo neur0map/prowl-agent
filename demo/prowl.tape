@@ -24,11 +24,10 @@ Show
 
 # Set up the project: one command wires the index, agent config, and skills,
 # and prints the ready card.
-Type "prowl-agent init"
+Type "prowl-agent init --no-input"
 Sleep 600ms
 Enter
 Sleep 5s
-
 # Orient: a compact, cited map of the whole project (also refreshes AGENTS.md).
 Type "prowl-agent overview"
 Sleep 600ms

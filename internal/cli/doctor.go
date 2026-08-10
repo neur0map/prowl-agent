@@ -22,7 +22,7 @@ const cRedHex = "#f38ba8"
 
 func newDoctorCmd() *cobra.Command {
 	var asJSON bool
-	var profile string
+	var profile, format, baseline, failOn string
 	c := &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose repository health (use --profile rice for desktop/dotfile checks)",
@@ -51,19 +51,65 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if baseline != "" {
+				base, berr := loadDoctorBaseline(baseline)
+				if berr != nil {
+					return fmt.Errorf("read baseline %s: %w", baseline, berr)
+				}
+				rep = deltaReport(rep, base)
+			}
 			out := cmd.OutOrStdout()
+			resolved := format
 			if asJSON {
-				return json.NewEncoder(out).Encode(rep)
+				resolved = "json"
 			}
-			if f, ok := out.(*os.File); ok && isTTY(f) {
-				fmt.Fprintln(out, renderDoctorCard(rep))
-				return nil
+			switch resolved {
+			case "json":
+				if err := json.NewEncoder(out).Encode(rep); err != nil {
+					return err
+				}
+			case "sarif":
+				s, err := renderDoctorSARIF(rep)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(out, s)
+			case "shields":
+				s, err := renderDoctorShields(rep)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(out, s)
+			case "", "human":
+				if f, ok := out.(*os.File); ok && isTTY(f) {
+					fmt.Fprintln(out, renderDoctorCard(rep))
+				} else {
+					fmt.Fprint(out, renderDoctorPlain(rep))
+				}
+			default:
+				return fmt.Errorf("unknown doctor format %q (choose human, json, sarif, or shields)", resolved)
 			}
-			fmt.Fprint(out, renderDoctorPlain(rep))
+			// CI gate: exit non-zero when new/kept findings breach the threshold.
+			errs, warns, _ := severityCounts(rep.Findings)
+			switch failOn {
+			case "error":
+				if errs > 0 {
+					cmd.SilenceUsage = true
+					return fmt.Errorf("doctor gate: %d error finding(s)", errs)
+				}
+			case "warn":
+				if errs+warns > 0 {
+					cmd.SilenceUsage = true
+					return fmt.Errorf("doctor gate: %d error and %d warning finding(s)", errs, warns)
+				}
+			}
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	c.Flags().BoolVar(&asJSON, "json", false, "output JSON (alias for --format json)")
+	c.Flags().StringVar(&format, "format", "", "output format: human, json, sarif, or shields")
+	c.Flags().StringVar(&baseline, "baseline", "", "prior --format json report; report only findings new since it")
+	c.Flags().StringVar(&failOn, "fail-on", "none", "exit non-zero when findings reach this severity: none, warn, or error")
 	c.Flags().StringVar(&profile, "profile", doctor.ProfileGeneral, "diagnostic profile: general or rice")
 	return c
 }

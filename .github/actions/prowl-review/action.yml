@@ -1,0 +1,28 @@
+name: "Prowl review"
+description: "Index the repository and run prowl-agent doctor, emitting SARIF for GitHub code scanning so new issues surface inline on the pull request."
+inputs:
+  fail-on:
+    description: "Exit non-zero when findings reach this severity: none, warn, or error."
+    default: "none"
+  profile:
+    description: "doctor profile: general or rice."
+    default: "general"
+  sarif-path:
+    description: "Where to write the SARIF report."
+    default: "prowl-results.sarif"
+outputs:
+  sarif:
+    description: "Path to the written SARIF report."
+    value: ${{ inputs.sarif-path }}
+runs:
+  using: composite
+  steps:
+    - name: Index the repository
+      shell: bash
+      run: prowl-agent init --no-input --no-ai >/dev/null
+    - name: Run prowl doctor (SARIF)
+      shell: bash
+      run: prowl-agent doctor --profile "${{ inputs.profile }}" --format sarif > "${{ inputs.sarif-path }}"
+    - name: Gate on findings
+      shell: bash
+      run: prowl-agent doctor --profile "${{ inputs.profile }}" --fail-on "${{ inputs.fail-on }}"

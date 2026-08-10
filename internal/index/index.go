@@ -402,20 +402,26 @@ func stripGeneratedContent(rel string, data []byte) []byte {
 	if !strings.EqualFold(filepath.Base(rel), "AGENTS.md") {
 		return data
 	}
-	const startMarker = "<!-- prowl-agent -->"
-	const endMarker = "<!-- /prowl-agent -->"
+	// Both the guidance block and the auto-generated map block are prowl-authored,
+	// so a purely-generated AGENTS.md strips to empty and is skipped by the caller.
+	markers := [][2]string{
+		{"<!-- prowl-agent -->", "<!-- /prowl-agent -->"},
+		{"<!-- prowl-agent:map -->", "<!-- /prowl-agent:map -->"},
+	}
 	content := string(data)
-	for {
-		start := strings.Index(content, startMarker)
-		if start < 0 {
-			break
+	for _, m := range markers {
+		for {
+			start := strings.Index(content, m[0])
+			if start < 0 {
+				break
+			}
+			endRel := strings.Index(content[start:], m[1])
+			if endRel < 0 {
+				break
+			}
+			end := start + endRel + len(m[1])
+			content = content[:start] + content[end:]
 		}
-		endRel := strings.Index(content[start:], endMarker)
-		if endRel < 0 {
-			break
-		}
-		end := start + endRel + len(endMarker)
-		content = content[:start] + content[end:]
 	}
 	return []byte(strings.TrimSpace(content))
 }

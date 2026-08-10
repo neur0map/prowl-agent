@@ -6,6 +6,23 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `sketch` (and the `sketch_ui` MCP tool) renders how a UI looks and behaves
+  from source, without a screenshot or a runtime, across four dialects. QML and
+  React (jsx/tsx) render as an element tree with each element's visual properties
+  (layout, color, text), behavior (handlers, animations, QML conditional
+  visibility, and every React conditional-return branch), and declared
+  properties. A Go/lipgloss TUI renders as
+  the color palette (with hex constants resolved) and named styles with their
+  attributes; CSS/SCSS renders as its design tokens (custom properties and SCSS
+  variables) and rules. QML token references are resolved against the project's singletons,
+  so `color=Tokens.ink` reads as `Tokens.ink⟨#cdd6f4⟩` (alias chains followed,
+  the nearest same-named singleton preferred). The argument is a component name
+  (resolved through the index) or a file path; text by default, `--json` for the
+  structured model. This answers
+  "how does this screen look" -- the hardest thing to convey to an agent in
+  plain text -- in prowl's currency: deterministic, cited, token-lean.
+
 ### Fixed
 - `search` (and the `similar_code` / `smart_search` MCP tools) now surface files
   whose path names the concept. It ranked purely by full-text over chunk bodies,

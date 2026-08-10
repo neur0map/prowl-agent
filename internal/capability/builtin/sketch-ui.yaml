@@ -1,0 +1,12 @@
+name: sketch-ui
+title: Sketch a UI's look and behavior
+description: Render how a UI looks and behaves from source, without a screenshot or a runtime. QML and React (jsx/tsx) give the element tree with each element's visual properties and behavior (handlers, animations, conditional rendering); a Go/lipgloss TUI gives the color palette and named styles; CSS/SCSS gives design tokens and rules. QML token references are resolved to their literal values.
+triggers: [how does this UI look, describe a component, replicate a screen, visualize QML, understand React layout, read the design tokens, understand TUI styling]
+requires: [workspace index]
+outputs: [element tree, visual properties, behavior notes, color palette, named styles, design tokens]
+privacy: local-only
+read_only: true
+version: "1"
+prompts: []
+resources: []
+tools: [sketch_ui]

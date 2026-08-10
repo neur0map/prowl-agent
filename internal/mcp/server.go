@@ -100,6 +100,8 @@ func newLegacyServer(h *handlers, version string) *sdk.Server {
 		Description: "Health diagnostics: cyclic includes, fan-in/out risk, oversized files, duplicate keybinds, broken commands, orphan scripts, dangling references, hardcoded colors, forbidden crossings, churn hotspots. Returns findings and a 0-100 score."}, tracked(h, h.doctorTool))
 	sdk.AddTool(s, &sdk.Tool{Name: "investigate_wip",
 		Description: "Investigate uncommitted work in progress: touched files with git status, the unfinished-work markers (TODO, FIXME, and friends) inside them, and the blast radius of each indexed file. A good first call when resuming a task.", Annotations: readOnlyAnnotations("Investigate WIP")}, tracked(h, h.investigateWip))
+	sdk.AddTool(s, &sdk.Tool{Name: "sketch_ui",
+		Description: "Sketch how a UI looks and behaves, from source, without a screenshot: QML and React (jsx/tsx) give the element tree with visual properties and behavior (handlers, animations, conditional rendering); a Go/lipgloss TUI gives the palette and named styles; CSS/SCSS gives design tokens and rules. Argument is a component name or file path. Read-only.", Annotations: readOnlyAnnotations("Sketch UI")}, tracked(h, h.sketchUI))
 	return s
 }
 

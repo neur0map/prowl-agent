@@ -19,7 +19,7 @@ func TestBuiltinCatalogSearchAndDetail(t *testing.T) {
 		t.Fatalf("manifest = %+v ok=%v", manifest, ok)
 	}
 	all := catalog.Search("", 20)
-	if len(all) != 4 {
+	if len(all) != 5 {
 		t.Fatalf("built-in count = %d", len(all))
 	}
 	for index := 1; index < len(all); index++ {

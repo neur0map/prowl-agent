@@ -44,10 +44,10 @@ func TestCoreSurfaceIsSmallerAndLegacyStaysNineteen(t *testing.T) {
 
 	legacyTools := listToolDescriptors(t, legacy)
 	coreTools := listToolDescriptors(t, core)
-	if len(legacyTools) != 19 {
-		t.Fatalf("legacy tool count = %d, want 19", len(legacyTools))
+	if len(legacyTools) != 20 {
+		t.Fatalf("legacy tool count = %d, want 20", len(legacyTools))
 	}
-	want := []string{"analyze_change", "find_references", "get_context", "outline", "propose_knowledge_change", "read_symbol", "search_capabilities", "search_context", "search_docs", "validate_knowledge"}
+	want := []string{"analyze_change", "find_references", "get_context", "outline", "propose_knowledge_change", "read_symbol", "search_capabilities", "search_context", "search_docs", "sketch_ui", "validate_knowledge"}
 	got := make([]string, len(coreTools))
 	for index, tool := range coreTools {
 		got[index] = tool.Name
@@ -59,7 +59,7 @@ func TestCoreSurfaceIsSmallerAndLegacyStaysNineteen(t *testing.T) {
 	legacyJSON, _ := json.Marshal(legacyTools)
 	coreJSON, _ := json.Marshal(coreTools)
 	legacyDigest := fmt.Sprintf("%x", sha256.Sum256(legacyJSON))
-	if legacyDigest != "b56c321d7c7121ed452002bcb13c90450ea3c4c88c2a65a00448dd1f03c7043d" {
+	if legacyDigest != "a24dc9c8764fff4cc56fda507cdf28b8e5d966cc454b45d1408b030d762702ed" {
 		t.Fatalf("legacy descriptor digest = %s", legacyDigest)
 	}
 	if len(coreJSON) >= len(legacyJSON) {

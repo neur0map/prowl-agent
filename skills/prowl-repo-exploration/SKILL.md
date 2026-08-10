@@ -26,6 +26,7 @@ grep or glob for literal string or filename scans.
    returns a bounded, cited packet. Add `--json` to parse it.
 4. Trace: `prowl-agent callers <path>`, `prowl-agent callees <path>`,
    `prowl-agent references <name>` (a symbol's call sites), `prowl-agent impact <path>`.
+5. See a UI: `prowl-agent sketch <component-or-path>` renders how a UI looks and behaves without a screenshot or running it -- QML and React (jsx/tsx) as an element tree with visual properties, handlers, and animations; a Go/lipgloss TUI or CSS as its palette, styles, and design tokens -- so you understand or replicate a screen without reading the whole file.
 
 Output is compact TOON by default; add `--format json` when you need to parse it.
 Every query re-indexes what changed first, so answers are current.

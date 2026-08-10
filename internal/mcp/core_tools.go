@@ -18,6 +18,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/query"
+	"github.com/prowl-agent/prowl-agent/internal/sketch"
 )
 
 var falseHint = false
@@ -37,6 +38,7 @@ func registerCoreTools(server *sdk.Server, h *handlers) {
 	sdk.AddTool(server, &sdk.Tool{Name: "read_symbol", Description: "Read one symbol's source (its signature and body), cited and bounded, resolved by name or by a numeric id from a find result. Use it to read a single function, type, or component instead of the whole file. Read-only.", Annotations: readOnlyAnnotations("Read symbol")}, tracked(h, h.readSymbol))
 	sdk.AddTool(server, &sdk.Tool{Name: "outline", Description: "Show a file's structure: every symbol it defines with kind, signature, nesting depth, and line range, but no bodies. Use it to grasp a file from a handful of signature lines instead of reading the whole file (far cheaper on tokens), then read_symbol only the parts you need. Read-only.", Annotations: readOnlyAnnotations("Outline file")}, tracked(h, h.outline))
 	sdk.AddTool(server, &sdk.Tool{Name: "find_references", Description: "Find where a symbol is used across the repo: cited {file, line, text} call sites (and reference edges for config/resource symbols), resolved by name or by a numeric id. Use it for the callers of a function or the blast radius of changing a symbol, instead of grepping and reading files. Read-only; call sites are name-usage based, not a language call graph, so a comment or same-named symbol may slip in.", Annotations: readOnlyAnnotations("Find references")}, tracked(h, h.findReferencesByName))
+	sdk.AddTool(server, &sdk.Tool{Name: "sketch_ui", Description: "Sketch how a UI looks and behaves, from source, without a screenshot or running it. QML and React (jsx/tsx) give the element tree with each element's visual properties (layout, color, text) and behavior (handlers, animations, conditional rendering); a Go/lipgloss TUI gives the color palette and named styles; CSS/SCSS gives design tokens and rules. QML token references are resolved to their literal values. Argument is a component name (resolved through the index) or a file path. Use it to understand or replicate a UI instead of reading the whole file. Read-only.", Annotations: readOnlyAnnotations("Sketch UI")}, tracked(h, h.sketchUI))
 }
 
 type contextSearchIn struct {
@@ -89,6 +91,15 @@ type outlineIn struct {
 
 type findReferencesIn struct {
 	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
+}
+
+type sketchIn struct {
+	Target string `json:"target" jsonschema:"a UI component name (resolved through the index) or a file path; QML, React (jsx/tsx), Go/lipgloss, or CSS"`
+}
+
+type sketchOut struct {
+	File   string `json:"file"`
+	Sketch string `json:"sketch"`
 }
 
 type proposalOut struct {
@@ -149,6 +160,49 @@ func (h *handlers) findReferencesByName(_ context.Context, _ *sdk.CallToolReques
 		return nil, query.Usages{}, err
 	}
 	return nil, u, nil
+}
+
+func (h *handlers) sketchUI(_ context.Context, _ *sdk.CallToolRequest, in sketchIn) (*sdk.CallToolResult, sketchOut, error) {
+	path, src, err := h.resolveSketch(in.Target)
+	if err != nil {
+		return nil, sketchOut{}, err
+	}
+	sk, err := sketch.Of(path, src)
+	if err != nil {
+		return nil, sketchOut{}, err
+	}
+	if qs, ok := sk.(*sketch.Sketch); ok && h.root != "" {
+		qs.Resolve(sketch.DirSingletonSource(h.root, path))
+	}
+	return nil, sketchOut{File: path, Sketch: sk.Text()}, nil
+}
+
+// resolveSketch turns a sketch target into a file path and its bytes: a path on
+// disk (absolute or project-relative) is read directly; otherwise the target is
+// a component name resolved through the index.
+func (h *handlers) resolveSketch(target string) (string, []byte, error) {
+	for _, p := range []string{target, filepath.Join(h.root, target)} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			src, err := os.ReadFile(p)
+			if err != nil {
+				return "", nil, err
+			}
+			return p, src, nil
+		}
+	}
+	if strings.ContainsRune(target, filepath.Separator) || strings.Contains(target, ".") {
+		return "", nil, fmt.Errorf("file not found: %s", target)
+	}
+	def, err := h.q.Definition(h.root, target)
+	if err != nil {
+		return "", nil, err
+	}
+	p := filepath.Join(h.root, filepath.FromSlash(def.File))
+	src, err := os.ReadFile(p)
+	if err != nil {
+		return "", nil, fmt.Errorf("read %s: %w", def.File, err)
+	}
+	return def.File, src, nil
 }
 
 func synthesizePacket(ctx context.Context, request *sdk.CallToolRequest, packet contextpacket.Packet) contextpacket.Packet {

@@ -113,6 +113,7 @@ prowl-agent brief <path>        # cited orientation for a subsystem: size, langu
 prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
 prowl-agent def <name>          # read one symbol's source (signature + body), cited and bounded, not the whole file
 prowl-agent outline <path>      # a file's structure: symbols, signatures, line ranges (no bodies) -- grasp a file without reading it
+prowl-agent sketch <name|path>  # how a UI looks and behaves without a screenshot: QML, React (jsx/tsx), Go/lipgloss, or CSS
 prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
 prowl-agent callers <path>      # what includes / imports / execs / binds to a file
 prowl-agent callees <path>      # what a file includes / imports / execs / binds to
@@ -200,9 +201,9 @@ fits and the answers stay identical and cited:
   prowl. Nothing to start, and none of MCP's upfront per-call tool-schema cost.
 - **MCP server.** For agents that prefer typed tools, select the standard
   `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, or OpenCode integration
-  during setup. The compatibility surface exposes 19 tools; MCP Resources and
+  during setup. The compatibility surface exposes 20 tools; MCP Resources and
   Prompts are additive on every surface. Use `prowl-agent serve --mcp-surface
-  core` for ten intent-oriented tools, or `--mcp-surface all` during migration.
+  core` for eleven intent-oriented tools, or `--mcp-surface all` during migration.
   Point any other agent at one command, `prowl-agent serve`.
 - **Editor language server.** `prowl-agent lsp` gives a human go-to-definition,
   find-references, hover (with use counts), document and workspace symbols, code

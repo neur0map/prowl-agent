@@ -16,6 +16,6 @@ func Register(root *cobra.Command, version string) {
 		newCallersCmd(), newCalleesCmd(), newRelationsCmd(), newImpactCmd(),
 		newEntrypointsCmd(), newHotspotsCmd(), newViolationsCmd(), newTestsCmd(),
 		newReferencesCmd(), newChangedCmd(), newWipCmd(), newExploreCmd(),
-		newBriefCmd(), newDocsCmd(),
+		newBriefCmd(), newDocsCmd(), newSketchCmd(),
 	)
 }

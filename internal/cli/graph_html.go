@@ -44,7 +44,9 @@ const TITLE = /*PROWL_TITLE*/;
 const DATA = /*PROWL_DATA*/;
 const nodes = DATA.nodes, links = DATA.links;
 document.getElementById("title").textContent = TITLE + " - dependency graph";
-document.getElementById("stats").textContent = nodes.length + " files · " + links.length + " edges · node size = how many files depend on it";
+const totalFiles = DATA.total || nodes.length;
+const filesLabel = nodes.length < totalFiles ? (nodes.length + " of " + totalFiles + " files") : (totalFiles + " files");
+document.getElementById("stats").textContent = filesLabel + " · " + links.length + " edges · node size = how many files depend on it";
 
 // Stable color per subsystem.
 const palette = ["#89b4fa","#a6e3a1","#f9e2af","#f38ba8","#cba6f7","#94e2d5","#fab387","#f5c2e7","#74c7ec","#eba0ac","#b4befe","#a6adc8"];

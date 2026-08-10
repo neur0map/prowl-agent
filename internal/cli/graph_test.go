@@ -80,3 +80,52 @@ func TestBuildGraphDataAndRender(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildGraphDataIncludesIsolatedFiles(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	up := func(p string) int64 {
+		id, err := s.UpsertFile(store.File{RelPath: p, Lang: "go", Hash: p, Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a, b := up("a.go"), up("b.go")
+	up("lonely.go") // no edges: a standalone file that must still appear
+	if err := s.ReplaceFileGraph(a, nil, nil, []store.RawEdge{{Kind: "includes", Raw: "b.go", Line: 1}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	es, _ := s.EdgesFromFile(a, "includes")
+	for _, e := range es {
+		if e.Raw == "b.go" {
+			if err := s.SetEdgeResolved(e.ID, "file", b); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	data, err := buildGraphData(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every indexed file is a node -- including the one with no dependencies --
+	// so the header count matches the repo, and Total reflects all files.
+	if len(data.Nodes) != 3 || data.Total != 3 {
+		t.Fatalf("nodes=%d total=%d, want 3/3 (isolated file must appear): %+v", len(data.Nodes), data.Total, data.Nodes)
+	}
+	var foundLonely bool
+	for _, n := range data.Nodes {
+		if n.Path == "lonely.go" {
+			foundLonely = true
+			if n.Deg != 0 {
+				t.Errorf("lonely.go degree = %d, want 0", n.Deg)
+			}
+		}
+	}
+	if !foundLonely {
+		t.Error("standalone file lonely.go missing from graph")
+	}
+}

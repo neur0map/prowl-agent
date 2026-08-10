@@ -13,9 +13,10 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
-// maxGraphNodes caps how many files the interactive graph draws, so a huge repo
-// stays smooth; the most-connected files are kept.
-const maxGraphNodes = 800
+// maxGraphNodes caps how many files the interactive graph draws so a very large
+// repo stays smooth; when the repo exceeds it the most-connected files are kept
+// and the header shows "N of M files".
+const maxGraphNodes = 3000
 
 type graphNode struct {
 	ID   int    `json:"id"`
@@ -32,6 +33,7 @@ type graphLink struct {
 type graphData struct {
 	Nodes []graphNode `json:"nodes"`
 	Links []graphLink `json:"links"`
+	Total int         `json:"total"`
 }
 
 // newGraphCmd writes a self-contained, interactive dependency graph of the repo
@@ -56,7 +58,7 @@ func newGraphCmd() *cobra.Command {
 				return err
 			}
 			if len(data.Nodes) == 0 {
-				return fmt.Errorf("no resolved file dependencies to graph yet (try prowl-agent init)")
+				return fmt.Errorf("no files indexed yet (try prowl-agent init)")
 			}
 			path := out
 			if path == "" {
@@ -69,8 +71,12 @@ func newGraphCmd() *cobra.Command {
 			if err := os.WriteFile(path, []byte(html), 0o644); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "wrote %d nodes, %d links to %s\nopen it in a browser: file://%s\n",
-				len(data.Nodes), len(data.Links), path, path)
+			shown := ""
+			if len(data.Nodes) < data.Total {
+				shown = fmt.Sprintf(" (of %d files, most-connected kept)", data.Total)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %d nodes%s, %d links to %s\nopen it in a browser: file://%s\n",
+				len(data.Nodes), shown, len(data.Links), path, path)
 			return nil
 		},
 	}
@@ -90,14 +96,9 @@ func buildGraphData(s *store.Store) (graphData, error) {
 	if err != nil {
 		return graphData{}, err
 	}
-	lang := make(map[string]string, len(files))
-	for _, f := range files {
-		lang[f.RelPath] = f.Lang
-	}
 	type pair struct{ a, b string }
 	seen := map[pair]bool{}
 	inDeg := map[string]int{}
-	connected := map[string]bool{}
 	var pairs []pair
 	for _, e := range edges {
 		if e.SrcFile == "" || e.DstFile == "" || e.SrcFile == e.DstFile {
@@ -110,14 +111,17 @@ func buildGraphData(s *store.Store) (graphData, error) {
 		seen[p] = true
 		pairs = append(pairs, p)
 		inDeg[e.DstFile]++
-		connected[e.SrcFile] = true
-		connected[e.DstFile] = true
 	}
-	// Keep the most-connected nodes when a repo is very large.
-	paths := make([]string, 0, len(connected))
-	for p := range connected {
-		paths = append(paths, p)
+	// Every indexed file is a node, so the graph maps the whole repo -- not just
+	// the files that happen to have resolved dependencies. Standalone files show
+	// as small dots; hubs (many dependents) are the large ones.
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.RelPath)
 	}
+	total := len(paths)
+	// When a repo exceeds the draw ceiling, keep the most-connected files so the
+	// graph stays smooth; the header reports "N of total".
 	sort.Slice(paths, func(i, j int) bool {
 		if inDeg[paths[i]] != inDeg[paths[j]] {
 			return inDeg[paths[i]] > inDeg[paths[j]]
@@ -128,7 +132,7 @@ func buildGraphData(s *store.Store) (graphData, error) {
 		paths = paths[:maxGraphNodes]
 	}
 	id := make(map[string]int, len(paths))
-	data := graphData{}
+	data := graphData{Total: total}
 	for _, p := range paths {
 		id[p] = len(data.Nodes)
 		data.Nodes = append(data.Nodes, graphNode{ID: id[p], Path: p, Sub: subsystemOf(p), Deg: inDeg[p]})

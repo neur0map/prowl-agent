@@ -66,6 +66,12 @@ All notable changes are recorded here. The format follows
 - `init` no longer reports "0 symbols, 0 edges" on a re-init that changed nothing.
   The summary showed the incremental delta instead of the index totals; it now
   reports the real indexed files, symbols, and edges.
+- `graph` now maps the whole repo instead of a truncated subset. It drew only
+  files that had resolved dependency edges and hard-capped at 800 nodes, then
+  labeled that subset "N files" -- so a 2,237-file repo showed "800 files" and
+  looked like most of the code was missing. Every indexed file is now a node
+  (standalone files as small dots, hubs as large ones), the draw ceiling is
+  3,000, and when a repo exceeds it the header honestly reads "N of M files".
 - The `status` card no longer wraps text mid-word. Language names (`javascript`,
   `markdown`) and long project names were rendered into a column narrower than
   the text, so they wrapped and knocked every bar out of alignment. The card was

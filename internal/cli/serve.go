@@ -17,10 +17,25 @@ import (
 	mcpserver "github.com/prowl-agent/prowl-agent/internal/mcp"
 )
 
-// maybeInferencer returns an Ollama inferencer when AI is enabled and reachable.
+// maybeInferencer returns the configured semantic-assist backend when AI is
+// enabled and usable: an agent CLI (reranking only) when Provider is "agent",
+// otherwise a local Ollama client. Any unavailability degrades to structural
+// search with a note on stderr.
 func maybeInferencer(ctx context.Context, cfg config.Config) assist.Inferencer {
 	if !cfg.AI.Enabled {
 		return nil
+	}
+	if cfg.AI.Provider == "agent" {
+		if cfg.AI.AgentCommand == "" {
+			fmt.Fprintf(os.Stderr, "prowl-agent: AI provider 'agent' has no agent_command configured; semantic reranking off, structural search still works\n")
+			return nil
+		}
+		agentCLI := assist.NewAgentCLI(cfg.AI.AgentCommand)
+		if !agentCLI.Available(ctx) {
+			fmt.Fprintf(os.Stderr, "prowl-agent: agent command %q not found on PATH; semantic reranking off, structural search still works\n", cfg.AI.AgentCommand)
+			return nil
+		}
+		return agentCLI
 	}
 	oll := assist.NewOllama(cfg.AI.OllamaURL, cfg.AI.EmbedModel, cfg.AI.AssistModel)
 	if !oll.Available(ctx) {

@@ -35,6 +35,16 @@ type Options struct {
 	InferencerProvider InferencerProvider
 }
 
+// inferencerEmbeds reports whether an inferencer can produce embeddings. A
+// provider may opt out (e.g. an agent-CLI backend that only reranks) so the
+// refresh skips vector building instead of recording a spurious embed error.
+func inferencerEmbeds(inf assist.Inferencer) bool {
+	if c, ok := inf.(interface{ SupportsEmbeddings() bool }); ok {
+		return c.SupportsEmbeddings()
+	}
+	return true
+}
+
 // RefreshResult describes one deterministic refresh. EmbeddingError is a
 // best-effort AI warning; structural indexing failures are returned as errors.
 type RefreshResult struct {
@@ -142,7 +152,14 @@ func assembleProject(
 	querier.RequirePublishedGeneration().WithReadGuard(readGuard)
 	contextService := &contextpacket.Service{Store: database, Knowledge: knowledgeRepo, Root: state.Root, Tracer: contextpacket.StoreTracer{Store: database}, RequirePublished: true, ReadGuard: readGuard}
 	if inferencer != nil {
-		contextService.Reranker = contextpacket.AssistSemanticReranker{Inferencer: inferencer}
+		reranker := contextpacket.AssistSemanticReranker{Inferencer: inferencer}
+		// Agent CLIs answer via a subprocess completion, slower than a local
+		// daemon, so give reranking a longer budget before it falls back to the
+		// deterministic order.
+		if _, ok := inferencer.(*assist.AgentCLI); ok {
+			reranker.Timeout = 45 * time.Second
+		}
+		contextService.Reranker = reranker
 	}
 	project := &Project{
 		Workspace:    state,
@@ -263,7 +280,7 @@ func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (R
 	if err := current.SetMeta("vectors_complete", "0"); err != nil {
 		return result, err
 	}
-	if p.Inferencer != nil {
+	if p.Inferencer != nil && inferencerEmbeds(p.Inferencer) {
 		result.Embedded, result.EmbeddingError = index.BuildVectors(ctx, current, p.Inferencer, p.Config.AI.EmbedModel)
 		if result.EmbeddingError != nil {
 			if ctx.Err() != nil {

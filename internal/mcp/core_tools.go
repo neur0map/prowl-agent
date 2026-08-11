@@ -47,7 +47,7 @@ type contextSearchIn struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty" jsonschema:"estimated token budget"`
 	BudgetBytes  int    `json:"budget_bytes,omitempty" jsonschema:"optional byte budget"`
 	Synthesize   bool   `json:"synthesize,omitempty" jsonschema:"request optional client-side semantic synthesis"`
-	Rerank       bool   `json:"rerank,omitempty" jsonschema:"reorder results for better relevance; uses the local model when AI is enabled, else your host model via sampling if supported"`
+	Rerank       bool   `json:"rerank,omitempty" jsonschema:"reorder results for better relevance; uses the configured AI backend (local model or a coding-agent CLI) when AI is enabled, else your host model via sampling if supported"`
 }
 
 type contextGetIn struct {

@@ -131,6 +131,17 @@ func (o *Ollama) Rerank(ctx context.Context, query string, docs []string) ([]int
 	if len(docs) == 0 {
 		return nil, nil
 	}
+	resp, err := o.Generate(ctx, rerankPrompt(query, docs))
+	if err != nil {
+		return nil, err
+	}
+	return parseOrder(resp, len(docs)), nil
+}
+
+// rerankPrompt builds the constrained ordering prompt shared by every inferencer
+// (local Ollama or an agent CLI): it asks only for a permutation of the snippet
+// indices, so the model never adds, removes, or rewrites results.
+func rerankPrompt(query string, docs []string) string {
 	var b strings.Builder
 	b.WriteString("Order the snippets by relevance to the query. ")
 	b.WriteString("Reply with only the snippet numbers, most relevant first, comma-separated.\n")
@@ -143,11 +154,7 @@ func (o *Ollama) Rerank(ctx context.Context, query string, docs []string) ([]int
 		}
 		fmt.Fprintf(&b, "[%d] %s\n", i, strings.ReplaceAll(d, "\n", " "))
 	}
-	resp, err := o.Generate(ctx, b.String())
-	if err != nil {
-		return nil, err
-	}
-	return parseOrder(resp, len(docs)), nil
+	return b.String()
 }
 
 // parseOrder extracts a permutation of [0,n) from free-form model text, keeping

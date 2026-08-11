@@ -7,6 +7,15 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- AI-assisted reranking now works without a local model by borrowing an
+  installed coding-agent CLI. `init --ai-provider agent` (with `--ai-command`,
+  e.g. `"claude -p"`, `"omp -p"`, `"codex exec"`; autodetected when omitted)
+  points prowl's semantic reranker at that agent instead of Ollama, and when AI
+  is enabled without a reachable local model init falls back to a detected agent
+  automatically. The agent backend reranks and synthesizes (the parts that most
+  improve search); it has no embedding endpoint, so vector search still needs a
+  local embed model. Complements the existing MCP-sampling path (which the
+  2026-07-28 RC deprecates and which only works over MCP with capable clients).
 - `sketch` (and the `sketch_ui` MCP tool) renders how a UI looks and behaves
   from source, without a screenshot or a runtime, across four dialects. QML and
   React (jsx/tsx) render as an element tree with each element's visual properties

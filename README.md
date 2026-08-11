@@ -337,6 +337,15 @@ translation table, a changelog) outranks the real code, and it needs no local
 model. When the client does not support that, ranking stays deterministic; prowl
 never blocks a query to make you download anything.
 
+There is also a CLI path to the same idea, for when you are not going through
+MCP. `prowl-agent init --ai-provider agent` points the semantic reranker at an
+installed coding-agent CLI (`--ai-command "claude -p"`, `"omp -p"`, or
+`"codex exec"`; autodetected when omitted), so `prowl-agent context search` and
+`search_context` get model-quality reranking with no Ollama and no cloud key. If
+you enable AI without a reachable local model, init falls back to a detected
+agent automatically. This backend reranks and synthesizes only; vector search
+still needs a local embed model.
+
 ## Supported formats
 
 Go, Rust, Java, Kotlin, Ruby, C#, PHP, Dart, Elixir, TypeScript/TSX, Lua, Python,

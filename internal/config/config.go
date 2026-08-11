@@ -20,6 +20,11 @@ type AI struct {
 	RerankModel string `toml:"rerank_model"`
 	AssistModel string `toml:"assist_model"`
 	OllamaURL   string `toml:"ollama_url"`
+	// Provider selects the semantic-assist backend: "" / "ollama" uses a local
+	// Ollama daemon (embeddings + reranking); "agent" borrows a coding-agent CLI
+	// named by AgentCommand for reranking only (no embeddings, no daemon).
+	Provider     string `toml:"provider,omitempty"`
+	AgentCommand string `toml:"agent_command,omitempty"`
 }
 
 // Config is the per-project configuration.

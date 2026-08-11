@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -35,6 +36,11 @@ type InitOptions struct {
 	// init command fills them from models already installed on Ollama.
 	EmbedModel  string
 	AssistModel string
+	// Provider/AgentCommand select the semantic-assist backend. Provider
+	// "agent" borrows a coding-agent CLI (AgentCommand, e.g. "claude -p") for
+	// reranking instead of a local Ollama model.
+	Provider     string
+	AgentCommand string
 	// Integrations is the explicit set of client/editor integrations to merge.
 	// IntegrationsSet distinguishes an intentional empty selection from the
 	// legacy programmatic default, which keeps all integrations for API callers.
@@ -101,6 +107,12 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 		}
 		if opt.AssistModel != "" {
 			cfg.AI.AssistModel = opt.AssistModel
+		}
+		if opt.Provider != "" {
+			cfg.AI.Provider = opt.Provider
+		}
+		if opt.AgentCommand != "" {
+			cfg.AI.AgentCommand = opt.AgentCommand
 		}
 	}
 	if opt.LanguagesSet {
@@ -254,7 +266,7 @@ func languageFilterMostlyExcludes(root string, ignore, languages []string) bool 
 
 func newInitCmd() *cobra.Command {
 	var withAI, noAI, yes, noInput, reconfigure, dryRun, asJSON, remove bool
-	var tier, integrationValue, languagesValue string
+	var tier, integrationValue, languagesValue, aiProvider, aiCommand string
 	c := &cobra.Command{
 		Use:   "init",
 		Short: "Plan, preview, and set up Prowl in the current folder",
@@ -359,10 +371,21 @@ func newInitCmd() *cobra.Command {
 				}
 			}
 
-			// Resolve tier + installed models only when (re)configuring AI; on an
-			// inherit, RunInit preserves the project's existing models.
+			// Decide the semantic-assist backend. --ai-provider wins; otherwise
+			// inherit the project's saved provider. When enabling AI without a
+			// reachable local model, fall back to an installed coding-agent CLI
+			// so reranking still works with no daemon.
+			provider, agentCommand := aiProvider, aiCommand
+			if provider == "" {
+				if pc, e := config.Load(projDir); e == nil {
+					provider = pc.AI.Provider
+					if agentCommand == "" {
+						agentCommand = pc.AI.AgentCommand
+					}
+				}
+			}
 			var embedModel, assistModel string
-			if ai && (aiSet || tier != "") {
+			if ai && provider != "agent" && (aiSet || tier != "") {
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)
 					if !yes && (reconfigure || !remembered) {
@@ -371,7 +394,20 @@ func newInitCmd() *cobra.Command {
 				}
 				p := config.PresetByName(tier)
 				oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
-				embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
+				if provider == "" && !oll.Available(cmd.Context()) {
+					if detected := detectAgentCLI(); detected != "" {
+						provider, agentCommand = "agent", detected
+						uiLog.Infof("no local model reachable; using coding-agent CLI %q for semantic reranking", agentCommand)
+					}
+				}
+				if provider != "agent" {
+					embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
+				}
+			}
+			if provider == "agent" && agentCommand == "" {
+				if agentCommand = detectAgentCLI(); agentCommand == "" {
+					uiLog.Warnf("no coding-agent CLI (claude/omp/codex) on PATH; semantic reranking off, structural search still works")
+				}
 			}
 
 			if !asJSON {
@@ -384,12 +420,12 @@ func newInitCmd() *cobra.Command {
 					langs, langsSet, healed = healedLangs, true, true
 				}
 			}
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
+			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
 			if err != nil {
 				return err
 			}
 			// Run AI setup against the final saved models (resolved or preserved).
-			if ai {
+			if ai && provider != "agent" {
 				final, _ := config.Load(projDir)
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)
@@ -445,6 +481,8 @@ func newInitCmd() *cobra.Command {
 	c.Flags().StringVar(&integrationValue, "integrations", "auto", "comma-separated integrations, or auto, none, all")
 	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
 	c.Flags().StringVar(&languagesValue, "languages", "", "comma-separated languages to index, or auto (default: keep existing config)")
+	c.Flags().StringVar(&aiProvider, "ai-provider", "", "semantic-assist backend: ollama (local model) or agent (borrow a coding-agent CLI for reranking)")
+	c.Flags().StringVar(&aiCommand, "ai-command", "", "completion command when --ai-provider=agent, e.g. \"claude -p\" or \"omp -p\" (default: autodetect)")
 	c.MarkFlagsMutuallyExclusive("with-ai", "no-ai")
 	return c
 }
@@ -509,4 +547,19 @@ func containsString(values []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// detectAgentCLI returns a headless completion command for the first installed
+// coding-agent CLI, or "" when none is found. Pure-completion CLIs come first.
+func detectAgentCLI() string {
+	for _, cand := range []struct{ bin, command string }{
+		{"claude", "claude -p"},
+		{"omp", "omp -p"},
+		{"codex", "codex exec"},
+	} {
+		if _, err := exec.LookPath(cand.bin); err == nil {
+			return cand.command
+		}
+	}
+	return ""
 }

@@ -397,7 +397,7 @@ func newInitCmd() *cobra.Command {
 				if provider == "" && !oll.Available(cmd.Context()) {
 					if detected := detectAgentCLI(); detected != "" {
 						provider, agentCommand = "agent", detected
-						uiLog.Infof("no local model reachable; using coding-agent CLI %q for semantic reranking", agentCommand)
+						uiLog.Infof("no local model reachable; reranking via coding-agent CLI %q (cheap tier). Override with --ai-command", agentCommand)
 					}
 				}
 				if provider != "agent" {
@@ -482,7 +482,7 @@ func newInitCmd() *cobra.Command {
 	c.Flags().StringVar(&tier, "tier", "", "AI model tier: fast, smart, or max")
 	c.Flags().StringVar(&languagesValue, "languages", "", "comma-separated languages to index, or auto (default: keep existing config)")
 	c.Flags().StringVar(&aiProvider, "ai-provider", "", "semantic-assist backend: ollama (local model) or agent (borrow a coding-agent CLI for reranking)")
-	c.Flags().StringVar(&aiCommand, "ai-command", "", "completion command when --ai-provider=agent, e.g. \"claude -p\" or \"omp -p\" (default: autodetect)")
+	c.Flags().StringVar(&aiCommand, "ai-command", "", "completion command when --ai-provider=agent, e.g. \"claude -p --model haiku\"; default: autodetect a cheap tier")
 	c.MarkFlagsMutuallyExclusive("with-ai", "no-ai")
 	return c
 }
@@ -550,12 +550,15 @@ func containsString(values []string, value string) bool {
 }
 
 // detectAgentCLI returns a headless completion command for the first installed
-// coding-agent CLI, or "" when none is found. Pure-completion CLIs come first.
+// coding-agent CLI, or "" when none is found. Reranking is a lightweight
+// ordering task, not coding, so each command pins the agent's cheapest/fastest
+// model tier -- prowl is a support tool and the spawn must stay cheap. The
+// command is fully overridable via --ai-command / config for a different model.
 func detectAgentCLI() string {
 	for _, cand := range []struct{ bin, command string }{
-		{"claude", "claude -p"},
-		{"omp", "omp -p"},
-		{"codex", "codex exec"},
+		{"claude", "claude -p --model haiku"},
+		{"omp", "omp -p --model haiku"},
+		{"codex", "codex exec -m gpt-5-mini"},
 	} {
 		if _, err := exec.LookPath(cand.bin); err == nil {
 			return cand.command

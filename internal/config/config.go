@@ -23,6 +23,9 @@ type AI struct {
 	// Provider selects the semantic-assist backend: "" / "ollama" uses a local
 	// Ollama daemon (embeddings + reranking); "agent" borrows a coding-agent CLI
 	// named by AgentCommand for reranking only (no embeddings, no daemon).
+	// Reranking is a lightweight ordering task, so AgentCommand should name a
+	// cheap/fast model (e.g. "claude -p --model haiku"); prowl is a support tool
+	// and the spawn must stay cheap.
 	Provider     string `toml:"provider,omitempty"`
 	AgentCommand string `toml:"agent_command,omitempty"`
 }

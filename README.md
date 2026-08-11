@@ -339,12 +339,15 @@ never blocks a query to make you download anything.
 
 There is also a CLI path to the same idea, for when you are not going through
 MCP. `prowl-agent init --ai-provider agent` points the semantic reranker at an
-installed coding-agent CLI (`--ai-command "claude -p"`, `"omp -p"`, or
-`"codex exec"`; autodetected when omitted), so `prowl-agent context search` and
-`search_context` get model-quality reranking with no Ollama and no cloud key. If
-you enable AI without a reachable local model, init falls back to a detected
-agent automatically. This backend reranks and synthesizes only; vector search
-still needs a local embed model.
+installed coding-agent CLI, so `prowl-agent context search` and `search_context`
+get model-quality reranking with no Ollama and no cloud key. Reranking is a
+lightweight ordering task, not coding, so prowl autodetects and pins the agent's
+cheapest tier (`claude -p --model haiku`, `omp -p --model haiku`, or
+`codex exec -m gpt-5-mini`); override the model with
+`--ai-command "<your command>"`. If you enable AI without a reachable local
+model, init falls back to a detected agent automatically. This backend reranks
+only; vector search still needs a local embed model. (Over MCP, `rerank: true`
+is even cheaper: the agent's own model does it in-process, no spawn.)
 
 ## Supported formats
 

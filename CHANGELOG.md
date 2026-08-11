@@ -7,10 +7,11 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
-- AI-assisted reranking now works without a local model by borrowing an
-  installed coding-agent CLI. `init --ai-provider agent` points prowl's semantic
-  reranker at that agent instead of Ollama, and when AI is enabled without a
-  reachable local model init falls back to a detected agent automatically.
+- Enabling AI no longer requires a local model. `init` now resolves the
+  semantic-assist backend up front: it prefers Ollama when installed, otherwise
+  it borrows an installed coding-agent CLI (reranking only) instead of walking
+  you through Ollama setup, so the AI toggle is meaningful with no local model.
+  Force a backend with `--ai-provider ollama|agent` / `--ai-command`.
   Reranking is a lightweight ordering task, not coding, so prowl pins the
   agent's cheapest tier by default (`claude -p --model haiku`,
   `omp -p --model haiku`, `codex exec -m gpt-5-mini`); override with

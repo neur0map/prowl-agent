@@ -350,8 +350,9 @@ func newInitCmd() *cobra.Command {
 				form := huh.NewForm(huh.NewGroup(
 					huh.NewConfirm().
 						Title("Enable AI-assisted semantic search?").
-						Description("Adds fuzzy/semantic search powered by a small local model (via Ollama).\n" +
-							"Structural search works without it; you can enable this later.").
+						Description("Adds fuzzy/semantic search, powered by a local model (Ollama) or,\n" +
+							"if you have none, your coding agent (claude/codex/omp). Structural\n" +
+							"search works without it; you can enable this later.").
 						Affirmative("Enable").
 						Negative("Skip").
 						Value(&ai),
@@ -371,42 +372,48 @@ func newInitCmd() *cobra.Command {
 				}
 			}
 
-			// Decide the semantic-assist backend. --ai-provider wins; otherwise
-			// inherit the project's saved provider. When enabling AI without a
-			// reachable local model, fall back to an installed coding-agent CLI
-			// so reranking still works with no daemon.
+			// Resolve the semantic-assist backend whenever AI is on. An explicit
+			// --ai-provider (or a saved one) wins; otherwise prefer a local model
+			// (Ollama, richest: embeddings + reranking) when it is installed, else
+			// borrow a coding-agent CLI (reranking only) so "AI enabled" is
+			// meaningful without a local model -- the agent takes over when there
+			// is none.
 			provider, agentCommand := aiProvider, aiCommand
-			if provider == "" {
-				if pc, e := config.Load(projDir); e == nil {
-					provider = pc.AI.Provider
-					if agentCommand == "" {
-						agentCommand = pc.AI.AgentCommand
-					}
-				}
-			}
 			var embedModel, assistModel string
-			if ai && provider != "agent" && (aiSet || tier != "") {
-				if tier == "" {
-					tier = firstNonEmpty(g.Tier, config.DefaultTier)
-					if !yes && (reconfigure || !remembered) {
-						tier = selectTier()
+			if ai {
+				if provider == "" {
+					if pc, e := config.Load(projDir); e == nil {
+						provider = pc.AI.Provider
+						if agentCommand == "" {
+							agentCommand = pc.AI.AgentCommand
+						}
 					}
 				}
-				p := config.PresetByName(tier)
-				oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
-				if provider == "" && !oll.Available(cmd.Context()) {
-					if detected := detectAgentCLI(); detected != "" {
+				if provider == "" {
+					if _, err := exec.LookPath("ollama"); err == nil {
+						provider = "ollama"
+					} else if detected := detectAgentCLI(); detected != "" {
 						provider, agentCommand = "agent", detected
-						uiLog.Infof("no local model reachable; reranking via coding-agent CLI %q (cheap tier). Override with --ai-command", agentCommand)
+						uiLog.Infof("no local model (Ollama) found; reranking via coding-agent CLI %q (cheap tier). Override with --ai-command", agentCommand)
+					} else {
+						uiLog.Infof("AI enabled but no local model or coding agent found; structural search only. Install Ollama or a coding agent (claude/codex/omp), or pass --ai-command")
 					}
 				}
-				if provider != "agent" {
-					embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
+				if provider == "agent" && agentCommand == "" {
+					if agentCommand = detectAgentCLI(); agentCommand == "" {
+						uiLog.Warnf("--ai-provider agent but no coding-agent CLI (claude/omp/codex) on PATH; semantic reranking off, structural search still works")
+					}
 				}
-			}
-			if provider == "agent" && agentCommand == "" {
-				if agentCommand = detectAgentCLI(); agentCommand == "" {
-					uiLog.Warnf("no coding-agent CLI (claude/omp/codex) on PATH; semantic reranking off, structural search still works")
+				if provider == "ollama" && (aiSet || tier != "") {
+					if tier == "" {
+						tier = firstNonEmpty(g.Tier, config.DefaultTier)
+						if !yes && (reconfigure || !remembered) {
+							tier = selectTier()
+						}
+					}
+					p := config.PresetByName(tier)
+					oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
+					embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
 				}
 			}
 
@@ -425,7 +432,7 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			// Run AI setup against the final saved models (resolved or preserved).
-			if ai && provider != "agent" {
+			if ai && provider == "ollama" {
 				final, _ := config.Load(projDir)
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)

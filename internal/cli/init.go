@@ -390,12 +390,24 @@ func newInitCmd() *cobra.Command {
 					}
 				}
 				if provider == "" {
-					if _, err := exec.LookPath("ollama"); err == nil {
+					detected := detectAgentCLI()
+					_, ollamaErr := exec.LookPath("ollama")
+					ollamaInstalled := ollamaErr == nil
+					interactive := !nonInteractive && !yes && (reconfigure || !remembered)
+					switch {
+					case interactive && detected != "":
+						// Both paths viable: let the user pick. Embeddings (search
+						// by meaning) need the local model; the agent only reranks.
+						provider = selectBackend(detected, ollamaInstalled)
+						if provider == "agent" {
+							agentCommand = detected
+						}
+					case ollamaInstalled:
 						provider = "ollama"
-					} else if detected := detectAgentCLI(); detected != "" {
+					case detected != "":
 						provider, agentCommand = "agent", detected
 						uiLog.Infof("no local model (Ollama) found; reranking via coding-agent CLI %q (cheap tier). Override with --ai-command", agentCommand)
-					} else {
+					default:
 						uiLog.Infof("AI enabled but no local model or coding agent found; structural search only. Install Ollama or a coding agent (claude/codex/omp), or pass --ai-command")
 					}
 				}

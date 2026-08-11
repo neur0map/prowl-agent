@@ -11,7 +11,10 @@ All notable changes are recorded here. The format follows
   semantic-assist backend up front: it prefers Ollama when installed, otherwise
   it borrows an installed coding-agent CLI (reranking only) instead of walking
   you through Ollama setup, so the AI toggle is meaningful with no local model.
-  Force a backend with `--ai-provider ollama|agent` / `--ai-command`.
+  The interactive wizard adds a backend step (local model vs coding agent) when
+  both are viable, and states the tradeoff: embeddings (search by meaning) need
+  the local model; the agent only reranks. Force a backend non-interactively
+  with `--ai-provider ollama|agent` / `--ai-command`.
   Reranking is a lightweight ordering task, not coding, so prowl pins the
   agent's cheapest tier by default (`claude -p --model haiku`,
   `omp -p --model haiku`, `codex exec -m gpt-5-mini`); override with

@@ -34,6 +34,33 @@ func selectTier() string {
 	return tier
 }
 
+// selectBackend asks whether semantic assist should use a local model or a
+// coding-agent CLI. Embeddings (search by meaning) need the local model; the
+// agent backend only reranks, but needs no daemon and stays cheap.
+func selectBackend(agentCommand string, ollamaInstalled bool) string {
+	choice := "agent"
+	if ollamaInstalled {
+		choice = "ollama"
+	}
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Choose the semantic-assist backend").
+			Description("Reranking sharpens result order; embeddings (find code by meaning) need a local model.").
+			Options(
+				huh.NewOption("Local model (Ollama): embeddings + reranking, needs VRAM/disk", "ollama"),
+				huh.NewOption("Coding agent ("+agentCommand+"): reranking only, no local model, cheap", "agent"),
+			).
+			Value(&choice),
+	))
+	if form.Run() != nil {
+		if ollamaInstalled {
+			return "ollama"
+		}
+		return "agent"
+	}
+	return choice
+}
+
 // setupAI gets Ollama and the chosen tier's models ready: it ensures Ollama is
 // installed, brings the daemon up (reusing a service, installing a user service,
 // or spawning it), pulls any missing models, and warms the embed model. It keeps

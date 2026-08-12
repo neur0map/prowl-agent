@@ -508,6 +508,16 @@ func TestSetupApplyInstallsAndRemovesEmbeddedSkills(t *testing.T) {
 			t.Fatalf("installed skill %s content = %q, want embedded body", path, got)
 		}
 	}
+	// The omp integration also installs the sticky RULES.md rule (re-injected each
+	// turn), marker-bounded so it merges with any user RULES.md and reverts clean.
+	rulesPath := filepath.Join(root, ".omp", "RULES.md")
+	rules, err := os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("read .omp/RULES.md: %v", err)
+	}
+	if !strings.Contains(string(rules), "<!-- prowl-agent -->") || !strings.Contains(string(rules), "search_context") {
+		t.Fatalf(".omp/RULES.md missing prowl sticky rule: %q", rules)
+	}
 	// Removing the integrations takes their installed skill files back out.
 	if err := service.removeIntegrations([]string{IntegrationOMP, IntegrationClaude}); err != nil {
 		t.Fatalf("remove integrations: %v", err)
@@ -517,6 +527,9 @@ func TestSetupApplyInstallsAndRemovesEmbeddedSkills(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("skill %s survived removal: %v", path, err)
 		}
+	}
+	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
+		t.Fatalf(".omp/RULES.md survived removal: %v", err)
 	}
 }
 

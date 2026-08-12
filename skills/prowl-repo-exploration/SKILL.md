@@ -10,6 +10,12 @@ connect) and answers from it in one command, cited to file and line. It replaces
 the grep-then-open-many-files loop for structural questions. It does not replace
 grep or glob for literal string or filename scans.
 
+**Two interfaces, one index.** When your harness exposes Prowl as MCP tools
+(search_context, read_symbol, outline, find_references, analyze_change,
+sketch_ui), prefer those -- they are already in your tool list. The prowl-agent
+CLI below is the opt-in equivalent for when MCP is not wired. Either way, reach
+for Prowl before grepping and reading many files.
+
 ## When prowl, when grep
 
 - Use prowl for: "where is X defined", "who calls or imports this", "what breaks

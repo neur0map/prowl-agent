@@ -276,6 +276,13 @@ func newInitCmd() *cobra.Command {
 			nonInteractive := yes || noInput || dryRun || asJSON
 
 			detected := DetectIntegrations(root)
+			// Fold in the harnesses the user actually runs (omp, claude) even when
+			// this repo has no config dir for them yet, so `auto` also installs
+			// their native integration -- the harness's own skills (its "when to
+			// reach for prowl" signal) plus a native MCP entry -- not only the
+			// client-agnostic AGENTS.md/.mcp.json baseline. This is what makes
+			// every agent, not just MCP-aware ones, know prowl out of the box.
+			detected = append(detected, DetectInstalledHarnesses()...)
 			var integrations []string
 			var err error
 			if cmd.Flags().Changed("integrations") || nonInteractive {
@@ -284,10 +291,19 @@ func newInitCmd() *cobra.Command {
 					return err
 				}
 			} else {
-				integrations = append([]string(nil), detected...)
+				// Pre-select the same universal baseline `auto` installs (any
+				// detected clients plus the client-agnostic AGENTS.md guidance and
+				// `.mcp.json` MCP registration), so accepting the default wires
+				// Prowl up instead of installing nothing on a repo with no detected
+				// client -- the trap that left indexed repos with no signal that
+				// Prowl exists. The user can still deselect any of them.
+				integrations, err = ParseIntegrationSelection("auto", detected)
+				if err != nil {
+					return err
+				}
 				options := make([]huh.Option[string], 0, len(allIntegrations))
 				for _, name := range allIntegrations {
-					options = append(options, huh.NewOption(name, name).Selected(containsString(detected, name)))
+					options = append(options, huh.NewOption(name, name).Selected(containsString(integrations, name)))
 				}
 				form := huh.NewForm(huh.NewGroup(
 					huh.NewMultiSelect[string]().

@@ -89,8 +89,10 @@ prowl-agent init --no-ai --no-input --integrations cursor,vscode
 
 `init` builds the index, previews the selected integrations, and writes only the
 clients you choose. `--integrations auto` (the default) picks clients already
-present in the project and always writes the `AGENTS.md` guidance, so any agent
-that reads the repo is told to query Prowl first. Use `none`, `all`, or a
+present in the project and always writes both the `AGENTS.md` guidance and a
+client-agnostic `.mcp.json`, so any agent that reads the repo is told to prefer
+Prowl *and* sees Prowl's tools in its own tool list (prose alone is unreliable
+for coding agents with strong native grep/read priors). Use `none`, `all`, or a
 comma-separated list. `--remove-integrations` removes only Prowl-owned entries
 and leaves neighboring config alone. State lives in `.prowl/`, which it adds to
 `.gitignore`.
@@ -99,8 +101,9 @@ Setup is transactional: a malformed client config aborts the run and restores an
 file it already touched. The optional `AGENTS.md` guidance sits between markers,
 so re-running setup refreshes only Prowl's block.
 
-When a harness with a skill system is detected (its skill directory, for example
-`.omp/skills/` or `.claude/skills/`), `init` also installs a few prowl skills so
+When you use a harness with a skill system -- omp or Claude, detected by its
+config directory or launcher even when this repo has no skill dir yet -- `init`
+also installs a few prowl skills into it (`.omp/skills/`, `.claude/skills/`) so
 the agent knows when to reach for prowl and when to stay on grep. The skill files
 are prowl-owned and excluded from the index.
 

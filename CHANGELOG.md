@@ -67,6 +67,22 @@ All notable changes are recorded here. The format follows
   integrations, next steps) on a terminal instead of a wall of per-skill-file
   plan lines; the `--dry-run` plan collapses the per-agent skills into one line.
   Piped/`--json` output is unchanged.
+- `init --integrations auto` (the default) is more aggressive about making every
+  agent know Prowl. It always registers Prowl's MCP server via a client-agnostic
+  `.mcp.json` and writes the `AGENTS.md` guidance; additionally it now detects the
+  harnesses you actually run (omp, Claude -- by their config dir or launcher, not
+  only a project config dir) and installs their native integration too: the prowl
+  skills that tell an agent when to reach for Prowl, plus omp's native
+  `.omp/mcp.json`. Prose alone is unreliable for coding agents with strong native
+  grep/read priors (notably Anthropic models), which under-weight an instruction
+  to shell out to an unfamiliar CLI; a registered MCP server puts Prowl's tools in
+  the agent's own tool list, where they actually get called. The `AGENTS.md` block
+  and the exploration skill now teach both interfaces -- the MCP tools (preferred)
+  and the `prowl-agent` CLI (the opt-in equivalent) -- and the interactive picker
+  pre-selects this whole baseline. For omp it also installs a sticky
+  `.omp/RULES.md` (re-injected near every turn, unlike `AGENTS.md`, which drifts
+  up a long transcript) holding the "reach for Prowl before grep" directive in
+  force. All reversible with `--remove-integrations`.
 
 ### Fixed
 - `search` (and the `similar_code` / `smart_search` MCP tools) now surface files

@@ -162,6 +162,27 @@ func TestParseIntegrationSelection(t *testing.T) {
 	}
 }
 
+func TestParseIntegrationSelectionAutoBaseline(t *testing.T) {
+	// `auto` always installs the client-agnostic baseline -- AGENTS.md guidance
+	// and the `.mcp.json` MCP registration -- even when nothing is detected, so a
+	// bare init never leaves an indexed repo with no signal that Prowl exists.
+	got, err := ParseIntegrationSelection("auto", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{IntegrationAgents, IntegrationGeneric}) {
+		t.Fatalf("auto baseline = %v, want [%s %s]", got, IntegrationAgents, IntegrationGeneric)
+	}
+	// Detected clients merge in without dropping the baseline.
+	got, err = ParseIntegrationSelection("auto", []string{IntegrationCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{IntegrationAgents, IntegrationCursor, IntegrationGeneric}) {
+		t.Fatalf("auto with detected cursor = %v", got)
+	}
+}
+
 func TestInitDryRunJSONDoesNotWrite(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)

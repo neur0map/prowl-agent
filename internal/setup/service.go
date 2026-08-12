@@ -37,6 +37,15 @@ const (
 
 	// integrationSkill marks an Action that installs one embedded agent skill.
 	integrationSkill = "skill"
+	// integrationRules marks an Action that installs Prowl's sticky RULES.md
+	// block. omp re-injects RULES.md near every turn, so the "reach for Prowl
+	// before grep" directive keeps its hold instead of drifting up the transcript
+	// the way AGENTS.md does.
+	integrationRules = "rules"
+	// integrationAgent marks an Action that installs a prowl-aware task-agent
+	// definition (the scout override), so delegated exploration uses Prowl
+	// instead of grepping the whole tree.
+	integrationAgent = "agent"
 
 	maxIdempotencyKeyBytes = 128
 	replayPath             = ".prowl/setup-applies.json"
@@ -425,6 +434,10 @@ func actionsFor(integrations []string) []Action {
 		if dir, ok := skillRoots[integration]; ok {
 			actions = append(actions, skillActions(dir)...)
 		}
+		if integration == IntegrationOMP {
+			actions = append(actions, Action{Integration: integrationRules, Path: ".omp/RULES.md", Description: "install prowl sticky rule (re-injected each turn)"})
+			actions = append(actions, Action{Integration: integrationAgent, Path: ".omp/agents/scout.md", Description: "install prowl-aware scout subagent"})
+		}
 	}
 	return actions
 }
@@ -511,6 +524,14 @@ func (service *Service) applyActionsInRoot(root *os.Root, actions []Action, pend
 			}
 		case integrationSkill:
 			if err := installSkill(root, action.Path); err != nil {
+				return err
+			}
+		case integrationRules:
+			if err := ensureRulesBlock(root, action.Path); err != nil {
+				return err
+			}
+		case integrationAgent:
+			if err := writeRootFile(root, action.Path, []byte(ompScoutAgent), 0o644); err != nil {
 				return err
 			}
 		default:
@@ -947,11 +968,17 @@ func ParseIntegrationSelection(value string, detected []string) ([]string, error
 	value = strings.TrimSpace(strings.ToLower(value))
 	if value == "" || value == "auto" {
 		// AGENTS.md is the client-agnostic guidance almost every coding agent
-		// reads, and guidance an agent never sees cannot make it reach for Prowl.
-		// Always include it in auto, even on a repo that has none yet, so a bare
-		// `init` still tells agents to query Prowl first. It is a reversible,
-		// marker-bounded block (`--remove-integrations` takes it back out).
-		return NormalizeIntegrations(append(append([]string(nil), detected...), IntegrationAgents))
+		// reads; the client-agnostic `.mcp.json` registers Prowl's MCP server so
+		// the tools appear in the agent's own tool list. Guidance an agent never
+		// sees cannot make it reach for Prowl, and prose alone is unreliable for
+		// models with strong native grep/read priors (notably Anthropic's), which
+		// under-weight an instruction to shell out to an unfamiliar CLI -- a
+		// visible tool is what actually gets called. Always include both in auto,
+		// even on a repo that has neither yet, so a bare `init` both tells agents
+		// to prefer Prowl and gives them the tools to do it. Both are reversible
+		// (`--remove-integrations`): the AGENTS.md block is marker-bounded and the
+		// `.mcp.json` entry is a single server key.
+		return NormalizeIntegrations(append(append([]string(nil), detected...), IntegrationAgents, IntegrationGeneric))
 	}
 	if value == "none" {
 		return []string{}, nil
@@ -1031,6 +1058,10 @@ func (service *Service) removeIntegrations(integrations []string) error {
 			err = removeOwnedFile(root, action.Path, helixConfig())
 		case integrationSkill:
 			err = removeSkill(root, action.Path)
+		case integrationRules:
+			err = removeAgentsBlock(root, action.Path)
+		case integrationAgent:
+			err = removeOwnedFile(root, action.Path, ompScoutAgent)
 		}
 		if err != nil {
 			return safeError(err)
@@ -1087,27 +1118,42 @@ const AgentsMapEndMarker = "<!-- /prowl-agent:map -->"
 const agentsBlock = agentsMarker + `
 ## Prowl project context
 
-This repo has a Prowl index. To find code, read it, trace how it connects, or
-check what a change touches, query Prowl first, and prefer reading one symbol
-(def) or a file's structure (outline) over opening whole files; use grep only
-for plain-text scans. Prowl reindexes what changed before each query, so answers
-stay current, and a symbol lookup returns ranked, cited file:line results in one
-call rather than a grep hit list you then open files to disambiguate.
+This repo has a Prowl index of its files, symbols, and how they connect. To find
+code, read one symbol, trace who calls it, or check what a change touches,
+**query Prowl first** -- do not grep or read whole files just to locate things.
+Prowl reindexes what changed before each query, so answers stay current, and it
+returns ranked, cited file:line results in one call instead of a grep hit list
+you then open files to disambiguate.
 
-- Map the project: ` + "`prowl-agent overview`" + `
-- Find a symbol, setting, or component: ` + "`prowl-agent find <name>`" + `
-- See a file's structure without reading it: ` + "`prowl-agent outline <path>`" + ` (symbols and signatures, no bodies)
-- Read one symbol instead of the whole file: ` + "`prowl-agent def <name>`" + `
-- Where a symbol is used (its callers): ` + "`prowl-agent references <name>`" + `
-- How files connect: ` + "`prowl-agent callers|callees|relations <path>`" + `
-- Blast radius before an edit: ` + "`prowl-agent impact <path>`" + `
-- Search text or meaning: ` + "`prowl-agent search <text>`" + `
-- Resume unfinished work: ` + "`prowl-agent wip`" + `
-- After edits: ` + "`prowl-agent changed`" + ` and ` + "`prowl-agent doctor`" + `
+The same index is reachable two ways, and every agent should know both:
 
-Output is token-lean TOON by default; add ` + "`--format human|toon|json|markdown`" + `.
-MCP clients can run ` + "`prowl-agent serve`" + `.
+- **Preferred -- Prowl MCP tools** (they appear in your tool list when your
+  harness wires Prowl as an MCP server): search_context (where/how does X work),
+  read_symbol (one symbol's source), outline (a file's structure, no bodies),
+  find_references (call sites), analyze_change (blast radius before an edit), and
+  sketch_ui (how a UI looks, from source).
+- **Opt-in -- the prowl-agent CLI** (same capabilities, for when MCP is not
+  wired): overview, find <name>, outline <path>, def <name>, references <name>,
+  callers|callees|relations <path>, impact <path>, search <text>, wip, and
+  changed / doctor after edits.
+
+Keep grep and glob for literal-string and filename scans only. CLI output is
+token-lean TOON by default; add --format human|toon|json|markdown.
 <!-- /prowl-agent -->`
+
+// rulesBlock is Prowl's sticky rule, installed as .omp/RULES.md for the omp
+// integration. omp re-injects RULES.md near every turn (unlike AGENTS.md, which
+// drifts up the transcript), so this keeps the "reach for Prowl before grep" hold
+// even in long sessions. It shares the AGENTS.md markers so the same ensure/strip
+// helpers manage it and it merges with any user-authored RULES.md.
+const rulesBlock = agentsMarker + `
+Prowl indexes this repo. To locate, read, trace, or understand code -- where a
+symbol, setting, or component is defined, who calls or imports it, how a feature
+works, or a change's blast radius -- use the Prowl MCP tools (search_context,
+find_references, read_symbol, outline, analyze_change) or the prowl-agent CLI
+before grep/glob and reading files. Use grep and glob only for literal-string or
+filename scans.
+` + agentsEndMarker
 
 type mcpServer struct {
 	Type    string   `json:"type"`
@@ -1155,6 +1201,17 @@ func mergeOpenCode(root *os.Root, rel string) error {
 }
 
 func ensureAgentsBlock(root *os.Root, rel string) error {
+	return ensureMarkedBlock(root, rel, agentsBlock)
+}
+
+// ensureRulesBlock installs Prowl's sticky rule into rel (.omp/RULES.md).
+func ensureRulesBlock(root *os.Root, rel string) error {
+	return ensureMarkedBlock(root, rel, rulesBlock)
+}
+
+// ensureMarkedBlock writes block into rel, replacing an existing prowl-marked
+// region in place (so a user's surrounding content survives) or appending it.
+func ensureMarkedBlock(root *os.Root, rel, block string) error {
 	data, err := readRootFile(root, rel)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -1167,7 +1224,7 @@ func ensureAgentsBlock(root *os.Root, rel string) error {
 		} else if offset := strings.IndexByte(content[start:], '\n'); offset >= 0 {
 			end = start + offset
 		}
-		updated := content[:start] + agentsBlock + content[end:]
+		updated := content[:start] + block + content[end:]
 		if updated == content {
 			return nil
 		}
@@ -1179,7 +1236,7 @@ func ensureAgentsBlock(root *os.Root, rel string) error {
 	if content != "" {
 		content += "\n"
 	}
-	return writeRootFile(root, rel, []byte(content+agentsBlock+"\n"), 0o644)
+	return writeRootFile(root, rel, []byte(content+block+"\n"), 0o644)
 }
 
 // EnsureAgentsBlock updates only Prowl's marked block in an explicit file.

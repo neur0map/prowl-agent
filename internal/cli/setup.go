@@ -34,6 +34,13 @@ func DetectIntegrations(root string) []string {
 	return setup.DetectIntegrations(root)
 }
 
+// DetectInstalledHarnesses reports harness integrations installed on this
+// machine (omp, claude) so init can wire their native integration even in a
+// repo that has no config directory for them yet.
+func DetectInstalledHarnesses() []string {
+	return setup.DetectInstalledHarnesses()
+}
+
 func ParseIntegrationSelection(value string, detected []string) ([]string, error) {
 	return setup.ParseIntegrationSelection(value, detected)
 }

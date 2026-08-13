@@ -43,7 +43,7 @@ assert any(a['integration'] == 'skill' for a in actions), actions
 PY
 test ! -e .prowl
 
-"$binary" init --no-ai --no-input --json --integrations cursor,agents > "$tmp/init.json"
+"$binary" init --no-input --json --integrations cursor,agents > "$tmp/init.json"
 python3 - "$tmp/init.json" <<'PY'
 import json, pathlib, sys
 report = json.loads(pathlib.Path(sys.argv[1]).read_text())

@@ -24,7 +24,7 @@ assert {a['integration'] for a in payload['plan']['actions']} == {'agents', 'cur
 PY
 test ! -e .prowl
 
-"$bin" init --no-ai --no-input --json --integrations cursor,agents > "$tmp/init.json"
+"$bin" init --no-input --json --integrations cursor,agents > "$tmp/init.json"
 python3 - "$tmp/init.json" <<'PY'
 import json, pathlib, sys
 report = json.loads(pathlib.Path(sys.argv[1]).read_text())

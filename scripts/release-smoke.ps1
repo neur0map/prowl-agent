@@ -39,7 +39,7 @@ try {
         if (Test-Path -LiteralPath '.prowl') { throw 'dry run created .prowl' }
 
         $initPath = Join-Path $tmp 'init.json'
-        & $Binary init --no-ai --no-input --json --integrations cursor,agents | Set-Content -LiteralPath $initPath -NoNewline
+        & $Binary init --no-input --json --integrations cursor,agents | Set-Content -LiteralPath $initPath -NoNewline
         $init = Get-Content -LiteralPath $initPath -Raw | ConvertFrom-Json
         if ($init.indexed.Indexed -ne 2) { throw "indexed $($init.indexed.Indexed) files, expected 2" }
         if (-not (Test-Path -LiteralPath '.cursor/mcp.json')) { throw 'cursor integration was not created' }

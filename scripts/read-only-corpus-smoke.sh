@@ -56,8 +56,8 @@ bwrap \
     --setenv XDG_STATE_HOME /tmp/state \
     --chdir /tmp/project \
     /bin/sh -ceu '
-        "$1" init --no-ai --no-input --json --integrations "" > /tmp/init-first.json
-        "$1" init --no-ai --no-input --json --integrations "" > /tmp/init-second.json
+        "$1" init --no-input --json --integrations "" > /tmp/init-first.json
+        "$1" init --no-input --json --integrations "" > /tmp/init-second.json
         python3 -m json.tool /tmp/init-second.json >/dev/null
         "$1" overview --format json | python3 -m json.tool >/dev/null
         "$1" status --json | python3 -m json.tool >/dev/null

@@ -381,7 +381,7 @@ func newInitCmd() *cobra.Command {
 			if provider == "ollama" && (reconfigure || !remembered || tier != "") {
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)
-					if !yes && (reconfigure || !remembered) {
+					if !nonInteractive && (reconfigure || !remembered) {
 						tier = selectTier()
 					}
 				}

@@ -788,9 +788,12 @@ func testCoversStem(testPath, stem string) bool {
 	return false
 }
 
-// SimilarCode returns ranked snippets. With an inferencer and a vector index it
-// fuses semantic (vector KNN) and lexical (FTS) results via reciprocal rank
-// fusion; otherwise it falls back to FTS only.
+// SimilarCode returns ranked snippets. With an inferencer and a local vector
+// index it fuses semantic (vector KNN) and lexical (FTS) results via reciprocal
+// rank fusion; otherwise it falls back to lexical FTS only. It never spawns an
+// inference call on the default path: the expensive agent rewrite+rerank is
+// reserved for SmartSearch (--smart), so plain `search` stays fast enough to sit
+// in an agent's inner loop even on the no-local-model (agent) tier.
 func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHit, error) {
 	release, err := q.beginRead(ctx)
 	if err != nil {
@@ -801,6 +804,23 @@ func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHi
 		return q.searchChunksRanked(text, DefaultLimit)
 	}
 	return q.hybrid(ctx, text, DefaultLimit)
+}
+
+// rewriteQuery turns a natural-language query into a short keyword query via the
+// inferencer, returning the original text unchanged on any failure. It is the
+// cheap, single-call first half of the SmartSearch (--smart) assist pipeline.
+func (q *Querier) rewriteQuery(ctx context.Context, text string) string {
+	if q.inf == nil {
+		return text
+	}
+	rw, err := q.inf.Generate(ctx, rewritePrompt(text))
+	if err != nil {
+		return text
+	}
+	if c := cleanRewrite(rw); c != "" {
+		return c
+	}
+	return text
 }
 
 // searchChunksRanked runs the FTS query over a generous pool, then stably ranks
@@ -1032,10 +1052,14 @@ type SmartResult struct {
 	Matches   []store.ChunkHit `json:"matches"`
 }
 
-// SmartSearch runs the full assist pipeline: an optional query rewrite, hybrid
-// vector+FTS retrieval, then a rerank. It falls back to plain FTS when the
-// assist layer is unavailable. Every model output is constrained (a query
-// string, an index ordering); the model never invents or edits results.
+// SmartSearch runs the full assist pipeline: a query rewrite, candidate
+// retrieval, then an agent/model rerank. Candidate retrieval fuses vector+FTS
+// when a local vector index exists, and otherwise ranks lexically -- so --smart
+// still rewrites and reranks through the attached coding agent even with no
+// local embed model (the agent tier), which is the whole point of a borrowed
+// backend. Only a missing inferencer drops it to plain FTS. Every model output
+// is constrained (a query string, an index ordering); the model never invents
+// or edits results.
 func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, error) {
 	release, err := q.beginRead(ctx)
 	if err != nil {
@@ -1043,18 +1067,21 @@ func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, er
 	}
 	defer release()
 	res := SmartResult{Query: text}
-	if q.inf == nil || !q.s.VectorsReady() {
+	if q.inf == nil {
 		hits, err := q.searchChunksRanked(text, DefaultLimit)
 		res.Matches = hits
 		return res, err
 	}
 	search := text
-	if rw, err := q.inf.Generate(ctx, rewritePrompt(text)); err == nil {
-		if c := cleanRewrite(rw); c != "" {
-			search, res.Rewritten = c, c
-		}
+	if rw := q.rewriteQuery(ctx, text); rw != text {
+		search, res.Rewritten = rw, rw
 	}
-	cand, err := q.hybrid(ctx, search, 20)
+	var cand []store.ChunkHit
+	if q.s.VectorsReady() {
+		cand, err = q.hybrid(ctx, search, 20)
+	} else {
+		cand, err = q.searchChunksRanked(search, 20)
+	}
 	if err != nil {
 		return res, err
 	}

@@ -34,9 +34,10 @@ func selectTier() string {
 	return tier
 }
 
-// selectBackend asks whether semantic assist should use a local model or a
-// coding-agent CLI. Embeddings (search by meaning) need the local model; the
-// agent backend only reranks, but needs no daemon and stays cheap.
+// selectBackend asks which backend powers the higher-quality half of semantic
+// assist. Semantic search itself is always on via the built-in in-process
+// embedder; a local Ollama model gives higher-quality embeddings, while a
+// coding-agent CLI needs no daemon and adds query rewrite + reranking.
 func selectBackend(agentCommand string, ollamaInstalled bool) string {
 	choice := "agent"
 	if ollamaInstalled {
@@ -44,11 +45,11 @@ func selectBackend(agentCommand string, ollamaInstalled bool) string {
 	}
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("Choose the semantic-assist backend").
-			Description("Reranking sharpens result order; embeddings (find code by meaning) need a local model.").
+			Title("Choose the semantic-assist upgrade").
+			Description("Semantic search is already on (built-in embedder); pick an optional upgrade.").
 			Options(
-				huh.NewOption("Local model (Ollama): embeddings + reranking, needs VRAM/disk", "ollama"),
-				huh.NewOption("Coding agent ("+agentCommand+"): reranking only, no local model, cheap", "agent"),
+				huh.NewOption("Local model (Ollama): higher-quality embeddings, needs VRAM/disk", "ollama"),
+				huh.NewOption("Coding agent ("+agentCommand+"): rewrite + reranking, no daemon, cheap", "agent"),
 			).
 			Value(&choice),
 	))
@@ -61,11 +62,11 @@ func selectBackend(agentCommand string, ollamaInstalled bool) string {
 	return choice
 }
 
-// setupAI gets Ollama and the chosen tier's models ready: it ensures Ollama is
-// installed, brings the daemon up (reusing a service, installing a user service,
-// or spawning it), pulls any missing models, and warms the embed model. It keeps
-// semantic search working across long sessions and degrades to structural-only
-// if Ollama cannot be started.
+// setupAI upgrades the embedding backend to a local Ollama model: it ensures
+// Ollama is installed, brings the daemon up (reusing a service, installing a
+// user service, or spawning it), pulls any missing models, and warms the embed
+// model. It is purely an upgrade -- semantic search already works through the
+// built-in in-process embedder, so any failure here just keeps that in use.
 func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interactive bool) {
 	fmt.Fprintf(out, "AI tier %q: embed %s, assist %s\n", p.Name, p.EmbedModel, p.AssistModel)
 	oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
@@ -77,8 +78,8 @@ func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interacti
 			if interactive && confirmAI("Ollama is not installed. Install it now? (runs the official installer; may ask for sudo)") {
 				installOllama(out)
 			} else {
-				uiLog.Warn("Ollama is not installed; semantic search stays off (structural search still works)")
-				uiLog.Info("install it: curl -fsSL https://ollama.com/install.sh | sh")
+				uiLog.Info("Ollama is not installed; using the built-in embedder for semantic search")
+				uiLog.Info("optional higher-quality embeddings: curl -fsSL https://ollama.com/install.sh | sh")
 				return
 			}
 		}
@@ -86,7 +87,7 @@ func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interacti
 
 	// Bring the daemon up and keep it up for long coding sessions.
 	if !ensureOllama(ctx, oll, root) {
-		uiLog.Warn("Ollama is not reachable yet; semantic search activates once it is up")
+		uiLog.Info("Ollama not reachable; using the built-in embedder (Ollama would upgrade embedding quality)")
 		return
 	}
 
@@ -112,12 +113,12 @@ func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interacti
 			uiLog.Infof("warmed %s; semantic search ready", p.EmbedModel)
 		}
 	} else {
-		uiLog.Info("semantic search activates once the embed model is pulled")
+		uiLog.Infof("using the built-in embedder; pull %s for higher-quality embeddings", p.EmbedModel)
 	}
 }
 
 func confirmAI(title string) bool {
-	var ok bool
+	ok := true
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(title).Affirmative("Yes").Negative("No").Value(&ok),
 	))

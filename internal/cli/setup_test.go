@@ -218,6 +218,7 @@ func TestInitDryRunJSONDoesNotWrite(t *testing.T) {
 func TestInitNoInputWritesOnlySelectedIntegration(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // no ollama/claude/codex/omp discoverable: structural-only, hermetic
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -227,7 +228,7 @@ func TestInitNoInputWritesOnlySelectedIntegration(t *testing.T) {
 	cmd := newInitCmd()
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--no-input", "--no-ai", "--json", "--integrations", "cursor"})
+	cmd.SetArgs([]string{"--no-input", "--json", "--integrations", "cursor"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("init: %v\n%s", err, out.String())
 	}

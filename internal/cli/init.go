@@ -26,12 +26,7 @@ import (
 // InitOptions controls a non-interactive init.
 type InitOptions struct {
 	Root string
-	AI   bool
-	// AISet marks AI as an explicit decision (a flag or the interactive prompt).
-	// When false, RunInit derives AI from the existing project config, then the
-	// global default, so a plain re-init never resets a prior choice.
-	AISet bool
-	Tier  string
+	Tier string
 	// EmbedModel and AssistModel override the tier preset when non-empty. The
 	// init command fills them from models already installed on Ollama.
 	EmbedModel  string
@@ -81,39 +76,32 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	}
 	g, _ := config.LoadGlobal()
 
-	// AI-enable precedence: explicit decision > existing project > global default.
-	aiOn := cfg.AI.Enabled
-	if !existed {
-		aiOn = g.AIEnabled
-	}
-	if opt.AISet {
-		aiOn = opt.AI
-	}
-	cfg.AI.Enabled = aiOn
+	// Semantic assist is always on; init never disables it. A fresh project and
+	// a re-init both land on enabled=true, healing any legacy config written
+	// back when AI could be skipped.
+	cfg.AI.Enabled = true
 
 	tier := firstNonEmpty(opt.Tier, g.Tier, config.DefaultTier)
-	if aiOn {
-		switch {
-		case opt.Tier != "":
-			p := config.PresetByName(opt.Tier)
-			cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
-		case !existed:
-			p := config.PresetByName(tier)
-			cfg.AI.EmbedModel = firstNonEmpty(g.EmbedModel, p.EmbedModel)
-			cfg.AI.AssistModel = firstNonEmpty(g.AssistModel, p.AssistModel)
-		}
-		if opt.EmbedModel != "" {
-			cfg.AI.EmbedModel = opt.EmbedModel
-		}
-		if opt.AssistModel != "" {
-			cfg.AI.AssistModel = opt.AssistModel
-		}
-		if opt.Provider != "" {
-			cfg.AI.Provider = opt.Provider
-		}
-		if opt.AgentCommand != "" {
-			cfg.AI.AgentCommand = opt.AgentCommand
-		}
+	switch {
+	case opt.Tier != "":
+		p := config.PresetByName(opt.Tier)
+		cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
+	case !existed:
+		p := config.PresetByName(tier)
+		cfg.AI.EmbedModel = firstNonEmpty(g.EmbedModel, p.EmbedModel)
+		cfg.AI.AssistModel = firstNonEmpty(g.AssistModel, p.AssistModel)
+	}
+	if opt.EmbedModel != "" {
+		cfg.AI.EmbedModel = opt.EmbedModel
+	}
+	if opt.AssistModel != "" {
+		cfg.AI.AssistModel = opt.AssistModel
+	}
+	if opt.Provider != "" {
+		cfg.AI.Provider = opt.Provider
+	}
+	if opt.AgentCommand != "" {
+		cfg.AI.AgentCommand = opt.AgentCommand
 	}
 	if opt.LanguagesSet {
 		cfg.Languages = opt.Languages
@@ -122,12 +110,12 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err := config.Save(ws.Path, cfg); err != nil {
 		return index.Summary{}, err
 	}
-	// Remember the choice binary-wide so future inits inherit it, but only on an
-	// explicit decision or a brand-new project: a plain re-index of an existing
-	// project must not silently change the global default.
-	if opt.AISet || !existed {
+	// Remember tier/models binary-wide so future inits inherit them, but only on
+	// a brand-new project or an explicit tier choice: a plain re-index of an
+	// existing project must not silently change the global default.
+	if opt.Tier != "" || !existed {
 		_ = config.SaveGlobal(config.GlobalConfig{
-			AIEnabled:   aiOn,
+			AIEnabled:   true,
 			Tier:        tier,
 			EmbedModel:  cfg.AI.EmbedModel,
 			AssistModel: cfg.AI.AssistModel,
@@ -175,7 +163,7 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	if err := workspace.EnsureDerivedIgnored(root); err != nil {
 		return sum, err
 	}
-	if err := workspace.Register(root, aiOn); err != nil {
+	if err := workspace.Register(root, true); err != nil {
 		return sum, err
 	}
 	return sum, nil
@@ -265,7 +253,7 @@ func languageFilterMostlyExcludes(root string, ignore, languages []string) bool 
 }
 
 func newInitCmd() *cobra.Command {
-	var withAI, noAI, yes, noInput, reconfigure, dryRun, asJSON, remove bool
+	var yes, noInput, reconfigure, dryRun, asJSON, remove bool
 	var tier, integrationValue, languagesValue, aiProvider, aiCommand string
 	c := &cobra.Command{
 		Use:   "init",
@@ -345,104 +333,61 @@ func newInitCmd() *cobra.Command {
 			g, _ := config.LoadGlobal()
 			remembered := projInit || config.GlobalExists()
 
-			// Inherited AI value by precedence: existing project, else global.
-			inheritedAI := g.AIEnabled
-			if projInit {
-				if pc, e := config.Load(projDir); e == nil {
-					inheritedAI = pc.AI.Enabled
-				}
-			}
+			// AI-assisted semantic search is always on and cannot be skipped at
+			// init. The backend and tier below are still user-choosable; the
+			// runtime resolver degrades gracefully when no local model exists.
 
-			var ai, aiSet bool
-			switch {
-			case withAI:
-				ai, aiSet = true, true
-			case noAI:
-				ai, aiSet = false, true
-			case yes:
-				ai, aiSet = inheritedAI, false
-			case reconfigure || !remembered:
-				ai = inheritedAI // seed the toggle with the current value
-				form := huh.NewForm(huh.NewGroup(
-					huh.NewConfirm().
-						Title("Enable AI-assisted semantic search?").
-						Description("Adds fuzzy/semantic search, powered by a local model (Ollama) or,\n" +
-							"if you have none, your coding agent (claude/codex/omp). Structural\n" +
-							"search works without it; you can enable this later.").
-						Affirmative("Enable").
-						Negative("Skip").
-						Value(&ai),
-				))
-				if err := form.Run(); err != nil {
-					return err
-				}
-				aiSet = true
-			default:
-				ai, aiSet = inheritedAI, false
-				if tier == "" {
-					state := "off"
-					if ai {
-						state = "on"
-					}
-					uiLog.Infof("using remembered settings (AI %s); pass --reconfigure to change", state)
-				}
-			}
-
-			// Resolve the semantic-assist backend whenever AI is on. An explicit
-			// --ai-provider (or a saved one) wins; otherwise prefer a local model
-			// (Ollama, richest: embeddings + reranking) when it is installed, else
-			// borrow a coding-agent CLI (reranking only) so "AI enabled" is
-			// meaningful without a local model -- the agent takes over when there
-			// is none.
+			// Resolve the semantic-assist backend. An explicit --ai-provider (or a
+			// saved one) wins; otherwise prefer a local model (Ollama: embeddings +
+			// reranking) when installed, else borrow a coding-agent CLI (reranking
+			// only) so semantic assist is meaningful even without a local model.
 			provider, agentCommand := aiProvider, aiCommand
 			var embedModel, assistModel string
-			if ai {
-				if provider == "" {
-					if pc, e := config.Load(projDir); e == nil {
-						provider = pc.AI.Provider
-						if agentCommand == "" {
-							agentCommand = pc.AI.AgentCommand
-						}
+			if provider == "" {
+				if pc, e := config.Load(projDir); e == nil {
+					provider = pc.AI.Provider
+					if agentCommand == "" {
+						agentCommand = pc.AI.AgentCommand
 					}
 				}
-				if provider == "" {
-					detected := detectAgentCLI()
-					_, ollamaErr := exec.LookPath("ollama")
-					ollamaInstalled := ollamaErr == nil
-					interactive := !nonInteractive && !yes && (reconfigure || !remembered)
-					switch {
-					case interactive && detected != "":
-						// Both paths viable: let the user pick. Embeddings (search
-						// by meaning) need the local model; the agent only reranks.
-						provider = selectBackend(detected, ollamaInstalled)
-						if provider == "agent" {
-							agentCommand = detected
-						}
-					case ollamaInstalled:
-						provider = "ollama"
-					case detected != "":
-						provider, agentCommand = "agent", detected
-						uiLog.Infof("no local model (Ollama) found; reranking via coding-agent CLI %q (cheap tier). Override with --ai-command", agentCommand)
-					default:
-						uiLog.Infof("AI enabled but no local model or coding agent found; structural search only. Install Ollama or a coding agent (claude/codex/omp), or pass --ai-command")
+			}
+			if provider == "" {
+				detected := detectAgentCLI()
+				_, ollamaErr := exec.LookPath("ollama")
+				ollamaInstalled := ollamaErr == nil
+				interactive := !nonInteractive && !yes && (reconfigure || !remembered)
+				switch {
+				case interactive && detected != "":
+					// Both viable: let the user pick the optional upgrade. Semantic
+					// search is already on via the built-in embedder.
+					provider = selectBackend(detected, ollamaInstalled)
+					if provider == "agent" {
+						agentCommand = detected
+					}
+				case ollamaInstalled:
+					provider = "ollama"
+				case detected != "":
+					provider, agentCommand = "agent", detected
+					uiLog.Infof("semantic search on via the built-in embedder; %q adds rewrite+rerank (cheap tier). Override with --ai-command", agentCommand)
+				default:
+					uiLog.Infof("semantic search on via the built-in embedder; install Ollama (higher-quality embeddings) or a coding agent (rewrite+rerank) to upgrade")
+				}
+			}
+			if provider == "agent" && agentCommand == "" {
+				if agentCommand = detectAgentCLI(); agentCommand == "" {
+					uiLog.Warnf("--ai-provider agent but no coding-agent CLI (claude/omp/codex) on PATH; rewrite+rerank off, semantic search still on via the built-in embedder")
+				}
+			}
+			if provider == "ollama" && (reconfigure || !remembered || tier != "") {
+				if tier == "" {
+					tier = firstNonEmpty(g.Tier, config.DefaultTier)
+					if !yes && (reconfigure || !remembered) {
+						tier = selectTier()
 					}
 				}
-				if provider == "agent" && agentCommand == "" {
-					if agentCommand = detectAgentCLI(); agentCommand == "" {
-						uiLog.Warnf("--ai-provider agent but no coding-agent CLI (claude/omp/codex) on PATH; semantic reranking off, structural search still works")
-					}
-				}
-				if provider == "ollama" && (aiSet || tier != "") {
-					if tier == "" {
-						tier = firstNonEmpty(g.Tier, config.DefaultTier)
-						if !yes && (reconfigure || !remembered) {
-							tier = selectTier()
-						}
-					}
-					p := config.PresetByName(tier)
-					oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
-					embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
-				}
+				p := config.PresetByName(tier)
+				oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
+				embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
 			}
 
 			if !asJSON {
@@ -455,12 +400,12 @@ func newInitCmd() *cobra.Command {
 					langs, langsSet, healed = healedLangs, true, true
 				}
 			}
-			sum, err := RunInit(InitOptions{Root: root, AI: ai, AISet: aiSet, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
+			sum, err := RunInit(InitOptions{Root: root, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
 			if err != nil {
 				return err
 			}
 			// Run AI setup against the final saved models (resolved or preserved).
-			if ai && provider == "ollama" {
+			if provider == "ollama" {
 				final, _ := config.Load(projDir)
 				if tier == "" {
 					tier = firstNonEmpty(g.Tier, config.DefaultTier)
@@ -486,7 +431,7 @@ func newInitCmd() *cobra.Command {
 					_ = s
 					_ = closer()
 				}
-				fmt.Fprintln(out, renderInitCard(filepath.Base(root), sum.Indexed, sum.Symbols, sum.Edges, resolved, langs, integrations, ai))
+				fmt.Fprintln(out, renderInitCard(filepath.Base(root), sum.Indexed, sum.Symbols, sum.Edges, resolved, langs, integrations, true))
 			} else {
 				fmt.Fprintf(out, "Prowl Agent ready: %d files indexed (%d symbols, %d edges).\n", sum.Indexed, sum.Symbols, sum.Edges)
 				fmt.Fprintln(out, "Query it from your shell, no server to run:")
@@ -505,8 +450,6 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&withAI, "with-ai", false, "enable AI-assist non-interactively")
-	c.Flags().BoolVar(&noAI, "no-ai", false, "skip AI-assist non-interactively")
 	c.Flags().BoolVar(&yes, "yes", false, "accept defaults without prompting")
 	c.Flags().BoolVar(&noInput, "no-input", false, "never prompt (uses detected integrations and remembered settings)")
 	c.Flags().BoolVar(&reconfigure, "reconfigure", false, "re-open the AI/tier prompts even if already configured")
@@ -518,7 +461,6 @@ func newInitCmd() *cobra.Command {
 	c.Flags().StringVar(&languagesValue, "languages", "", "comma-separated languages to index, or auto (default: keep existing config)")
 	c.Flags().StringVar(&aiProvider, "ai-provider", "", "semantic-assist backend: ollama (local model) or agent (borrow a coding-agent CLI for reranking)")
 	c.Flags().StringVar(&aiCommand, "ai-command", "", "completion command when --ai-provider=agent, e.g. \"claude -p --model haiku\"; default: autodetect a cheap tier")
-	c.MarkFlagsMutuallyExclusive("with-ai", "no-ai")
 	return c
 }
 

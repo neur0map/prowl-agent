@@ -14,8 +14,9 @@ if [ -n "$plans" ]; then
 fi
 
 # 2. Reject em-dashes, AI-authorship tells, and marketing filler in added lines
-#    (excluding this hooks dir, which names the patterns).
-added=$(git diff --cached -U0 --no-color -- . ':(exclude).githooks/' | grep -E '^\+[^+]')
+#    (excluding this hooks dir, which names the patterns, and the bundled model
+#    data files, whose vocabulary legitimately contains such substrings).
+added=$(git diff --cached -U0 --no-color -- . ':(exclude).githooks/' ':(exclude)internal/embed/models/' | grep -E '^\+[^+]')
 hits=$(printf '%s\n' "$added" | grep -nE "$forbidden")
 if [ -n "$hits" ]; then
   echo "pre-commit: forbidden content in staged changes:" >&2

@@ -25,10 +25,11 @@ internal/query       structural queries and hybrid/semantic search
 internal/doctor      health checks (cycles, conflicts, hotspots)
 internal/mcp         MCP stdio server
 internal/lsp         Language Server (stdio) for editors (definition, references, hover, ...)
-internal/cli         commands: init (setup + Ollama lifecycle), the read-only query commands (find, search, overview, impact, changed, hotspots, ...), status, doctor, restart, update, version, hidden serve/lsp, file watcher, injection, TOON/JSON formatting
-internal/config      per-project config.toml / rules.toml and a global ~/.config/prowl-agent/config.toml that remembers AI on/off and tier
+internal/cli         commands: init (setup + optional Ollama lifecycle), the read-only query commands (find, search, overview, impact, changed, hotspots, ...), status, doctor, restart, update, version, hidden serve/lsp, file watcher, injection, TOON/JSON formatting
+internal/config      per-project config.toml / rules.toml and a global ~/.config/prowl-agent/config.toml that remembers the semantic tier and backend
 internal/workspace   .prowl/ workspace, global registry, gitignore wiring
-internal/assist      local Ollama inferencer for the semantic layer
+internal/embed       in-process static embedder: bundled model2vec model + WordPiece tokenizer (semantic search, no setup)
+internal/assist      optional Ollama / coding-agent inferencer (higher-quality embeddings, query rewrite, rerank)
 ```
 
 ## How it works
@@ -62,8 +63,8 @@ internal/assist      local Ollama inferencer for the semantic layer
    queries work across a Go module, a TS app or monorepo, a Rust crate, a Python
    package, a PHP project, a JVM project, a Dart/Flutter app, or an Elixir/Phoenix
    project. External and standard-library imports stay informational.
-3. **Store.** Everything lands in SQLite with an FTS5 full-text index and, when the
-   semantic layer is on, chunk embeddings in sqlite-vec. Blast-radius loads the
+3. **Store.** Everything lands in SQLite with an FTS5 full-text index and chunk
+   embeddings in sqlite-vec. Blast-radius loads the
    resolved edge set once and walks it with an in-memory BFS.
 4. **Answer.** The shell query commands (in `cli`) run a querier directly and
    print TOON or JSON; `mcp` exposes the same queries to coding agents as tools;
@@ -79,18 +80,22 @@ graph resolution re-runs globally so the index stays correct as files move aroun
 
 ## Semantic layer
 
-When enabled, `assist` talks to a local Ollama instance. Embeddings power
-`similar_code` (vector nearest-neighbor fused with full-text search by reciprocal
-rank fusion), and a small helper model can rewrite and re-rank queries for
-`smart_search`. The helper only reorders and rewrites; it never invents results
-and is never exposed as its own tool. The embed model warms once at startup and
-stays resident for a keep-alive window, so queries are hot after the first.
+Semantic search is always on and needs no setup. `embed` runs a small,
+code-trained static model (model2vec `potion-code-16M`) that ships inside the
+binary: it tokenizes with WordPiece, looks up a vector per token, takes a
+weighted mean, and normalizes -- no neural runtime, no daemon, no download. Those
+vectors live in `sqlite-vec` and power `similar_code` (vector nearest-neighbor
+fused with full-text search by reciprocal rank fusion). `smart_search` adds a
+query rewrite and a re-rank on top.
 
-`init` owns the Ollama lifecycle: when AI is enabled it ensures the daemon is
-running (reusing a service, installing a user `ollama.service` that survives a
-reboot, or spawning it in the background) and warms the embed model, so a long
-session stays hot. Re-running `init` after a reboot brings it all back, and AI
-settings persist in the global config so it never re-prompts or resets them.
+`assist` is the optional upgrade. If a local Ollama embed model is present it is
+used instead (higher-quality embeddings, all-in-one embed/rewrite/rerank), and
+`init` can manage the Ollama lifecycle (reuse a service, install a user
+`ollama.service`, or spawn it, then warm the model). Failing that, a detected
+coding-agent CLI supplies the rewrite and re-rank step. If neither is present the
+built-in embedder still gives you vector search; only a total embedder failure
+falls back to plain full-text search. Any helper model only reorders or rewrites
+-- it never invents results and is never exposed as its own tool.
 
 ## Development
 

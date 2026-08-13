@@ -50,6 +50,9 @@ func NewOllama(baseURL, embedModel, genModel string) *Ollama {
 	}
 }
 
+// EmbedModelID reports the embedding model identity for vector metadata keying.
+func (o *Ollama) EmbedModelID() string { return o.EmbedModel }
+
 // Available reports whether the Ollama daemon is reachable.
 func (o *Ollama) Available(ctx context.Context) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.BaseURL+"/api/tags", nil)

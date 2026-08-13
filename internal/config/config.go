@@ -72,7 +72,10 @@ func Default() Config {
 		Languages: []string{"auto"},
 		Ignore:    []string{".mcp.json", "opencode.json", "*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ttf", "*.otf", "*.woff", "*.woff2"},
 		AI: AI{
-			Enabled:     false,
+			// Semantic assist is always on: init no longer offers to skip it, and
+			// the runtime resolver degrades gracefully (local vectors -> borrowed
+			// coding-agent rerank -> structural) so "enabled" never blocks a query.
+			Enabled:     true,
 			EmbedModel:  p.EmbedModel,
 			AssistModel: p.AssistModel,
 			OllamaURL:   "http://localhost:11434",

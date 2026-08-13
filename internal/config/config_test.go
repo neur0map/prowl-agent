@@ -33,9 +33,9 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Fatal("languages not persisted")
 	}
 
-	// Missing config returns defaults (AI disabled).
-	if d, _ := Load(t.TempDir()); d.AI.Enabled {
-		t.Fatal("default config should have AI disabled")
+	// Missing config returns defaults, which enable semantic assist by default.
+	if d, _ := Load(t.TempDir()); !d.AI.Enabled {
+		t.Fatal("default config should have AI enabled")
 	}
 
 	if err := SaveRules(dir, DefaultRules()); err != nil {
@@ -66,7 +66,7 @@ func TestLoadContextBoundsAndValidatesConfigInput(t *testing.T) {
 			t.Fatalf("loaded=%+v error=%v", loaded, err)
 		}
 		absent, err := LoadContext(context.Background(), t.TempDir())
-		if err != nil || absent.AI.Enabled {
+		if err != nil || !absent.AI.Enabled {
 			t.Fatalf("absent=%+v error=%v", absent, err)
 		}
 	})

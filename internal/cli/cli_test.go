@@ -39,7 +39,7 @@ func TestRunInit(t *testing.T) {
 	root := t.TempDir()
 	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
 
-	sum, err := RunInit(InitOptions{Root: root, AI: false})
+	sum, err := RunInit(InitOptions{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRunInit(t *testing.T) {
 	}
 
 	// init is idempotent.
-	if _, err := RunInit(InitOptions{Root: root, AI: false}); err != nil {
+	if _, err := RunInit(InitOptions{Root: root}); err != nil {
 		t.Fatalf("re-init: %v", err)
 	}
 }
@@ -128,8 +128,8 @@ func TestRunInitPreservesAI(t *testing.T) {
 	root := t.TempDir()
 	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
 
-	// First init explicitly enables AI.
-	if _, err := RunInit(InitOptions{Root: root, AI: true, AISet: true, Tier: "fast"}); err != nil {
+	// First init picks the fast tier.
+	if _, err := RunInit(InitOptions{Root: root, Tier: "fast"}); err != nil {
 		t.Fatal(err)
 	}
 	// Re-init without an AI decision must NOT reset it to false (the bug).
@@ -157,20 +157,5 @@ func TestRunInitInheritsGlobalDefault(t *testing.T) {
 	cfg, _ := config.Load(filepath.Join(root, ".prowl"))
 	if !cfg.AI.Enabled {
 		t.Fatal("new project should inherit global ai_enabled=true")
-	}
-}
-
-func TestRunInitExplicitNoAIOverridesGlobal(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	_ = config.SaveGlobal(config.GlobalConfig{AIEnabled: true, Tier: "fast"})
-	root := t.TempDir()
-	copyDir(t, filepath.Join("..", "..", "testdata", "sample-config"), root)
-	if _, err := RunInit(InitOptions{Root: root, AI: false, AISet: true}); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _ := config.Load(filepath.Join(root, ".prowl"))
-	if cfg.AI.Enabled {
-		t.Fatal("explicit --no-ai must win over the global default")
 	}
 }

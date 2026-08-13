@@ -46,6 +46,7 @@ require (
 	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
 	golang.org/x/net v0.55.0
 	golang.org/x/sys v0.45.0
+	golang.org/x/text v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -82,5 +83,5 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 )

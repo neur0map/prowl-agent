@@ -45,6 +45,19 @@ func inferencerEmbeds(inf assist.Inferencer) bool {
 	return true
 }
 
+// embedModelID returns the embedding model identity an inferencer actually uses
+// for vectors (the in-process static model, or an Ollama model name), falling
+// back to the configured name when the backend reports none. It keys stored
+// vectors so switching backends triggers a clean re-embed.
+func embedModelID(inf assist.Inferencer, fallback string) string {
+	if m, ok := inf.(interface{ EmbedModelID() string }); ok {
+		if id := m.EmbedModelID(); id != "" {
+			return id
+		}
+	}
+	return fallback
+}
+
 // RefreshResult describes one deterministic refresh. EmbeddingError is a
 // best-effort AI warning; structural indexing failures are returned as errors.
 type RefreshResult struct {
@@ -281,7 +294,8 @@ func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (R
 		return result, err
 	}
 	if p.Inferencer != nil && inferencerEmbeds(p.Inferencer) {
-		result.Embedded, result.EmbeddingError = index.BuildVectors(ctx, current, p.Inferencer, p.Config.AI.EmbedModel)
+		model := embedModelID(p.Inferencer, p.Config.AI.EmbedModel)
+		result.Embedded, result.EmbeddingError = index.BuildVectors(ctx, current, p.Inferencer, model)
 		if result.EmbeddingError != nil {
 			if ctx.Err() != nil {
 				return result, ctx.Err()
@@ -290,12 +304,12 @@ func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (R
 				return result, errors.Join(result.EmbeddingError, err)
 			}
 		} else {
-			model, err := current.GetMeta("embed_model")
+			stored, err := current.GetMeta("embed_model")
 			if err != nil {
 				return result, err
 			}
-			if model != p.Config.AI.EmbedModel {
-				return result, fmt.Errorf("vector model metadata = %q, want %q", model, p.Config.AI.EmbedModel)
+			if stored != model {
+				return result, fmt.Errorf("vector model metadata = %q, want %q", stored, model)
 			}
 		}
 	}

@@ -84,7 +84,7 @@ Run this once inside any project (a code repo, a dotfiles folder, `~/.config`):
 ```sh
 prowl-agent init                                      # interactive client selection
 prowl-agent init --dry-run --integrations auto        # exact preview, no writes
-prowl-agent init --no-ai --no-input --integrations cursor,vscode
+prowl-agent init --no-input --integrations cursor,vscode
 ```
 
 `init` builds the index, previews the selected integrations, and writes only the
@@ -125,7 +125,7 @@ prowl-agent find <name>         # locate a symbol (function, setting, keybind, c
 prowl-agent def <name>          # read one symbol's source (signature + body), cited and bounded, not the whole file
 prowl-agent outline <path>      # a file's structure: symbols, signatures, line ranges (no bodies) -- grasp a file without reading it
 prowl-agent sketch <name|path>  # how a UI looks and behaves without a screenshot: QML, React (jsx/tsx), Go/lipgloss, or CSS
-prowl-agent search <text>       # search content; --smart reranks, --compact lists files only
+prowl-agent search <text>       # search by meaning or text; --smart rewrites+reranks, --compact lists files only
 prowl-agent callers <path>      # what includes / imports / execs / binds to a file
 prowl-agent callees <path>      # what a file includes / imports / execs / binds to
 prowl-agent impact <path>       # blast radius: count, subsystems, direct importers (--all = full list)
@@ -312,45 +312,38 @@ real files, and `.prowl/` only holds the rebuildable index. Because prowl indexe
 the same files git tracks, it never points the agent at a path it was told to
 ignore.
 
-## Optional: semantic search
+## Search by meaning, built in
 
-If you turn it on, `init` walks you through a local semantic layer powered by
-[Ollama](https://ollama.com), with no cloud and no API keys. You pick a tier;
-`init` detects Ollama, starts it, pulls the models, and warms the embed model so
-the first query is hot:
+`prowl-agent search` matches on meaning, not just words. Ask "how do I refresh
+the widget" and it finds `reloadPanel()` even though they share no tokens. This
+works in every repo with nothing to set up: prowl ships a small code-trained
+embedding model (potion-code-16M, a static model that runs as a plain vector
+lookup, ~60 MB) inside the binary and runs it in-process. No download, no daemon,
+no GPU, no API key, and nothing leaves your machine. The first search in a
+project embeds its files once (a few seconds); after that answers are cached and
+fast. Embeddings live in `sqlite-vec` and are fused with full-text search, so you
+get files that mean the same thing even when they share no words (for example,
+"music spectrum" finds an `AudioVisualizer`).
 
-| tier | embed | assist | needs |
-|---|---|---|---|
-| fast | `embeddinggemma` | `gemma3:1b` | runs anywhere, CPU ok |
-| smart | `qwen3-embedding:4b` | `gemma4:e2b` | about 10 GB VRAM |
-| max | `qwen3-embedding:8b` | `gemma4:e4b` | about 16 GB VRAM |
+Add `--smart` to rewrite the query and re-rank the results, which helps on vague
+questions. Plain `search` never spawns anything, so it stays fast enough for an
+agent to call on every turn.
 
-Choose non-interactively with `--tier fast|smart|max`. The tiers differ mainly in
-the embedder, which is where recall comes from: a bigger embedder finds related
-code on large repos or vaguely worded questions that a small one misses. The
-assist model only rewrites and re-ranks, so it stays small on purpose. Embeddings
-live in `sqlite-vec`, so the agent finds files that mean the same thing even when
-they share no words (for example, "music spectrum" finds an `AudioVisualizer`).
-Structural search works without any of this.
+Want higher-quality embeddings? `init` can point the embedder at a local
+[Ollama](https://ollama.com) model instead, still no cloud and no API key. Pick
+a tier with `--tier fast|smart|max`:
 
-You do not need any of this for good relevance either. Over MCP, an agent can
-call `search_context` with `rerank: true` and prowl asks the agent's own model to
-reorder the results. That fixes the case where a keyword-dense file (a
-translation table, a changelog) outranks the real code, and it needs no local
-model. When the client does not support that, ranking stays deterministic; prowl
-never blocks a query to make you download anything.
+| tier | embed model | needs |
+|---|---|---|
+| fast | `embeddinggemma` | runs anywhere, CPU ok |
+| smart | `qwen3-embedding:4b` | about 10 GB VRAM |
+| max | `qwen3-embedding:8b` | about 16 GB VRAM |
 
-There is also a CLI path to the same idea, for when you are not going through
-MCP. `prowl-agent init --ai-provider agent` points the semantic reranker at an
-installed coding-agent CLI, so `prowl-agent context search` and `search_context`
-get model-quality reranking with no Ollama and no cloud key. Reranking is a
-lightweight ordering task, not coding, so prowl autodetects and pins the agent's
-cheapest tier (`claude -p --model haiku`, `omp -p --model haiku`, or
-`codex exec -m gpt-5-mini`); override the model with
-`--ai-command "<your command>"`. If you enable AI without a reachable local
-model, init falls back to a detected agent automatically. This backend reranks
-only; vector search still needs a local embed model. (Over MCP, `rerank: true`
-is even cheaper: the agent's own model does it in-process, no spawn.)
+Or borrow an installed coding-agent CLI for the rewrite and re-rank step with
+`--ai-provider agent` (it autodetects a cheap tier like `claude -p --model
+haiku`; override with `--ai-command`). Both are optional upgrades; the built-in
+model already gives you meaning-based search out of the box. Over MCP, an agent
+can also pass `rerank: true` to have its own model reorder results in-process.
 
 ## Supported formats
 

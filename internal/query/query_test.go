@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/prowl-agent/prowl-agent/internal/assist"
+	"github.com/prowl-agent/prowl-agent/internal/embed"
 	"github.com/prowl-agent/prowl-agent/internal/graph"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
@@ -460,6 +462,100 @@ func TestSmartSearch(t *testing.T) {
 	}
 }
 
+// noEmbedRerankInf mimics the coding-agent backend: it rewrites and reranks but
+// exposes no embeddings, and records which assist steps ran.
+type noEmbedRerankInf struct {
+	rewrite   string
+	generated *bool
+	reranked  *bool
+}
+
+func (noEmbedRerankInf) Embed(context.Context, []string) ([][]float32, error) { return nil, nil }
+
+func (r noEmbedRerankInf) Generate(context.Context, string) (string, error) {
+	if r.generated != nil {
+		*r.generated = true
+	}
+	return r.rewrite, nil
+}
+
+func (r noEmbedRerankInf) Rerank(_ context.Context, _ string, docs []string) ([]int, error) {
+	if r.reranked != nil {
+		*r.reranked = true
+	}
+	order := make([]int, len(docs))
+	for i := range order {
+		order[i] = i
+	}
+	return order, nil
+}
+
+func mkChunks(t *testing.T, s *store.Store, pairs ...[2]string) {
+	t.Helper()
+	for _, p := range pairs {
+		fid, err := s.UpsertFile(store.File{RelPath: p[0], Lang: "generic", Hash: p[0], Size: 1, MTime: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceFileGraph(fid, nil, nil, nil, []store.Chunk{{StartLine: 1, EndLine: 1, Text: p[1]}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Without a local vector index (the coding-agent tier), --smart must still
+// rewrite the query and rerank the results through the attached agent -- that is
+// the whole reason a borrowed backend exists.
+func TestSmartSearchWithoutVectorsUsesAgent(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mkChunks(t, s, [2]string{"a.conf", "banana one"}, [2]string{"b.conf", "banana two"})
+	if s.VectorsReady() {
+		t.Fatal("precondition: vectors must not be ready")
+	}
+	generated, reranked := false, false
+	inf := noEmbedRerankInf{rewrite: "banana", generated: &generated, reranked: &reranked}
+	res, err := NewWithAssist(s, inf).SmartSearch(context.Background(), "fruit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rewritten != "banana" || !generated {
+		t.Fatalf("--smart must rewrite via the agent without vectors: rewritten=%q generated=%v", res.Rewritten, generated)
+	}
+	if !reranked {
+		t.Fatal("--smart must rerank via the agent without vectors")
+	}
+	if len(res.Matches) < 2 {
+		t.Fatalf("matches = %d, want both banana chunks from FTS over the rewrite", len(res.Matches))
+	}
+}
+
+// Plain search must stay fast on the agent tier: no inference calls on the
+// no-vector path, only lexical ranking.
+func TestSimilarCodeWithoutVectorsSkipsInference(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mkChunks(t, s, [2]string{"a.conf", "banana one"}, [2]string{"b.conf", "banana two"})
+	generated, reranked := false, false
+	inf := noEmbedRerankInf{rewrite: "banana", generated: &generated, reranked: &reranked}
+	hits, err := NewWithAssist(s, inf).SimilarCode(context.Background(), "banana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generated || reranked {
+		t.Fatalf("plain SimilarCode must not spawn inference on the no-vector path: generated=%v reranked=%v", generated, reranked)
+	}
+	if len(hits) == 0 {
+		t.Fatal("expected FTS hits")
+	}
+}
+
 func TestFindSymbolSubstringFallback(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {
@@ -587,6 +683,48 @@ func TestSimilarCodeHybrid(t *testing.T) {
 	}
 	if len(hits2) == 0 {
 		t.Fatal("FTS-only SimilarCode returned nothing")
+	}
+}
+
+// TestSimilarCodeSemanticStaticEmbedder proves the full search path -- build
+// vectors with the real binary-bundled embedder, serialize into sqlite-vec, and
+// fuse vector+FTS in SimilarCode -- returns the semantically closest chunk even
+// when the query shares no tokens with it.
+func TestSimilarCodeSemanticStaticEmbedder(t *testing.T) {
+	m, err := embed.Load()
+	if err != nil {
+		t.Fatalf("bundled embedder failed to load: %v", err)
+	}
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	mkChunks(t, s,
+		[2]string{"persist.go", "func SaveUser(u User) error { return db.Insert(u) }"},
+		[2]string{"web.go", "func HandleRequest(w http.ResponseWriter, r *http.Request) { renderTemplate(w) }"},
+	)
+	if _, err := index.BuildVectors(context.Background(), s, m, embed.ModelName); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := NewWithAssist(s, assist.Composite{Emb: m}).SimilarCode(context.Background(), "store a record in the database table")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rank := func(file string) int {
+		for i, h := range hits {
+			if h.File == file {
+				return i
+			}
+		}
+		return -1
+	}
+	p, w := rank("persist.go"), rank("web.go")
+	if p < 0 {
+		t.Fatalf("persist.go missing from results: %+v", hits)
+	}
+	if w >= 0 && p > w {
+		t.Fatalf("semantic ranking wrong: persist.go=%d web.go=%d (persistence should outrank web for a DB query)", p, w)
 	}
 }
 

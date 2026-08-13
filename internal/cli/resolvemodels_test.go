@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -60,13 +61,71 @@ func TestResolveModelsFallsBackWhenUnreachable(t *testing.T) {
 	}
 }
 
-// A configured embed model that is not installed must degrade to structural-only
-// (nil inferencer), not error, so the server keeps running.
-func TestMaybeInferencerDegradesWhenModelMissing(t *testing.T) {
+// fakeEmbedder is a stub Embedder for wiring tests (no model files or network).
+type fakeEmbedder struct{}
+
+func (fakeEmbedder) Embed(context.Context, []string) ([][]float32, error) { return nil, nil }
+func (fakeEmbedder) EmbedModelID() string                                 { return "static:test" }
+
+// stubEmbedder swaps the package embedder loader for the duration of a test.
+func stubEmbedder(t *testing.T, emb assist.Embedder, err error) {
+	t.Helper()
+	prev := loadEmbedder
+	loadEmbedder = func(context.Context) (assist.Embedder, error) { return emb, err }
+	t.Cleanup(func() { loadEmbedder = prev })
+}
+
+// With no local Ollama embed model, embeddings still come from the in-process
+// static model, so search stays semantic even with no agent -- the backend is a
+// Composite embedder, never nil.
+func TestMaybeInferencerStaticWhenNoOllamaModel(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // hide any claude/codex/omp
+	stubEmbedder(t, fakeEmbedder{}, nil)
+	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
+	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL}}
+	c, ok := maybeInferencer(context.Background(), cfg).(assist.Composite)
+	if !ok {
+		t.Fatal("want assist.Composite (static embeddings) when no Ollama model")
+	}
+	if c.Assist != nil {
+		t.Fatalf("Assist = %T, want nil (no agent available)", c.Assist)
+	}
+}
+
+// With no Ollama model but a coding-agent command, embeddings come from the
+// static model and rewrite/rerank from the agent: a Composite carrying both.
+func TestMaybeInferencerStaticPlusAgent(t *testing.T) {
+	stubEmbedder(t, fakeEmbedder{}, nil)
+	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
+	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL, AgentCommand: "go"}}
+	c, ok := maybeInferencer(context.Background(), cfg).(assist.Composite)
+	if !ok {
+		t.Fatal("want assist.Composite")
+	}
+	if _, ok := c.Assist.(*assist.AgentCLI); !ok {
+		t.Fatalf("Assist = %T, want *assist.AgentCLI", c.Assist)
+	}
+}
+
+// Only when the embedder itself is unavailable (e.g. offline first run) does the
+// backend fall back to agent-only rewrite/rerank.
+func TestMaybeInferencerAgentOnlyWhenEmbedderUnavailable(t *testing.T) {
+	stubEmbedder(t, nil, fmt.Errorf("offline"))
+	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
+	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL, AgentCommand: "go"}}
+	if _, ok := maybeInferencer(context.Background(), cfg).(*assist.AgentCLI); !ok {
+		t.Fatal("want *assist.AgentCLI when embedder unavailable but agent present")
+	}
+}
+
+// With no embedder and no agent, search is structural (nil).
+func TestMaybeInferencerStructuralWhenNothing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	stubEmbedder(t, nil, fmt.Errorf("offline"))
 	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
 	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL}}
 	if inf := maybeInferencer(context.Background(), cfg); inf != nil {
-		t.Fatal("inferencer should be nil when the embed model is not installed")
+		t.Fatalf("want nil (structural), got %T", inf)
 	}
 }
 

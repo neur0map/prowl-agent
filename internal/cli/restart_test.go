@@ -42,7 +42,7 @@ func TestRestartRefreshesThroughProject(t *testing.T) {
 	if err := os.WriteFile(source, []byte("package main\nfunc BeforeRestart() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunInit(InitOptions{Root: root, AI: false, AISet: true, IntegrationsSet: true}); err != nil {
+	if _, err := RunInit(InitOptions{Root: root, IntegrationsSet: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(source, []byte("package main\nfunc AfterRestart() {}\n"), 0o644); err != nil {

@@ -14,7 +14,7 @@ const embedBatch = 32
 // It is incremental: only missing chunks are embedded, so repeated calls after
 // an index refresh are cheap. The vec0 table is created lazily from the first
 // embedding's dimension. Returns the number of chunks embedded.
-func BuildVectors(ctx context.Context, s *store.Store, inf assist.Inferencer, model string) (int, error) {
+func BuildVectors(ctx context.Context, s *store.Store, inf assist.Embedder, model string) (int, error) {
 	if err := s.SetMeta("vectors_complete", "0"); err != nil {
 		return 0, err
 	}

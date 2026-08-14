@@ -337,7 +337,9 @@ func newSearchCmd() *cobra.Command {
 			}
 			text := joinArgs(a)
 			errW := cmd.ErrOrStderr()
-			return runQuery(cmd.Context(), true, format, limit, "", cmd.OutOrStdout(), errW, func(q *query.Querier) (any, error) {
+			var matches []store.ChunkHit
+			ran := false
+			err = runQuery(cmd.Context(), true, format, limit, "", cmd.OutOrStdout(), errW, func(q *query.Querier) (any, error) {
 				if smart {
 					r, err := q.SmartSearch(cmd.Context(), text)
 					if err != nil {
@@ -346,7 +348,7 @@ func newSearchCmd() *cobra.Command {
 					if compact {
 						r.Matches = stripSnippets(r.Matches)
 					}
-					searchHint(errW, r.Matches, compact)
+					matches, ran = r.Matches, true
 					return r, nil
 				}
 				m, err := q.SimilarCode(cmd.Context(), text)
@@ -356,9 +358,15 @@ func newSearchCmd() *cobra.Command {
 				if compact {
 					m = stripSnippets(m)
 				}
-				searchHint(errW, m, compact)
+				matches, ran = m, true
 				return m, nil
 			})
+			// Emit the hint after the results print, so a tail-truncated or piped
+			// view (an agent doing `... | head`) still surfaces the next step.
+			if err == nil && ran {
+				searchHint(errW, matches, compact)
+			}
+			return err
 		},
 	}
 	c.Flags().BoolVar(&smart, "smart", false, "rewrite and rerank the query (assist-augmented)")

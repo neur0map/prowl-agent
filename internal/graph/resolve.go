@@ -109,20 +109,31 @@ func Resolve(s *store.Store) error {
 	if err := s.DeleteUnresolvedEdges("instantiates"); err != nil {
 		return err
 	}
-	// Pass 4b: QML singleton/type member references (e.g. `Config.spacing`,
-	// `Theme.accent`) -> the .qml file defining that type, resolved by stem like
-	// instantiation. Singletons are used by member access, never instantiated, so
-	// without this a shared `Config.qml` shows zero dependents. Unresolved
-	// built-ins (Qt, Math, enum scopes) are dropped afterward.
+	// Pass 4b: type/member references by name -> the file declaring that type.
+	// QML singletons/components (`Config.spacing`, `Button {}`) resolve by file
+	// stem; Swift type usages (`StatCardView(...)`, `ServerStats`, `Theme.x`)
+	// resolve to the struct/class/enum/protocol declaring that type -- Swift has
+	// no file-level local imports, so type usage IS the file dependency.
+	// Unresolved built-ins (Qt, Math, SwiftUI's View/Text/Int) are dropped
+	// afterward so they never pollute the dangling set.
+	swiftType, err := swiftTypeIndex(s, fileMap, byID)
+	if err != nil {
+		return err
+	}
 	uses, err := s.UnresolvedEdges("uses")
 	if err != nil {
 		return err
 	}
 	for _, e := range uses {
-		if byID[e.FileID].Lang != "qml" {
-			continue
+		var id int64
+		var ok bool
+		switch byID[e.FileID].Lang {
+		case "qml":
+			id, ok = resolveQMLComponent(qmlStem, byID[e.FileID].RelPath, e.Raw)
+		case "swift":
+			id, ok = firstOther(swiftType[e.Raw], e.FileID)
 		}
-		if id, ok := resolveQMLComponent(qmlStem, byID[e.FileID].RelPath, e.Raw); ok && id != e.FileID {
+		if ok && id != e.FileID {
 			if err := s.SetEdgeResolved(e.ID, "file", id); err != nil {
 				return err
 			}
@@ -799,6 +810,47 @@ func sharedPrefixLen(a, b string) int {
 		n++
 	}
 	return n
+}
+
+// swiftTypeIndex maps each Swift type name (struct/class/enum/protocol) to the
+// file(s) declaring it, for resolving type-usage edges. Extensions are excluded
+// so a use points at the type's definition, not everywhere it is extended.
+func swiftTypeIndex(s *store.Store, fileMap map[string]int64, byID map[int64]store.File) (map[string][]int64, error) {
+	idx := map[string][]int64{}
+	hasSwift := false
+	for _, f := range byID {
+		if f.Lang == "swift" {
+			hasSwift = true
+			break
+		}
+	}
+	if !hasSwift {
+		return idx, nil
+	}
+	for _, kind := range []string{"struct", "class", "enum", "protocol"} {
+		hits, err := s.SymbolsByKind(kind)
+		if err != nil {
+			return nil, err
+		}
+		for _, h := range hits {
+			fid, ok := fileMap[h.File]
+			if !ok || byID[fid].Lang != "swift" {
+				continue
+			}
+			idx[h.Name] = append(idx[h.Name], fid)
+		}
+	}
+	return idx, nil
+}
+
+// firstOther returns the first id that is not self, if any.
+func firstOther(ids []int64, self int64) (int64, bool) {
+	for _, id := range ids {
+		if id != self {
+			return id, true
+		}
+	}
+	return 0, false
 }
 
 // resolvePath resolves a raw include/reference target to a file id.

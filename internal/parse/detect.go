@@ -78,6 +78,14 @@ func Detect(relPath string, head []byte) string {
 		return "dart"
 	case ".ex", ".exs":
 		return "elixir"
+	case ".swift":
+		return "swift"
+	case ".plist", ".entitlements":
+		return "plist"
+	case ".pbxproj":
+		return "pbxproj"
+	case ".xcconfig":
+		return "xcconfig"
 	case ".conf":
 		return "generic"
 	}

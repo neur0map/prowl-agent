@@ -28,6 +28,7 @@ import (
 	"github.com/alexaandru/go-sitter-forest/ruby"
 	"github.com/alexaandru/go-sitter-forest/rust"
 	"github.com/alexaandru/go-sitter-forest/scss"
+	"github.com/alexaandru/go-sitter-forest/swift"
 	"github.com/alexaandru/go-sitter-forest/toml"
 	"github.com/alexaandru/go-sitter-forest/tsx"
 	"github.com/alexaandru/go-sitter-forest/typescript"
@@ -65,6 +66,7 @@ var grammars = map[string]func() unsafe.Pointer{
 	"dart":       dart.GetLanguage,
 	"elixir":     elixir.GetLanguage,
 	"csharp":     c_sharp.GetLanguage,
+	"swift":      swift.GetLanguage,
 }
 
 // HasGrammar reports whether lang has a Tree-sitter grammar.

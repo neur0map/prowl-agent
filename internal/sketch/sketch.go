@@ -8,12 +8,13 @@
 //
 // Supported dialects, one extractor file each:
 //
-//	qml.go    Qt Quick / QML         scene tree + properties + behavior + tokens
-//	jsx.go    React (JSX / TSX)      element tree + className/style + handlers
-//	gotui.go  Go + lipgloss (TUI)    color palette + named styles
-//	css.go    CSS / SCSS             design tokens + rules
+//	qml.go      Qt Quick / QML       scene tree + properties + behavior + tokens
+//	swiftui.go  SwiftUI (swift)      view tree + modifiers + state + handlers
+//	jsx.go      React (JSX / TSX)    element tree + className/style + handlers
+//	gotui.go    Go + lipgloss (TUI)  color palette + named styles
+//	css.go      CSS / SCSS           design tokens + rules
 //
-// Node-tree dialects (QML, React) share the model in model.go and the renderer
+// Node-tree dialects (QML, SwiftUI, React) share the model in model.go and the renderer
 // in render.go; catalog dialects (Go, CSS) carry their own small model and Text.
 package sketch
 
@@ -47,8 +48,10 @@ func Of(path string, src []byte) (Model, error) {
 		return extractGo(path, src)
 	case "css", "scss":
 		return extractCSS(path, src)
+	case "swift":
+		return extractSwiftUI(path, src)
 	default:
-		return nil, fmt.Errorf("visual sketch supports QML, React (jsx/tsx), Go/lipgloss, and CSS files; %s is none of these", path)
+		return nil, fmt.Errorf("visual sketch supports QML, SwiftUI (swift), React (jsx/tsx), Go/lipgloss, and CSS files; %s is none of these", path)
 	}
 }
 

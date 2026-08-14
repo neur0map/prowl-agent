@@ -60,6 +60,8 @@ github.com/alexaandru/go-sitter-forest/rust v1.9.13 h1:orVZVXQ+IkXkIvzeyO6YvHBwu
 github.com/alexaandru/go-sitter-forest/rust v1.9.13/go.mod h1:ZKZRL1Yfy6siuWMvv2h/F9lt/8kMKn6VHnGj00PPNmM=
 github.com/alexaandru/go-sitter-forest/scss v1.9.0 h1:pneGwflZc4D1bNCOAGxegtK1X43zHX6/GPqG/BwWc+U=
 github.com/alexaandru/go-sitter-forest/scss v1.9.0/go.mod h1:W7eHAtq2sswPKPOnCSPcsd3ceXEw9UwdTDe92Hlh9o0=
+github.com/alexaandru/go-sitter-forest/swift v1.9.5 h1:CCfvj4BRjvN7HtznqDbgU7ylHHO9ML34ezsJFbErjV0=
+github.com/alexaandru/go-sitter-forest/swift v1.9.5/go.mod h1:EzSPcZpETNyJIoAyPdbQgFUxWM+vcO3y5eYh8kmNvNc=
 github.com/alexaandru/go-sitter-forest/toml v1.9.2 h1:L+v4HZwovnP1w0qQZYrzl7gK6lKAWaaqfRkN3cdg7rw=
 github.com/alexaandru/go-sitter-forest/toml v1.9.2/go.mod h1:aSXzrMFEjrdby4bvRiUq6OmaD6FeEtLX+b5Y4C/vK+I=
 github.com/alexaandru/go-sitter-forest/tsx v1.9.2 h1:R6CIvxcs6zGF/nwI7YbHzRM1HuRjL1g7nKYfDMR7ANE=

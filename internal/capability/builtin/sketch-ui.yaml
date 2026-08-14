@@ -10,3 +10,5 @@ version: "1"
 prompts: []
 resources: []
 tools: [sketch_ui]
+commands:
+  - prowl-agent sketch <file-or-component>

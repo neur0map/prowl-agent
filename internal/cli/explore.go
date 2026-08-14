@@ -18,7 +18,6 @@ import (
 // dir. The target is never touched: no .prowl/, .gitignore, or AGENTS.md is
 // written into it. Use it to review or extract from an outside repo.
 func newExploreCmd() *cobra.Command {
-	var output outputOptions
 	var question string
 	var budgetTokens int
 	c := &cobra.Command{
@@ -26,7 +25,7 @@ func newExploreCmd() *cobra.Command {
 		Short: "Index a repo you do not own into a scratch index, answer, then clean up",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -91,7 +90,6 @@ func newExploreCmd() *cobra.Command {
 			return err
 		},
 	}
-	output.addFlags(c)
 	c.Flags().StringVar(&question, "question", "", "build a bounded, cited context packet for this question")
 	c.Flags().IntVar(&budgetTokens, "budget-tokens", 1800, "estimated token budget for --question")
 	return c

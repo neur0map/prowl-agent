@@ -74,7 +74,6 @@ func changedFiles(root, base string) ([]string, error) {
 }
 
 func newChangedCmd() *cobra.Command {
-	var output outputOptions
 	var base string
 	var all bool
 	c := &cobra.Command{
@@ -82,7 +81,7 @@ func newChangedCmd() *cobra.Command {
 		Short: "Map your git changes to the files they could affect (blast radius)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -129,7 +128,6 @@ func newChangedCmd() *cobra.Command {
 			return err
 		},
 	}
-	output.addFlags(c)
 	c.Flags().StringVar(&base, "base", "HEAD", "git ref to compare against (e.g. main)")
 	c.Flags().BoolVar(&all, "all", false, "include changed files prowl does not index")
 	return c

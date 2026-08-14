@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -23,7 +24,7 @@ import (
 // This is the CLI-first delivery path: an agent shells out to `prowl-agent find
 // battery` and gets a cited, token-lean answer. No MCP server, no `serve`, no
 // per-client process spawn, and none of MCP's upfront tool-schema token cost.
-func runQuery(ctx context.Context, needsAI bool, format outputFormat, limit int, w io.Writer, fn func(*query.Querier) (any, error)) error {
+func runQuery(ctx context.Context, needsAI bool, format outputFormat, limit int, kind string, w, errW io.Writer, fn func(*query.Querier) (any, error)) error {
 	q, _, s, closer, err := openQuerier(ctx, needsAI)
 	if err != nil {
 		return err
@@ -44,8 +45,71 @@ func runQuery(ctx context.Context, needsAI bool, format outputFormat, limit int,
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(w, str)
-	return err
+	if _, err := fmt.Fprintln(w, str); err != nil {
+		return err
+	}
+	emitHint(errW, kind, out)
+	return nil
+}
+
+// emitHint writes a one-line next-action suggestion to stderr when a result is
+// empty or ambiguous, so an agent that hits a dead end learns the next command
+// instead of falling back to a blind grep. Hints go to stderr and never touch
+// the stdout data stream, so --format json stays machine-parseable.
+func emitHint(w io.Writer, kind string, out any) {
+	if w == nil {
+		return
+	}
+	n := sliceLenOr(out, -1)
+	switch kind {
+	case "find":
+		switch {
+		case n == 0:
+			fmt.Fprintln(w, `hint: no symbol matched; try 'prowl-agent search <text>' for content or concepts, or 'prowl-agent capabilities search "<intent>"' to find the right command`)
+		case n > 1:
+			if hits, ok := out.([]store.SymbolHit); ok && len(hits) > 0 {
+				fmt.Fprintf(w, "hint: %d matches; 'prowl-agent def %d' reads the top one, 'prowl-agent references %s' shows its uses\n", n, hits[0].ID, hits[0].Name)
+			}
+		}
+	case "references":
+		if n == 0 {
+			fmt.Fprintln(w, "hint: no references; verify the name with 'prowl-agent find', or 'prowl-agent search <text>' for textual mentions")
+		}
+	case "callers", "callees", "tests", "entrypoints":
+		if n == 0 {
+			fmt.Fprintln(w, "hint: no edges found; 'prowl-agent relations <path>' shows this file's symbols and neighbors")
+		}
+	}
+}
+
+// searchHint teaches the reading step after a content search: broaden on empty,
+// or point at peek when compact mode returned locations without snippets.
+func searchHint(w io.Writer, matches []store.ChunkHit, compact bool) {
+	if w == nil {
+		return
+	}
+	if len(matches) == 0 {
+		fmt.Fprintln(w, "hint: no matches; broaden the query, or 'prowl-agent find <name>' to look up a symbol by name")
+		return
+	}
+	if compact {
+		h := matches[0]
+		fmt.Fprintf(w, "hint: 'prowl-agent peek %s:%d-%d' reads a hit in place\n", h.File, h.StartLine, h.EndLine)
+	}
+}
+
+func sliceLenOr(out any, dflt int) int {
+	if rv := reflect.ValueOf(out); rv.Kind() == reflect.Slice {
+		return rv.Len()
+	}
+	return dflt
+}
+
+func firstWord(use string) string {
+	if i := strings.IndexByte(use, ' '); i >= 0 {
+		return use[:i]
+	}
+	return use
 }
 
 // capSlice truncates a top-level result slice to limit (limit <= 0 means no cap).
@@ -79,23 +143,21 @@ func openQuerier(ctx context.Context, needsAI bool) (*query.Querier, *workspace.
 // newQueryCmd builds a thin subcommand that runs one querier method and prints
 // the result. Humans get a readable TTY view; pipes keep token-lean TOON.
 func newQueryCmd(use, short string, needsAI bool, args cobra.PositionalArgs, run func(context.Context, *query.Querier, []string) (any, error)) *cobra.Command {
-	var output outputOptions
 	var limit int
 	c := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  args,
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
-			return runQuery(cmd.Context(), needsAI, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+			return runQuery(cmd.Context(), needsAI, format, limit, firstWord(use), cmd.OutOrStdout(), cmd.ErrOrStderr(), func(q *query.Querier) (any, error) {
 				return run(cmd.Context(), q, a)
 			})
 		},
 	}
-	output.addFlags(c)
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
 }
@@ -114,14 +176,13 @@ func newOutlineCmd() *cobra.Command {
 // always-on Prowl map embedded in AGENTS.md (only when the repo opted into
 // Prowl), so the passive context an agent reasons from stays current.
 func newOverviewCmd() *cobra.Command {
-	var output outputOptions
 	var limit int
 	c := &cobra.Command{
 		Use:   "overview",
 		Short: "High-level map of the project (roles, entrypoints, clusters, hotspots); refreshes the AGENTS.md map",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -144,7 +205,6 @@ func newOverviewCmd() *cobra.Command {
 			return err
 		},
 	}
-	output.addFlags(c)
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
 }
@@ -158,17 +218,16 @@ func newBriefCmd() *cobra.Command {
 // count); given a name it returns the full file list of matching subsystems, so
 // "pull a whole subsystem" stays cheap instead of dumping every cluster's files.
 func newClustersCmd() *cobra.Command {
-	var output outputOptions
 	c := &cobra.Command{
 		Use:   "clusters [subsystem]",
 		Short: "Project subsystems (summaries); with a name, the files in matching subsystems",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
-			return runQuery(cmd.Context(), false, format, 0, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+			return runQuery(cmd.Context(), false, format, 0, "", cmd.OutOrStdout(), cmd.ErrOrStderr(), func(q *query.Querier) (any, error) {
 				clusters, err := q.Clusters()
 				if err != nil {
 					return nil, err
@@ -191,7 +250,6 @@ func newClustersCmd() *cobra.Command {
 			})
 		},
 	}
-	output.addFlags(c)
 	return c
 }
 
@@ -214,7 +272,6 @@ func newRelationsCmd() *cobra.Command {
 // direct importers) to stay token-lean on large graphs; --all dumps every
 // dependent file.
 func newImpactCmd() *cobra.Command {
-	var output outputOptions
 	var all bool
 	var limit int
 	c := &cobra.Command{
@@ -222,11 +279,11 @@ func newImpactCmd() *cobra.Command {
 		Short: "Blast radius of a file: dependent count, subsystems, and direct importers",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
-			return runQuery(cmd.Context(), false, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+			return runQuery(cmd.Context(), false, format, limit, "", cmd.OutOrStdout(), cmd.ErrOrStderr(), func(q *query.Querier) (any, error) {
 				if all {
 					return q.BlastRadius(a[0])
 				}
@@ -234,7 +291,6 @@ func newImpactCmd() *cobra.Command {
 			})
 		},
 	}
-	output.addFlags(c)
 	c.Flags().BoolVar(&all, "all", false, "list every dependent file instead of a summary")
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
 	return c
@@ -268,7 +324,6 @@ func newReferencesCmd() *cobra.Command {
 // newSearchCmd is the content/semantic search. It carries extra flags (--smart,
 // --compact), so it is not built from the generic helper.
 func newSearchCmd() *cobra.Command {
-	var output outputOptions
 	var smart, compact bool
 	var limit int
 	c := &cobra.Command{
@@ -276,12 +331,13 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search file content (hybrid semantic+full-text when AI is on, else full-text)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
 			text := joinArgs(a)
-			return runQuery(cmd.Context(), true, format, limit, cmd.OutOrStdout(), func(q *query.Querier) (any, error) {
+			errW := cmd.ErrOrStderr()
+			return runQuery(cmd.Context(), true, format, limit, "", cmd.OutOrStdout(), errW, func(q *query.Querier) (any, error) {
 				if smart {
 					r, err := q.SmartSearch(cmd.Context(), text)
 					if err != nil {
@@ -290,6 +346,7 @@ func newSearchCmd() *cobra.Command {
 					if compact {
 						r.Matches = stripSnippets(r.Matches)
 					}
+					searchHint(errW, r.Matches, compact)
 					return r, nil
 				}
 				m, err := q.SimilarCode(cmd.Context(), text)
@@ -299,11 +356,11 @@ func newSearchCmd() *cobra.Command {
 				if compact {
 					m = stripSnippets(m)
 				}
+				searchHint(errW, m, compact)
 				return m, nil
 			})
 		},
 	}
-	output.addFlags(c)
 	c.Flags().BoolVar(&smart, "smart", false, "rewrite and rerank the query (assist-augmented)")
 	c.Flags().BoolVar(&compact, "compact", false, "list files without snippets (most token-lean)")
 	c.Flags().IntVar(&limit, "limit", 0, "cap results to N (fewer tokens; 0 = default)")
@@ -315,13 +372,12 @@ func newSearchCmd() *cobra.Command {
 // component instead of the whole file. It needs the workspace root to read the
 // source, so it is not built from the generic helper.
 func newDefCmd() *cobra.Command {
-	var output outputOptions
 	c := &cobra.Command{
 		Use:   "def <name-or-id>",
 		Short: "Show a symbol's source (signature and body), cited and bounded, so you read one symbol not the whole file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -332,6 +388,7 @@ func newDefCmd() *cobra.Command {
 			defer closer()
 			def, err := q.Definition(ws.Root, a[0])
 			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "hint: no symbol %q; 'prowl-agent find %s' lists candidates, then 'prowl-agent def <id>'\n", a[0], a[0])
 				return err
 			}
 			_ = s.RecordAnswer(def)
@@ -343,8 +400,69 @@ func newDefCmd() *cobra.Command {
 			return err
 		},
 	}
-	output.addFlags(c)
 	return c
+}
+
+// newPeekCmd reads a bounded, cited line range of a file, so a citation from
+// search or references (file:line) becomes the actual code without a whole-file
+// read and without leaving the CLI. The argument is file:line or file:start-end.
+func newPeekCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "peek <file:start[-end]>",
+		Short: "Read a bounded, cited line range of a file (turn a search/references citation into code)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
+			path, start, end, err := parsePeekTarget(a[0])
+			if err != nil {
+				return err
+			}
+			_, ws, s, closer, err := openQuerier(cmd.Context(), false)
+			if err != nil {
+				return err
+			}
+			defer closer()
+			pk, err := query.PeekLines(ws.Root, path, start, end)
+			if err != nil {
+				return err
+			}
+			_ = s.RecordAnswer(pk)
+			str, err := formatValue(pk, format)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), str)
+			return err
+		},
+	}
+	return c
+}
+
+// parsePeekTarget splits "path:line" or "path:start-end" into its parts. The
+// range is split on the last colon so paths keep working.
+func parsePeekTarget(arg string) (path string, start, end int, err error) {
+	i := strings.LastIndexByte(arg, ':')
+	if i <= 0 || i == len(arg)-1 {
+		return "", 0, 0, fmt.Errorf("peek target must be file:line or file:start-end (got %q)", arg)
+	}
+	path = arg[:i]
+	span := arg[i+1:]
+	if j := strings.IndexByte(span, '-'); j >= 0 {
+		if start, err = strconv.Atoi(span[:j]); err != nil {
+			return "", 0, 0, fmt.Errorf("peek target %q: bad start line", arg)
+		}
+		if end, err = strconv.Atoi(span[j+1:]); err != nil {
+			return "", 0, 0, fmt.Errorf("peek target %q: bad end line", arg)
+		}
+		return path, start, end, nil
+	}
+	if start, err = strconv.Atoi(span); err != nil {
+		return "", 0, 0, fmt.Errorf("peek target %q: bad line number", arg)
+	}
+	return path, start, start, nil
 }
 
 // stripSnippets drops snippet bodies for token-lean, file-only results.

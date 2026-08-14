@@ -53,25 +53,24 @@ func defaultOutputFormat(terminal bool) outputFormat {
 	return formatTOON
 }
 
-type outputOptions struct {
-	name       string
-	legacyJSON bool
-}
-
-func (o *outputOptions) addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&o.name, "format", "", "output format: human, toon, json, or markdown (default: human on a terminal, toon when piped)")
-	cmd.Flags().BoolVar(&o.legacyJSON, "json", false, "output JSON (shorthand for --format json)")
-}
-
-func (o outputOptions) resolve(w io.Writer) (outputFormat, error) {
-	if o.legacyJSON {
-		if o.name != "" && !strings.EqualFold(o.name, "json") {
-			return formatTOON, fmt.Errorf("--json cannot be combined with --format %s", o.name)
+// resolveFormat is the single output-format entry point for every command. It
+// reads the --format / --json flags (registered persistently on the root, so
+// they work on any subcommand and in any position), preferring an explicit
+// choice and otherwise defaulting to human on a terminal and toon when piped.
+// One predictable switch everywhere is what lets an agent script prowl without
+// per-command flag guesswork.
+func resolveFormat(cmd *cobra.Command, w io.Writer) (outputFormat, error) {
+	flags := cmd.Flags()
+	jsonSet, _ := flags.GetBool("json")
+	name, _ := flags.GetString("format")
+	if jsonSet {
+		if name != "" && !strings.EqualFold(name, "json") {
+			return formatTOON, fmt.Errorf("--json cannot be combined with --format %s", name)
 		}
 		return formatJSON, nil
 	}
-	if o.name != "" {
-		return parseOutputFormat(o.name)
+	if name != "" {
+		return parseOutputFormat(name)
 	}
 	terminal := false
 	if f, ok := w.(*os.File); ok {

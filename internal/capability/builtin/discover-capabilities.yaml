@@ -10,3 +10,6 @@ version: "1"
 prompts: []
 resources: []
 tools: [search_capabilities]
+commands:
+  - prowl-agent capabilities search "<intent>"
+  - prowl-agent capabilities get <name>

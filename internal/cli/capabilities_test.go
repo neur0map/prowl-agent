@@ -14,7 +14,7 @@ func TestCapabilitiesSearchHasHumanAndJSONContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human := newCapabilitiesSearchCmd(catalog)
+	human := bindFormatFlags(newCapabilitiesSearchCmd(catalog))
 	var output bytes.Buffer
 	human.SetOut(&output)
 	human.SetArgs([]string{"context"})
@@ -24,7 +24,7 @@ func TestCapabilitiesSearchHasHumanAndJSONContracts(t *testing.T) {
 	if !strings.Contains(output.String(), "retrieve-context") || strings.HasPrefix(strings.TrimSpace(output.String()), "[") {
 		t.Fatalf("human capability output = %q", output.String())
 	}
-	machine := newCapabilitiesSearchCmd(catalog)
+	machine := bindFormatFlags(newCapabilitiesSearchCmd(catalog))
 	output.Reset()
 	machine.SetOut(&output)
 	machine.SetArgs([]string{"context", "--json"})

@@ -11,7 +11,7 @@ import (
 
 func runSketch(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := newSketchCmd()
+	cmd := bindFormatFlags(newSketchCmd())
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)

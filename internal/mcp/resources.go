@@ -11,10 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/prowl-agent/prowl-agent/internal/query"
 )
 
 const (
@@ -139,11 +142,39 @@ func (h *handlers) readSource(_ context.Context, request *sdk.ReadResourceReques
 	if filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return nil, sdk.ResourceNotFoundError(request.Params.URI)
 	}
+	if spec := parsed.Query().Get("lines"); spec != "" {
+		start, end, ok := parseLineSpec(spec)
+		if !ok {
+			return nil, sdk.ResourceNotFoundError(request.Params.URI)
+		}
+		pk, err := query.PeekLines(h.root, relative, start, end)
+		if err != nil {
+			return nil, sdk.ResourceNotFoundError(request.Params.URI)
+		}
+		return textResource(request.Params.URI, "text/plain", pk.Text), nil
+	}
 	data, err := readRootedSource(h.root, relative)
 	if err != nil {
 		return nil, sdk.ResourceNotFoundError(request.Params.URI)
 	}
 	return textResource(request.Params.URI, "text/plain", string(data)), nil
+}
+
+// parseLineSpec parses a ?lines= value of "start" or "start-end" into a range.
+func parseLineSpec(spec string) (start, end int, ok bool) {
+	if i := strings.IndexByte(spec, '-'); i >= 0 {
+		s, err1 := strconv.Atoi(strings.TrimSpace(spec[:i]))
+		e, err2 := strconv.Atoi(strings.TrimSpace(spec[i+1:]))
+		if err1 != nil || err2 != nil {
+			return 0, 0, false
+		}
+		return s, e, true
+	}
+	s, err := strconv.Atoi(strings.TrimSpace(spec))
+	if err != nil {
+		return 0, 0, false
+	}
+	return s, s, true
 }
 
 func readRootedSource(rootPath, relative string) ([]byte, error) {

@@ -18,13 +18,12 @@ import (
 // code-intelligence promise applied to declarative UI. The argument is a file
 // path or a component name resolved through the index.
 func newSketchCmd() *cobra.Command {
-	var output outputOptions
 	c := &cobra.Command{
 		Use:   "sketch <file-or-component>",
 		Short: "Sketch how a UI looks and behaves without a screenshot: QML, React (jsx/tsx), Go/lipgloss, or CSS",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -53,7 +52,6 @@ func newSketchCmd() *cobra.Command {
 			return err
 		},
 	}
-	output.addFlags(c)
 	return c
 }
 

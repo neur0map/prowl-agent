@@ -46,6 +46,17 @@ func (catalog *Catalog) Get(name string) (Manifest, bool) {
 	return manifest, ok
 }
 
+// All returns every manifest, name-sorted, for callers that rank the catalog
+// themselves (e.g. semantic capability search over the bundled embedder).
+func (catalog *Catalog) All() []Manifest {
+	out := make([]Manifest, 0, len(catalog.manifests))
+	for _, m := range catalog.manifests {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (catalog *Catalog) Search(query string, limit int) []Summary {
 	if limit <= 0 {
 		limit = 10
@@ -74,8 +85,7 @@ func (catalog *Catalog) Search(query string, limit int) []Summary {
 	}
 	out := make([]Summary, len(matches))
 	for index, match := range matches {
-		manifest := match.manifest
-		out[index] = Summary{Name: manifest.Name, Title: manifest.Title, Description: manifest.Description, Privacy: manifest.Privacy, Version: manifest.Version, ReadOnly: manifest.ReadOnly, Triggers: manifest.Triggers}
+		out[index] = match.manifest.Summary()
 	}
 	return out
 }

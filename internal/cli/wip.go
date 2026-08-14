@@ -14,14 +14,13 @@ import (
 // the blast radius of each indexed file. It is the "where did I leave off?"
 // command, so an agent can resume a session without re-reading the whole tree.
 func newWipCmd() *cobra.Command {
-	var output outputOptions
 	var markers string
 	c := &cobra.Command{
 		Use:   "wip",
 		Short: "Investigate uncommitted work: touched files, unfinished markers, and their blast radius",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			format, err := output.resolve(cmd.OutOrStdout())
+			format, err := resolveFormat(cmd, cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}
@@ -54,7 +53,6 @@ func newWipCmd() *cobra.Command {
 			return err
 		},
 	}
-	output.addFlags(c)
 	c.Flags().StringVar(&markers, "markers", "", "comma-separated markers to scan for (default TODO,FIXME,HACK,XXX,BUG,WIP,OPTIMIZE)")
 	return c
 }

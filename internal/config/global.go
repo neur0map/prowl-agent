@@ -14,7 +14,6 @@ import (
 type GlobalConfig struct {
 	AIEnabled   bool   `toml:"ai_enabled"`
 	Tier        string `toml:"tier"`
-	EmbedModel  string `toml:"embed_model"`
 	AssistModel string `toml:"assist_model"`
 }
 

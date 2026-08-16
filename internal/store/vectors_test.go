@@ -20,7 +20,7 @@ func TestVectorStore(t *testing.T) {
 	}
 
 	// Before vectors exist, every chunk needs embedding.
-	cw, err := s.ChunksWithoutVectors()
+	cw, err := s.ChunksWithoutVectors(0)
 	if err != nil || len(cw) != 3 {
 		t.Fatalf("ChunksWithoutVectors=%d err=%v want 3", len(cw), err)
 	}
@@ -58,7 +58,7 @@ func TestVectorStore(t *testing.T) {
 	}
 
 	// All chunks now have vectors.
-	if cw2, _ := s.ChunksWithoutVectors(); len(cw2) != 0 {
+	if cw2, _ := s.ChunksWithoutVectors(0); len(cw2) != 0 {
 		t.Fatalf("ChunksWithoutVectors after embed = %d, want 0", len(cw2))
 	}
 
@@ -95,5 +95,60 @@ func TestResetDerivedInvalidatesPublishedGeneration(t *testing.T) {
 	}
 	if state != "incomplete" || vectors != "0" || s.VectorsReady() {
 		t.Fatalf("reset state=%q vectors_complete=%q ready=%v", state, vectors, s.VectorsReady())
+	}
+}
+
+// Content-free chunks must never be embedded, and vectors an older version stored
+// for them must be prunable. A whitespace-only chunk embeds to the model's
+// degenerate mean vector, which ranks nearer an arbitrary query than real code
+// does, so a few of them dominate every KNN result.
+func TestContentFreeChunksAreNotEmbeddable(t *testing.T) {
+	s := openTmp(t)
+	fid, err := s.UpsertFile(File{RelPath: "a.go", Lang: "go", Hash: "h", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFileGraph(fid, nil, nil, nil, []Chunk{
+		{StartLine: 1, EndLine: 1, Text: "func real() {}"},
+		{StartLine: 2, EndLine: 2, Text: "\n"},
+		{StartLine: 3, EndLine: 3, Text: "   \t  "},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := s.ChunksWithoutVectors(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].Text != "func real() {}" {
+		t.Fatalf("pending = %+v, want only the chunk with content", pending)
+	}
+	if n, err := s.CountEmbeddableChunks(); err != nil || n != 1 {
+		t.Fatalf("CountEmbeddableChunks=%d err=%v want 1", n, err)
+	}
+	if n, err := s.CountChunksWithoutVectors(); err != nil || n != 1 {
+		t.Fatalf("CountChunksWithoutVectors=%d err=%v want 1", n, err)
+	}
+
+	// Simulate an index built before the fix: a vector stored for a blank chunk.
+	if err := s.EnableVectors(2, "test"); err != nil {
+		t.Fatal(err)
+	}
+	blankID := int64(0)
+	if err := s.sql().QueryRow(`SELECT id FROM chunks WHERE start_line=2`).Scan(&blankID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertChunkVector(blankID, []float32{1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	pruned, err := s.PruneContentFreeVectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned != 1 {
+		t.Fatalf("pruned %d, want 1", pruned)
+	}
+	if hits, _ := s.VectorSearch([]float32{1, 0}, 5); len(hits) != 0 {
+		t.Fatalf("blank-chunk vector survived pruning: %+v", hits)
 	}
 }

@@ -1105,9 +1105,15 @@ func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, er
 	return res, nil
 }
 
+// rewritePrompt asks for a keyword form of a natural-language question. It must
+// describe the corpus accurately: this prompt used to say "dotfiles/config index"
+// (prowl began as a dotfiles indexer), which steered rewrites of code questions
+// toward configuration vocabulary the repository does not contain.
 func rewritePrompt(q string) string {
-	return "Rewrite this into a short keyword search query for a dotfiles/config index. " +
-		"Reply with only the keywords, no punctuation or explanation.\nQuery: " + q
+	return "Rewrite this into a short keyword search query for a source-code index. " +
+		"Prefer identifiers, type and function names, and domain nouns a programmer " +
+		"would have written in the code. Reply with only the keywords, no punctuation " +
+		"or explanation.\nQuery: " + q
 }
 
 func cleanRewrite(s string) string {
@@ -1313,6 +1319,18 @@ type Status struct {
 	LastIndex string       `json:"last_index"`
 	AIEnabled bool         `json:"ai_enabled"`
 	Savings   Savings      `json:"savings"`
+	// Semantic reports how much of the index is embedded, so a partially built
+	// semantic index is visible rather than looking like a silent hang.
+	Semantic SemanticCoverage `json:"semantic"`
+}
+
+// SemanticCoverage describes vector-search readiness. Embedded chunks are
+// searchable semantically; the rest are still covered by lexical ranking.
+type SemanticCoverage struct {
+	Chunks    int  `json:"chunks"`
+	Embedded  int  `json:"embedded"`
+	Remaining int  `json:"remaining"`
+	Complete  bool `json:"complete"`
 }
 
 // Savings estimates tokens saved versus reading the files each answer pointed at.
@@ -1357,8 +1375,16 @@ func (q *Querier) Status() (Status, error) {
 	last, _ := q.s.GetMeta("last_index")
 	ai, _ := q.s.GetMeta("ai_enabled")
 	stats, _ := q.s.Stats()
+	remaining, _ := q.s.CountChunksWithoutVectors()
+	embeddable, _ := q.s.CountEmbeddableChunks()
 	return Status{
 		Counts: c, LastIndex: last, AIEnabled: ai == "true",
 		Savings: ComputeSavings(stats),
+		Semantic: SemanticCoverage{
+			Chunks:    embeddable,
+			Embedded:  embeddable - remaining,
+			Remaining: remaining,
+			Complete:  q.s.VectorsComplete(),
+		},
 	}, nil
 }

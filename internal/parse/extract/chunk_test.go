@@ -55,6 +55,43 @@ func chunkAt(chunks []Chunk, line int) Chunk {
 	return Chunk{}
 }
 
+// A file with a long run of blank lines between symbols must not yield a chunk
+// that holds nothing but whitespace. Such a chunk is not merely wasted index
+// space: a static embedder maps it to its degenerate mean vector, which ranks
+// nearer an arbitrary query than real code does, so a handful of them take over
+// vector KNN. On a real 8.5k-file repo this produced 982 blank chunks and half of
+// every top-50 result page was empty.
+func TestChunkStructuredEmitsNoContentFreeChunk(t *testing.T) {
+	// 200 lines: two small symbols far apart, everything between them blank.
+	lines := make([]string, 200)
+	lines[0] = "package sample"
+	lines[9] = "func First() {}"
+	lines[189] = "func Last() {}"
+	src := []byte(strings.Join(lines, "\n"))
+
+	chunks := chunkStructured(src, []Symbol{
+		{Name: "First", Kind: "function", StartLine: 10, EndLine: 10},
+		{Name: "Last", Kind: "function", StartLine: 190, EndLine: 190},
+	}, 40)
+	if len(chunks) == 0 {
+		t.Fatal("no chunks")
+	}
+	for i, c := range chunks {
+		if strings.TrimSpace(c.Text) == "" {
+			t.Fatalf("chunk %d (lines %d-%d) holds only whitespace", i, c.StartLine, c.EndLine)
+		}
+	}
+	// The real code is still reachable: dropping blank regions must not drop content.
+	var joined strings.Builder
+	for _, c := range chunks {
+		joined.WriteString(c.Text)
+	}
+	for _, want := range []string{"package sample", "func First()", "func Last()"} {
+		if !strings.Contains(joined.String(), want) {
+			t.Fatalf("chunking lost %q", want)
+		}
+	}
+}
 func TestChunkStructuredKeepsSymbolWhole(t *testing.T) {
 	// A function spans lines 30-70, crossing the fixed 40-line window boundary.
 	// The deep call is at line 65; the signature is at line 30.

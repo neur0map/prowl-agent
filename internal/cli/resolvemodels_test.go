@@ -9,6 +9,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/embed"
 )
 
 // tagsServer serves a fixed /api/tags body so model detection can be tested
@@ -24,40 +25,44 @@ func tagsServer(t *testing.T, body string) *httptest.Server {
 	return srv
 }
 
-// When the tier preset models are not installed but a usable embedding model is,
-// resolveModels substitutes the installed models instead of the absent preset.
-func TestResolveModelsPrefersInstalled(t *testing.T) {
+// When the tier's assist model is absent but another chat model is installed,
+// resolveAssistModel substitutes the installed one instead of the absent preset.
+func TestResolveAssistModelPrefersInstalled(t *testing.T) {
 	srv := tagsServer(t, `{"models":[{"name":"nomic-embed-text:latest"},{"name":"qwen3:0.6b"}]}`)
-	oll := assist.NewOllama(srv.URL, "embeddinggemma", "gemma3:1b")
-	embed, gen := resolveModels(context.Background(), oll, config.PresetByName("fast"))
-	if embed != "nomic-embed-text:latest" {
-		t.Errorf("embed = %q, want nomic-embed-text:latest", embed)
-	}
-	if gen != "qwen3:0.6b" {
-		t.Errorf("gen = %q, want qwen3:0.6b", gen)
+	oll := assist.NewOllama(srv.URL, "gemma3:1b")
+	if got := resolveAssistModel(context.Background(), oll, config.PresetByName("fast")); got != "qwen3:0.6b" {
+		t.Errorf("assist = %q, want qwen3:0.6b", got)
 	}
 }
 
-// When the preset models are present, resolveModels keeps them.
-func TestResolveModelsKeepsPresetWhenInstalled(t *testing.T) {
+// An installed embedding model is never chosen as the assist model: it cannot
+// generate or rerank, and prowl never uses Ollama for embeddings.
+func TestResolveAssistModelSkipsEmbeddingModels(t *testing.T) {
+	srv := tagsServer(t, `{"models":[{"name":"embeddinggemma:latest"},{"name":"bge-m3:latest"}]}`)
+	oll := assist.NewOllama(srv.URL, "gemma3:1b")
+	if got := resolveAssistModel(context.Background(), oll, config.PresetByName("fast")); got != "gemma3:1b" {
+		t.Errorf("assist = %q, want the preset gemma3:1b (no usable chat model installed)", got)
+	}
+}
+
+// When the preset assist model is present, resolveAssistModel keeps it.
+func TestResolveAssistModelKeepsPresetWhenInstalled(t *testing.T) {
 	srv := tagsServer(t, `{"models":[{"name":"embeddinggemma:latest"},{"name":"gemma3:1b"}]}`)
-	oll := assist.NewOllama(srv.URL, "embeddinggemma", "gemma3:1b")
-	embed, gen := resolveModels(context.Background(), oll, config.PresetByName("fast"))
-	if embed != "embeddinggemma" || gen != "gemma3:1b" {
-		t.Errorf("embed=%q gen=%q, want preset embeddinggemma/gemma3:1b", embed, gen)
+	oll := assist.NewOllama(srv.URL, "gemma3:1b")
+	if got := resolveAssistModel(context.Background(), oll, config.PresetByName("fast")); got != "gemma3:1b" {
+		t.Errorf("assist = %q, want preset gemma3:1b", got)
 	}
 }
 
-// When Ollama is unreachable, resolveModels falls back to the preset names so
+// When Ollama is unreachable, resolveAssistModel falls back to the preset name so
 // init can still print the pull instructions.
-func TestResolveModelsFallsBackWhenUnreachable(t *testing.T) {
+func TestResolveAssistModelFallsBackWhenUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NewServeMux())
 	url := srv.URL
 	srv.Close() // dead endpoint: connections are refused
-	oll := assist.NewOllama(url, "embeddinggemma", "gemma3:1b")
-	embed, gen := resolveModels(context.Background(), oll, config.PresetByName("fast"))
-	if embed != "embeddinggemma" || gen != "gemma3:1b" {
-		t.Errorf("embed=%q gen=%q, want preset fallback", embed, gen)
+	oll := assist.NewOllama(url, "gemma3:1b")
+	if got := resolveAssistModel(context.Background(), oll, config.PresetByName("fast")); got != "gemma3:1b" {
+		t.Errorf("assist = %q, want preset fallback", got)
 	}
 }
 
@@ -75,29 +80,83 @@ func stubEmbedder(t *testing.T, emb assist.Embedder, err error) {
 	t.Cleanup(func() { loadEmbedder = prev })
 }
 
-// With no local Ollama embed model, embeddings still come from the in-process
-// static model, so search stays semantic even with no agent -- the backend is a
-// Composite embedder, never nil.
-func TestMaybeInferencerStaticWhenNoOllamaModel(t *testing.T) {
+// The bundled in-process embedder is the embedding backend, always. A local
+// Ollama with embedding models installed must not take over: it is ~14x slower
+// per chunk, and because stored vectors are keyed by their producing model,
+// selecting an embedder by "is the daemon up" silently invalidated and rebuilt
+// the entire vector index whenever Ollama came or went.
+func TestMaybeInferencerAlwaysEmbedsWithBundledModel(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // hide any claude/codex/omp
+	srv := tagsServer(t, `{"models":[{"name":"embeddinggemma:latest"},{"name":"nomic-embed-text:latest"},{"name":"bge-m3:latest"}]}`)
+	cfg := config.Config{AI: config.AI{Enabled: true, OllamaURL: srv.URL}}
+	c, ok := maybeInferencer(context.Background(), cfg).(assist.Composite)
+	if !ok {
+		t.Fatalf("backend = %T, want assist.Composite carrying the bundled embedder", maybeInferencer(context.Background(), cfg))
+	}
+	if _, isOllama := c.Emb.(*assist.Ollama); isOllama {
+		t.Fatal("embeddings were routed to Ollama")
+	}
+	if id := c.EmbedModelID(); id != embed.ModelName {
+		t.Fatalf("embed model id = %q, want the bundled %q", id, embed.ModelName)
+	}
+}
+
+// The bundled embedder is compiled into the binary, so it needs no download, no
+// daemon, and no cache: it loads with an empty PATH and no network.
+func TestBundledEmbedderLoadsWithNoNetworkOrPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	m, err := loadEmbedder(context.Background())
+	if err != nil {
+		t.Fatalf("bundled embedder failed to load: %v", err)
+	}
+	vecs, err := m.Embed(context.Background(), []string{"func main() {}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vecs) != 1 || len(vecs[0]) == 0 {
+		t.Fatalf("bundled embedder returned %d vectors", len(vecs))
+	}
+}
+
+// Ollama supplies the generate/rerank half when its assist model is installed.
+func TestMaybeInferencerUsesOllamaForAssistOnly(t *testing.T) {
+	stubEmbedder(t, fakeEmbedder{}, nil)
+	srv := tagsServer(t, `{"models":[{"name":"gemma3:1b"}]}`)
+	cfg := config.Config{AI: config.AI{Enabled: true, AssistModel: "gemma3:1b", OllamaURL: srv.URL}}
+	c, ok := maybeInferencer(context.Background(), cfg).(assist.Composite)
+	if !ok {
+		t.Fatal("want assist.Composite")
+	}
+	if _, ok := c.Assist.(*assist.Ollama); !ok {
+		t.Fatalf("Assist = %T, want *assist.Ollama", c.Assist)
+	}
+	if _, isOllama := c.Emb.(*assist.Ollama); isOllama {
+		t.Fatal("embeddings were routed to Ollama")
+	}
+}
+
+// With no Ollama assist model, embeddings still come from the bundled model and
+// there is simply no rewrite/rerank half.
+func TestMaybeInferencerStaticWhenNoAssistModel(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // hide any claude/codex/omp
 	stubEmbedder(t, fakeEmbedder{}, nil)
 	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
-	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL}}
+	cfg := config.Config{AI: config.AI{Enabled: true, AssistModel: "gemma3:1b", OllamaURL: srv.URL}}
 	c, ok := maybeInferencer(context.Background(), cfg).(assist.Composite)
 	if !ok {
-		t.Fatal("want assist.Composite (static embeddings) when no Ollama model")
+		t.Fatal("want assist.Composite (bundled embeddings) when no Ollama assist model")
 	}
 	if c.Assist != nil {
 		t.Fatalf("Assist = %T, want nil (no agent available)", c.Assist)
 	}
 }
 
-// With no Ollama model but a coding-agent command, embeddings come from the
-// static model and rewrite/rerank from the agent: a Composite carrying both.
+// With no Ollama assist model but a coding-agent command, embeddings come from the
+// bundled model and rewrite/rerank from the agent: a Composite carrying both.
 func TestMaybeInferencerStaticPlusAgent(t *testing.T) {
 	stubEmbedder(t, fakeEmbedder{}, nil)
 	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
-	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL, AgentCommand: "go"}}
+	cfg := config.Config{AI: config.AI{Enabled: true, OllamaURL: srv.URL, AgentCommand: "go"}}
 	c, ok := maybeInferencer(context.Background(), cfg).(assist.Composite)
 	if !ok {
 		t.Fatal("want assist.Composite")
@@ -107,12 +166,12 @@ func TestMaybeInferencerStaticPlusAgent(t *testing.T) {
 	}
 }
 
-// Only when the embedder itself is unavailable (e.g. offline first run) does the
-// backend fall back to agent-only rewrite/rerank.
+// Only when the embedder itself is unavailable does the backend fall back to
+// agent-only rewrite/rerank.
 func TestMaybeInferencerAgentOnlyWhenEmbedderUnavailable(t *testing.T) {
 	stubEmbedder(t, nil, fmt.Errorf("offline"))
 	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
-	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL, AgentCommand: "go"}}
+	cfg := config.Config{AI: config.AI{Enabled: true, OllamaURL: srv.URL, AgentCommand: "go"}}
 	if _, ok := maybeInferencer(context.Background(), cfg).(*assist.AgentCLI); !ok {
 		t.Fatal("want *assist.AgentCLI when embedder unavailable but agent present")
 	}
@@ -123,17 +182,8 @@ func TestMaybeInferencerStructuralWhenNothing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	stubEmbedder(t, nil, fmt.Errorf("offline"))
 	srv := tagsServer(t, `{"models":[{"name":"some-other-model:latest"}]}`)
-	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL}}
+	cfg := config.Config{AI: config.AI{Enabled: true, OllamaURL: srv.URL}}
 	if inf := maybeInferencer(context.Background(), cfg); inf != nil {
 		t.Fatalf("want nil (structural), got %T", inf)
-	}
-}
-
-// When the configured embed model is installed, maybeInferencer returns a client.
-func TestMaybeInferencerWhenModelPresent(t *testing.T) {
-	srv := tagsServer(t, `{"models":[{"name":"nomic-embed-text:latest"}]}`)
-	cfg := config.Config{AI: config.AI{Enabled: true, EmbedModel: "nomic-embed-text", OllamaURL: srv.URL}}
-	if inf := maybeInferencer(context.Background(), cfg); inf == nil {
-		t.Fatal("inferencer should be set when the embed model is installed")
 	}
 }

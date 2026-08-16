@@ -16,6 +16,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
+	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
@@ -325,12 +326,13 @@ func TestProjectRefreshCancellationWhileProcessLockContended(t *testing.T) {
 	}
 }
 
+// Vectors are keyed to the embedder that produced them, so a different embedder
+// must force a clean re-embed rather than mixing two vector spaces.
 func TestOpenProjectRebuildsVectorsAfterModelChange(t *testing.T) {
 	cfg := config.Default()
 	cfg.AI.Enabled = true
-	cfg.AI.EmbedModel = "model-a"
 	root := newProjectFixture(t, cfg)
-	firstInferencer := &recordingInferencer{}
+	firstInferencer := &recordingInferencer{modelID: "static:model-a"}
 	first, err := OpenProject(context.Background(), root, Options{EnableAI: true, InferencerProvider: func(context.Context, config.Config) assist.Inferencer { return firstInferencer }})
 	if err != nil {
 		t.Fatal(err)
@@ -338,16 +340,7 @@ func TestOpenProjectRebuildsVectorsAfterModelChange(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	state, err := workspace.Resolve(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.AI.EmbedModel = "model-b"
-	if err := config.Save(state.Path, cfg); err != nil {
-		t.Fatal(err)
-	}
-	secondInferencer := &recordingInferencer{}
+	secondInferencer := &recordingInferencer{modelID: "static:model-b"}
 	second, err := OpenProject(context.Background(), root, Options{EnableAI: true, InferencerProvider: func(context.Context, config.Config) assist.Inferencer { return secondInferencer }})
 	if err != nil {
 		t.Fatal(err)
@@ -360,8 +353,8 @@ func TestOpenProjectRebuildsVectorsAfterModelChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model != "model-b" {
-		t.Fatalf("embed_model = %q, want model-b", model)
+	if model != "static:model-b" {
+		t.Fatalf("embed_model = %q, want static:model-b", model)
 	}
 }
 
@@ -496,16 +489,71 @@ func TestOpenProjectRebuildsVectorsWithUnknownModelMetadata(t *testing.T) {
 		t.Fatal("unknown vector model metadata did not force rebuild")
 	}
 	model, _ := second.Store.GetMeta("embed_model")
-	if model != cfg.AI.EmbedModel || !second.Store.VectorsReady() {
+	if model != secondInferencer.EmbedModelID() || !second.Store.VectorsReady() {
 		t.Fatalf("rebuilt model=%q ready=%v", model, second.Store.VectorsReady())
 	}
 }
 
-func TestOpenProjectDoesNotPublishPartialVectors(t *testing.T) {
+// A prowl upgrade changes the indexing-logic version, which forces a full
+// re-parse; re-chunking every file drops every vector with it. Opening the
+// project must rebuild the semantic index there and then, so the first query
+// after an update is answered with whole semantic coverage instead of creeping
+// back a fraction per invocation.
+func TestOpenProjectRebuildsSemanticIndexAfterUpgrade(t *testing.T) {
 	cfg := config.Default()
 	cfg.AI.Enabled = true
 	root := newProjectFixture(t, cfg)
-	for i := 0; i < 40; i++ {
+
+	first, err := OpenProject(context.Background(), root, Options{EnableAI: true,
+		InferencerProvider: func(context.Context, config.Config) assist.Inferencer { return &recordingInferencer{} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Store.VectorsComplete() {
+		t.Fatal("precondition: the first open must leave a complete semantic index")
+	}
+	// Stand in for a new binary revision: the stored indexing-logic version no
+	// longer matches this build's.
+	if err := first.Store.SetMeta("index_version", "revision-from-an-older-binary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var progressCalls int
+	upgraded := &recordingInferencer{}
+	second, err := OpenProject(context.Background(), root, Options{EnableAI: true,
+		InferencerProvider: func(context.Context, config.Config) assist.Inferencer { return upgraded },
+		VectorProgress:     func(index.VectorPass) { progressCalls++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	if upgraded.embedCalls.Load() == 0 {
+		t.Fatal("an upgrade did not re-embed; semantic search would stay empty after updating")
+	}
+	if !second.Store.VectorsComplete() {
+		t.Fatal("semantic index left incomplete after an upgrade")
+	}
+	if remaining, err := second.Store.CountChunksWithoutVectors(); err != nil || remaining != 0 {
+		t.Fatalf("remaining=%d err=%v, want the backlog fully drained before serving queries", remaining, err)
+	}
+	if progressCalls == 0 {
+		t.Fatal("rebuild reported no progress; a long pause before the first answer would look like a hang")
+	}
+}
+
+// A partial embedding pass must keep its work. Discarding it meant a repo whose
+// backlog cannot be embedded in one pass could never build a semantic index at
+// all, and the partial coverage is safe to serve: chunks without a vector are
+// still reachable lexically, and the index is not reported as complete.
+func TestOpenProjectKeepsPartialVectorProgress(t *testing.T) {
+	cfg := config.Default()
+	cfg.AI.Enabled = true
+	root := newProjectFixture(t, cfg)
+	for i := range 40 {
 		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("part-%02d.go", i)), []byte(fmt.Sprintf("package sample\nfunc Part%02d() {}\n", i)), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -519,15 +567,18 @@ func TestOpenProjectDoesNotPublishPartialVectors(t *testing.T) {
 	if project.InitialRefresh.EmbeddingError == nil {
 		t.Fatal("partial embedding failure was not reported")
 	}
-	if project.Store.VectorsReady() || project.Store.VectorsInitialized() {
-		t.Fatalf("partial vectors published: ready=%v initialized=%v", project.Store.VectorsReady(), project.Store.VectorsInitialized())
+	if !project.Store.VectorsInitialized() {
+		t.Fatal("partial embedding progress was discarded")
 	}
-	calls := inferencer.calls.Load()
-	if _, err := project.Query.SimilarCode(context.Background(), "Part39"); err != nil {
+	if project.Store.VectorsComplete() {
+		t.Fatal("an incomplete backlog was reported as a complete vector index")
+	}
+	remaining, err := project.Store.CountChunksWithoutVectors()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if inferencer.calls.Load() != calls {
-		t.Fatal("semantic query used an unpublished partial vector generation")
+	if remaining == 0 {
+		t.Fatal("precondition: the failing inferencer must leave chunks unembedded")
 	}
 }
 
@@ -588,7 +639,19 @@ func (*partialFailInferencer) Rerank(_ context.Context, _ string, documents []st
 	return order, nil
 }
 
-type recordingInferencer struct{ embedCalls atomic.Int32 }
+type recordingInferencer struct {
+	embedCalls atomic.Int32
+	modelID    string
+}
+
+// EmbedModelID reports the embedder identity vectors are keyed by; an empty
+// modelID keeps the zero value usable for tests that do not care.
+func (inferencer *recordingInferencer) EmbedModelID() string {
+	if inferencer.modelID == "" {
+		return "static:test"
+	}
+	return inferencer.modelID
+}
 
 func (inferencer *recordingInferencer) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	inferencer.embedCalls.Add(1)

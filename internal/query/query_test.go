@@ -77,117 +77,79 @@ func TestOverviewContextMarshalsEmptyCollectionsAsArrays(t *testing.T) {
 	}
 }
 
-func TestOverviewContextEnforcesSQLRowBounds(t *testing.T) {
+// A repository larger than Prowl's former hard caps must still get an overview:
+// it is an agent's first call, and refusing it ("overview files exceeds limit
+// 10000") left large repos with no map at all.
+func TestOverviewContextScalesPastFormerHardCaps(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	for _, name := range []string{"a.go", "b.go"} {
-		if _, err := s.UpsertFile(store.File{RelPath: name, Lang: "go", Role: "source", Hash: name}); err != nil {
+	const files = 10001
+	for i := range files {
+		if _, err := s.UpsertFile(store.File{
+			RelPath: fmt.Sprintf("pkg%d/f%d.go", i%64, i),
+			Lang:    "go", Role: "source", Hash: fmt.Sprintf("h%d", i),
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	limits := DefaultOverviewLimits()
-	limits.Files = 2
-	if got, err := New(s).OverviewContext(context.Background(), limits); err != nil {
-		t.Fatalf("exact limit: %v", err)
-	} else if got.Counts.Files != 2 {
-		t.Fatalf("files=%d want 2", got.Counts.Files)
+	got, err := New(s).OverviewContext(context.Background(), DefaultOverviewLimits())
+	if err != nil {
+		t.Fatalf("overview on %d files: %v", files, err)
 	}
-	if _, err := s.UpsertFile(store.File{RelPath: "c.go", Lang: "go", Role: "source", Hash: "c"}); err != nil {
+	if got.Counts.Files != files {
+		t.Fatalf("counts.files=%d want %d", got.Counts.Files, files)
+	}
+	if got.Counts.Langs["go"] != files {
+		t.Fatalf("langs[go]=%d want %d (language histogram must cover every file)", got.Counts.Langs["go"], files)
+	}
+	roles := 0
+	for _, n := range got.Roles {
+		roles += n
+	}
+	if roles != files {
+		t.Fatalf("role histogram totals %d want %d", roles, files)
+	}
+}
+
+// Overview's counts are the same numbers `status` reports; a bounded projection
+// that quietly reported its own cap instead of the true total is worse than no
+// number at all.
+func TestOverviewCountsMatchStoreCounts(t *testing.T) {
+	q := indexed(t)
+	got, err := q.Overview()
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = New(s).OverviewContext(context.Background(), limits)
-	var bounded *BoundedWorkError
-	if !errors.As(err, &bounded) || bounded.Component != "files" || bounded.Limit != 2 {
-		t.Fatalf("max+1 error=%v bounded=%+v", err, bounded)
+	want, err := q.s.Counts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Counts.Files != want.Files || got.Counts.Symbols != want.Symbols ||
+		got.Counts.Edges != want.Edges || got.Counts.Resources != want.Resources ||
+		got.Counts.Chunks != want.Chunks {
+		t.Fatalf("overview counts %+v != store counts %+v", got.Counts, want)
+	}
+	if len(got.Counts.Langs) != len(want.Langs) {
+		t.Fatalf("langs %v != %v", got.Counts.Langs, want.Langs)
 	}
 }
 
-func TestOverviewContextRejectsAggregateRowsAtMaxPlusOne(t *testing.T) {
-	tests := []struct {
-		name      string
-		component string
-		setLimit  func(*OverviewLimits, int)
-		graph     func(int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk)
-	}{
-		{name: "symbols", component: "symbols", setLimit: func(l *OverviewLimits, n int) { l.Symbols = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
-			x := make([]store.Symbol, n)
-			for i := range x {
-				x[i] = store.Symbol{Name: fmt.Sprintf("s%d", i), Kind: "function", StartLine: i + 1, EndLine: i + 1}
-			}
-			return x, nil, nil, nil
-		}},
-		{name: "edges", component: "edges", setLimit: func(l *OverviewLimits, n int) { l.Edges = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
-			x := make([]store.RawEdge, n)
-			for i := range x {
-				x[i] = store.RawEdge{Kind: "calls", Raw: fmt.Sprintf("missing%d", i), Line: i + 1}
-			}
-			return nil, nil, x, nil
-		}},
-		{name: "resources", component: "resources", setLimit: func(l *OverviewLimits, n int) { l.Resources = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
-			x := make([]store.Resource, n)
-			for i := range x {
-				x[i] = store.Resource{Kind: "font", Name: fmt.Sprintf("r%d", i), Value: "valid", Line: i + 1}
-			}
-			return nil, x, nil, nil
-		}},
-		{name: "chunks", component: "chunks", setLimit: func(l *OverviewLimits, n int) { l.Chunks = n }, graph: func(n int) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
-			x := make([]store.Chunk, n)
-			for i := range x {
-				x[i] = store.Chunk{StartLine: i + 1, EndLine: i + 1, Text: fmt.Sprintf("chunk %d", i)}
-			}
-			return nil, nil, nil, x
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = s.Close() })
-			fileID, err := s.UpsertFile(store.File{RelPath: "safe.go", Lang: "go", Role: "source", Hash: "safe"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			limits := DefaultOverviewLimits()
-			test.setLimit(&limits, 2)
-			syms, resources, edges, chunks := test.graph(2)
-			if err := s.ReplaceFileGraph(fileID, syms, resources, edges, chunks); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := New(s).OverviewContext(context.Background(), limits); err != nil {
-				t.Fatalf("exact limit: %v", err)
-			}
-			syms, resources, edges, chunks = test.graph(3)
-			if err := s.ReplaceFileGraph(fileID, syms, resources, edges, chunks); err != nil {
-				t.Fatal(err)
-			}
-			_, err = New(s).OverviewContext(context.Background(), limits)
-			var bounded *BoundedWorkError
-			if !errors.As(err, &bounded) || bounded.Component != test.component || bounded.Limit != 2 {
-				t.Fatalf("max+1 error=%v bounded=%+v", err, bounded)
-			}
-		})
-	}
-}
-
-func TestOverviewContextRejectsOverflowingSentinelLimitsBeforeSQL(t *testing.T) {
+func TestOverviewContextRejectsOverflowingOutputLimits(t *testing.T) {
 	tests := []struct {
 		name string
 		set  func(*OverviewLimits)
 	}{
-		{name: "files", set: func(l *OverviewLimits) { l.Files = math.MaxInt }},
-		{name: "symbols", set: func(l *OverviewLimits) { l.Symbols = math.MaxInt }},
-		{name: "edges", set: func(l *OverviewLimits) { l.Edges = math.MaxInt }},
-		{name: "resources", set: func(l *OverviewLimits) { l.Resources = math.MaxInt }},
-		{name: "chunks", set: func(l *OverviewLimits) { l.Chunks = math.MaxInt }},
-		{name: "dependency edges", set: func(l *OverviewLimits) { l.DependencyEdges = math.MaxInt }},
-		{name: "resource links", set: func(l *OverviewLimits) { l.ResourceLinks = math.MaxInt }},
-		{name: "keybinds", set: func(l *OverviewLimits) { l.Keybinds = math.MaxInt }},
+		{name: "palette", set: func(l *OverviewLimits) { l.Palette = math.MaxInt }},
+		{name: "hotspots", set: func(l *OverviewLimits) { l.Hotspots = math.MaxInt }},
 		{name: "languages", set: func(l *OverviewLimits) { l.Languages = math.MaxInt }},
+		{name: "roles", set: func(l *OverviewLimits) { l.Roles = math.MaxInt }},
+		{name: "docs", set: func(l *OverviewLimits) { l.Docs = math.MaxInt }},
+		{name: "entrypoints", set: func(l *OverviewLimits) { l.Entrypoints = math.MaxInt }},
+		{name: "clusters", set: func(l *OverviewLimits) { l.Clusters = math.MaxInt }},
+		{name: "string bytes", set: func(l *OverviewLimits) { l.StringBytes = math.MaxInt }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -443,7 +405,7 @@ func TestSmartSearch(t *testing.T) {
 	mk("b.conf", "beta banana")
 	mk("c.conf", "gamma grape")
 	emb := kwEmbedder{kw: []string{"apple", "banana", "grape"}}
-	if _, err := index.BuildVectors(context.Background(), s, emb, "kw"); err != nil {
+	if _, err := index.BuildVectors(context.Background(), s, emb, "kw", index.VectorBudget{}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -663,7 +625,7 @@ func TestSimilarCodeHybrid(t *testing.T) {
 	mk("c.conf", "gamma grape")
 
 	emb := kwEmbedder{kw: []string{"apple", "banana", "grape"}}
-	if _, err := index.BuildVectors(context.Background(), s, emb, "kw"); err != nil {
+	if _, err := index.BuildVectors(context.Background(), s, emb, "kw", index.VectorBudget{}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -704,7 +666,7 @@ func TestSimilarCodeSemanticStaticEmbedder(t *testing.T) {
 		[2]string{"persist.go", "func SaveUser(u User) error { return db.Insert(u) }"},
 		[2]string{"web.go", "func HandleRequest(w http.ResponseWriter, r *http.Request) { renderTemplate(w) }"},
 	)
-	if _, err := index.BuildVectors(context.Background(), s, m, embed.ModelName); err != nil {
+	if _, err := index.BuildVectors(context.Background(), s, m, embed.ModelName, index.VectorBudget{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	hits, err := NewWithAssist(s, assist.Composite{Emb: m}).SimilarCode(context.Background(), "store a record in the database table")

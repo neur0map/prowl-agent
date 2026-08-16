@@ -17,7 +17,6 @@ func TestConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	c := Default()
 	c.AI.Enabled = true
-	c.AI.EmbedModel = "test-embed"
 	c.AI.AssistModel = "test-assist"
 	if err := Save(dir, c); err != nil {
 		t.Fatal(err)
@@ -26,7 +25,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AI.Enabled || got.AI.AssistModel != "test-assist" || got.AI.EmbedModel != "test-embed" {
+	if !got.AI.Enabled || got.AI.AssistModel != "test-assist" {
 		t.Fatalf("roundtrip = %+v", got.AI)
 	}
 	if len(got.Languages) == 0 {

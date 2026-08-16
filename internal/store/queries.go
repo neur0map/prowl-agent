@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"sort"
 	"strings"
 )
@@ -382,48 +383,7 @@ type Counts struct {
 
 // Counts computes index summary statistics.
 func (s *Store) Counts() (Counts, error) {
-	c := Counts{Langs: map[string]int{}}
-	scalar := func(q string) (int, error) {
-		var n int
-		err := s.sql().QueryRow(q).Scan(&n)
-		return n, err
-	}
-	var err error
-	if c.Files, err = scalar(`SELECT count(*) FROM files`); err != nil {
-		return c, err
-	}
-	if c.Symbols, err = scalar(`SELECT count(*) FROM symbols`); err != nil {
-		return c, err
-	}
-	if c.Edges, err = scalar(`SELECT count(*) FROM edges`); err != nil {
-		return c, err
-	}
-	if c.Resources, err = scalar(`SELECT count(*) FROM resources`); err != nil {
-		return c, err
-	}
-	if c.Chunks, err = scalar(`SELECT count(*) FROM chunks`); err != nil {
-		return c, err
-	}
-	if c.Resolved, err = scalar(`SELECT count(*) FROM edges WHERE resolved=1`); err != nil {
-		return c, err
-	}
-	if c.External, c.Unresolved, err = s.edgeResolutionSplit(); err != nil {
-		return c, err
-	}
-	rows, err := s.sql().Query(`SELECT lang, count(*) FROM files GROUP BY lang`)
-	if err != nil {
-		return c, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var lang string
-		var n int
-		if err := rows.Scan(&lang, &n); err != nil {
-			return c, err
-		}
-		c.Langs[lang] = n
-	}
-	return c, rows.Err()
+	return s.CountsContext(context.Background())
 }
 
 // edgeResolutionSplit classifies unresolved (resolved=0) edges into external

@@ -15,12 +15,10 @@ func requirePositiveLimit(limit int) error {
 	return nil
 }
 
-// AllFilesContext returns at most limit indexed files in deterministic path order.
-func (s *Store) AllFilesContext(ctx context.Context, limit int) ([]File, error) {
-	if err := requirePositiveLimit(limit); err != nil {
-		return nil, err
-	}
-	rows, err := s.sql().QueryContext(ctx, `SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files ORDER BY rel_path LIMIT ?`, limit)
+// AllFilesContext returns every indexed file in deterministic path order while
+// honoring cancellation.
+func (s *Store) AllFilesContext(ctx context.Context) ([]File, error) {
+	rows, err := s.sql().QueryContext(ctx, `SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files ORDER BY rel_path`)
 	if err != nil {
 		return nil, err
 	}
@@ -36,14 +34,13 @@ func (s *Store) AllFilesContext(ctx context.Context, limit int) ([]File, error) 
 	return out, rows.Err()
 }
 
-// FileDepEdgesContext returns at most limit resolved file dependency edges.
-func (s *Store) FileDepEdgesContext(ctx context.Context, limit int) ([]FileEdge, error) {
-	if err := requirePositiveLimit(limit); err != nil {
-		return nil, err
-	}
+// FileDepEdgesContext returns every resolved file-to-file edge, optionally
+// filtered by kind, in deterministic order while honoring cancellation.
+func (s *Store) FileDepEdgesContext(ctx context.Context, kinds ...string) ([]FileEdge, error) {
+	clause, args := inClause("e.kind", kinds)
 	rows, err := s.sql().QueryContext(ctx, `SELECT sf.rel_path, e.file_id, df.rel_path, e.dst_id, e.kind, IFNULL(e.line,0)
 		FROM edges e JOIN files sf ON sf.id=e.file_id JOIN files df ON df.id=e.dst_id
-		WHERE e.resolved=1 AND e.dst_type='file' ORDER BY sf.rel_path, e.line, e.id LIMIT ?`, limit)
+		WHERE e.resolved=1 AND e.dst_type='file'`+clause+` ORDER BY sf.rel_path, e.line, e.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -59,16 +56,14 @@ func (s *Store) FileDepEdgesContext(ctx context.Context, limit int) ([]FileEdge,
 	return out, rows.Err()
 }
 
-// ResourceFileLinksContext returns at most limit deterministic resource links.
-func (s *Store) ResourceFileLinksContext(ctx context.Context, limit int) ([]FileEdge, error) {
-	if err := requirePositiveLimit(limit); err != nil {
-		return nil, err
-	}
+// ResourceFileLinksContext returns every deterministic resource link while
+// honoring cancellation.
+func (s *Store) ResourceFileLinksContext(ctx context.Context) ([]FileEdge, error) {
 	rows, err := s.sql().QueryContext(ctx, `SELECT uf.rel_path, e.file_id, df.rel_path, r.file_id
 		FROM edges e JOIN resources r ON e.dst_type='resource' AND e.dst_id=r.id
 		JOIN files uf ON uf.id=e.file_id JOIN files df ON df.id=r.file_id
 		WHERE e.kind='uses_resource' AND e.resolved=1 AND r.file_id IS NOT NULL AND r.file_id<>e.file_id
-		ORDER BY uf.rel_path, df.rel_path, e.id LIMIT ?`, limit)
+		ORDER BY uf.rel_path, df.rel_path, e.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +126,14 @@ func (s *Store) SymbolsByKindContext(ctx context.Context, kind string, limit int
 	return out, rows.Err()
 }
 
+// CountSymbolsByKindContext counts symbols of kind in SQL, so a caller that only
+// needs the total never materializes the rows.
+func (s *Store) CountSymbolsByKindContext(ctx context.Context, kind string) (int, error) {
+	var n int
+	err := s.sql().QueryRowContext(ctx, `SELECT count(*) FROM symbols WHERE kind=?`, kind).Scan(&n)
+	return n, err
+}
+
 // FanInContext returns at most limit fan-in rows, sorted before capping.
 func (s *Store) FanInContext(ctx context.Context, limit int) ([]FanRow, error) {
 	if err := requirePositiveLimit(limit); err != nil {
@@ -154,52 +157,37 @@ func (s *Store) FanInContext(ctx context.Context, limit int) ([]FanRow, error) {
 	return out, rows.Err()
 }
 
-// OverviewCountLimits bounds both scalar counting and the input to grouped
-// language counting. Every value is a max+1 sentinel already checked for
-// positivity and overflow by the query layer.
-type OverviewCountLimits struct {
-	Files, Symbols, Edges, Resources, Chunks, Languages int
-}
-
-// CountsContext computes max+1 sentinel counts from bounded subqueries. SQLite
-// therefore stops each table scan at its sentinel instead of counting an
-// arbitrarily large table. Language grouping is similarly restricted to the
-// bounded file prefix.
-func (s *Store) CountsContext(ctx context.Context, limits OverviewCountLimits) (Counts, error) {
-	for _, limit := range []int{limits.Files, limits.Symbols, limits.Edges, limits.Resources, limits.Chunks, limits.Languages} {
-		if err := requirePositiveLimit(limit); err != nil {
-			return Counts{}, err
-		}
-	}
+// CountsContext computes exact index summary statistics while honoring
+// cancellation. Counting is a single index scan per table: bounding it would
+// only trade a correct total for a plausible-looking wrong one.
+func (s *Store) CountsContext(ctx context.Context) (Counts, error) {
 	counts := Counts{Langs: map[string]int{}}
-	scalar := func(query string, limit int) (int, error) {
+	scalar := func(query string) (int, error) {
 		var n int
-		err := s.sql().QueryRowContext(ctx, query, limit).Scan(&n)
+		err := s.sql().QueryRowContext(ctx, query).Scan(&n)
 		return n, err
 	}
 	var err error
 	queries := []struct {
-		dst   *int
-		sql   string
-		limit int
+		dst *int
+		sql string
 	}{
-		{&counts.Files, `SELECT count(*) FROM (SELECT 1 FROM files LIMIT ?)`, limits.Files},
-		{&counts.Symbols, `SELECT count(*) FROM (SELECT 1 FROM symbols LIMIT ?)`, limits.Symbols},
-		{&counts.Edges, `SELECT count(*) FROM (SELECT 1 FROM edges LIMIT ?)`, limits.Edges},
-		{&counts.Resources, `SELECT count(*) FROM (SELECT 1 FROM resources LIMIT ?)`, limits.Resources},
-		{&counts.Chunks, `SELECT count(*) FROM (SELECT 1 FROM chunks LIMIT ?)`, limits.Chunks},
-		{&counts.Resolved, `SELECT count(*) FROM (SELECT 1 FROM edges WHERE resolved=1 LIMIT ?)`, limits.Edges},
+		{&counts.Files, `SELECT count(*) FROM files`},
+		{&counts.Symbols, `SELECT count(*) FROM symbols`},
+		{&counts.Edges, `SELECT count(*) FROM edges`},
+		{&counts.Resources, `SELECT count(*) FROM resources`},
+		{&counts.Chunks, `SELECT count(*) FROM chunks`},
+		{&counts.Resolved, `SELECT count(*) FROM edges WHERE resolved=1`},
 	}
 	for _, item := range queries {
-		if *item.dst, err = scalar(item.sql, item.limit); err != nil {
+		if *item.dst, err = scalar(item.sql); err != nil {
 			return counts, err
 		}
 	}
 	if counts.External, counts.Unresolved, err = s.edgeResolutionSplit(); err != nil {
 		return counts, err
 	}
-	rows, err := s.sql().QueryContext(ctx, `WITH bounded_files AS (SELECT lang FROM files ORDER BY id LIMIT ?)
-		SELECT lang, count(*) FROM bounded_files GROUP BY lang ORDER BY lang LIMIT ?`, limits.Files, limits.Languages)
+	rows, err := s.sql().QueryContext(ctx, `SELECT lang, count(*) FROM files GROUP BY lang ORDER BY lang`)
 	if err != nil {
 		return counts, err
 	}

@@ -46,28 +46,31 @@ func TestBuildVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pending, _ := s.ChunksWithoutVectors()
+	pending, _ := s.ChunksWithoutVectors(0)
 	if len(pending) == 0 {
 		t.Fatal("no chunks to embed")
 	}
 
-	n, err := BuildVectors(context.Background(), s, fakeEmbedder{dim: 32}, "fake")
+	pass, err := BuildVectors(context.Background(), s, fakeEmbedder{dim: 32}, "fake", VectorBudget{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != len(pending) {
-		t.Fatalf("embedded %d, want %d", n, len(pending))
+	if pass.Embedded != len(pending) {
+		t.Fatalf("embedded %d, want %d", pass.Embedded, len(pending))
 	}
-	if !s.VectorsReady() {
-		t.Fatal("vectors not ready after build")
+	if pass.Remaining != 0 {
+		t.Fatalf("remaining %d after full drain, want 0", pass.Remaining)
 	}
-	if left, _ := s.ChunksWithoutVectors(); len(left) != 0 {
+	if !s.VectorsReady() || !s.VectorsComplete() {
+		t.Fatalf("ready=%v complete=%v after full build", s.VectorsReady(), s.VectorsComplete())
+	}
+	if left, _ := s.ChunksWithoutVectors(0); len(left) != 0 {
 		t.Fatalf("%d chunks still without vectors", len(left))
 	}
 
 	// Incremental: a second run embeds nothing.
-	if n2, err := BuildVectors(context.Background(), s, fakeEmbedder{dim: 32}, "fake"); err != nil || n2 != 0 {
-		t.Fatalf("re-run embedded %d err=%v, want 0", n2, err)
+	if again, err := BuildVectors(context.Background(), s, fakeEmbedder{dim: 32}, "fake", VectorBudget{}, nil); err != nil || again.Embedded != 0 {
+		t.Fatalf("re-run embedded %d err=%v, want 0", again.Embedded, err)
 	}
 
 	// A vector search returns results.
@@ -77,5 +80,64 @@ func TestBuildVectors(t *testing.T) {
 	}
 	if len(hits) == 0 {
 		t.Fatal("vector search returned nothing")
+	}
+}
+
+// Embedding a large repo is tens of minutes of model round trips, so no single
+// pass can be assumed to finish. Each budgeted pass must keep its work and the
+// next one must resume from the backlog instead of starting over.
+func TestBuildVectorsResumesAcrossBudgetedPasses(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := Index(s, filepath.Join("..", "..", "testdata", "sample-config"), nil); err != nil {
+		t.Fatal(err)
+	}
+	total, err := s.CountChunksWithoutVectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total < 3 {
+		t.Fatalf("fixture has %d chunks, need at least 3 to test partial passes", total)
+	}
+
+	emb := fakeEmbedder{dim: 32}
+	first, err := BuildVectors(context.Background(), s, emb, "fake", VectorBudget{MaxChunks: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Embedded == 0 || first.Embedded >= total {
+		t.Fatalf("first pass embedded %d of %d, want a partial pass", first.Embedded, total)
+	}
+	if first.Remaining != total-first.Embedded {
+		t.Fatalf("remaining %d, want %d", first.Remaining, total-first.Embedded)
+	}
+	if s.VectorsComplete() {
+		t.Fatal("a partial backlog must not report a complete vector index")
+	}
+	// Partial coverage is still usable: semantic search must not be switched off
+	// repo-wide just because the backlog has not drained.
+	if !s.VectorsReady() {
+		t.Fatal("partially embedded index reported as unusable")
+	}
+
+	embedded := first.Embedded
+	for range 100 {
+		pass, err := BuildVectors(context.Background(), s, emb, "fake", VectorBudget{MaxChunks: 1}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		embedded += pass.Embedded
+		if pass.Remaining == 0 {
+			break
+		}
+	}
+	if embedded != total {
+		t.Fatalf("resumed passes embedded %d in total, want %d (work was discarded between passes)", embedded, total)
+	}
+	if !s.VectorsComplete() {
+		t.Fatal("drained backlog did not mark the vector index complete")
 	}
 }

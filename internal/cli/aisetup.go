@@ -12,6 +12,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/embed"
 )
 
 // selectTier asks the user to choose an AI model tier.
@@ -62,14 +63,14 @@ func selectBackend(agentCommand string, ollamaInstalled bool) string {
 	return choice
 }
 
-// setupAI upgrades the embedding backend to a local Ollama model: it ensures
-// Ollama is installed, brings the daemon up (reusing a service, installing a
-// user service, or spawning it), pulls any missing models, and warms the embed
-// model. It is purely an upgrade -- semantic search already works through the
-// built-in in-process embedder, so any failure here just keeps that in use.
+// setupAI is an optional upgrade for the generate/rerank half only: it ensures
+// Ollama is installed, brings the daemon up, pulls the tier's assist model, and
+// warms it. Semantic vector search never depends on any of this -- embeddings
+// always come from the code embedder bundled into the binary -- so every failure
+// path here simply leaves search fully working without a rewrite/rerank model.
 func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interactive bool) {
-	fmt.Fprintf(out, "AI tier %q: embed %s, assist %s\n", p.Name, p.EmbedModel, p.AssistModel)
-	oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
+	fmt.Fprintf(out, "AI tier %q: embeddings built in (%s), assist %s\n", p.Name, embed.ModelName, p.AssistModel)
+	oll := assist.NewOllama("", p.AssistModel)
 	root, _ := os.Getwd()
 
 	// Ensure Ollama is installed before trying to start it.
@@ -78,8 +79,8 @@ func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interacti
 			if interactive && confirmAI("Ollama is not installed. Install it now? (runs the official installer; may ask for sudo)") {
 				installOllama(out)
 			} else {
-				uiLog.Info("Ollama is not installed; using the built-in embedder for semantic search")
-				uiLog.Info("optional higher-quality embeddings: curl -fsSL https://ollama.com/install.sh | sh")
+				uiLog.Info("Ollama is not installed; semantic search works without it")
+				uiLog.Info("optional query rewrite and rerank: curl -fsSL https://ollama.com/install.sh | sh")
 				return
 			}
 		}
@@ -87,33 +88,29 @@ func setupAI(ctx context.Context, out io.Writer, p config.ModelPreset, interacti
 
 	// Bring the daemon up and keep it up for long coding sessions.
 	if !ensureOllama(ctx, oll, root) {
-		uiLog.Info("Ollama not reachable; using the built-in embedder (Ollama would upgrade embedding quality)")
+		uiLog.Info("Ollama not reachable; semantic search works without it (Ollama would add query rewrite and rerank)")
 		return
 	}
 
-	// Pull any missing models now that the daemon is up.
-	for _, m := range []string{p.EmbedModel, p.AssistModel} {
-		if m == "" || oll.HasModel(ctx, m) {
-			continue
-		}
-		if interactive && confirmAI(fmt.Sprintf("Pull %s now?", m)) {
-			if err := pullModel(m); err != nil {
-				uiLog.Warnf("pull %s failed: %v (run: ollama pull %s)", m, err, m)
+	if p.AssistModel == "" {
+		return
+	}
+	if !oll.HasModel(ctx, p.AssistModel) {
+		if interactive && confirmAI(fmt.Sprintf("Pull %s now?", p.AssistModel)) {
+			if err := pullModel(p.AssistModel); err != nil {
+				uiLog.Warnf("pull %s failed: %v (run: ollama pull %s)", p.AssistModel, err, p.AssistModel)
 			}
 		} else {
-			uiLog.Infof("pull it: ollama pull %s", m)
+			uiLog.Infof("pull it: ollama pull %s", p.AssistModel)
 		}
 	}
-
-	// Warm the embed model so the first query does not pay a cold start.
-	if p.EmbedModel != "" && oll.HasModel(ctx, p.EmbedModel) {
-		if err := oll.Warm(ctx, p.EmbedModel, ollamaKeepAlive); err != nil {
-			uiLog.Warnf("warm %s: %v", p.EmbedModel, err)
+	// Warm the assist model so the first rerank does not pay a cold start.
+	if oll.HasModel(ctx, p.AssistModel) {
+		if err := oll.Warm(ctx, p.AssistModel, ollamaKeepAlive); err != nil {
+			uiLog.Warnf("warm %s: %v", p.AssistModel, err)
 		} else {
-			uiLog.Infof("warmed %s; semantic search ready", p.EmbedModel)
+			uiLog.Infof("warmed %s; query rewrite and rerank ready", p.AssistModel)
 		}
-	} else {
-		uiLog.Infof("using the built-in embedder; pull %s for higher-quality embeddings", p.EmbedModel)
 	}
 }
 
@@ -143,29 +140,23 @@ func pullModel(model string) error {
 	return cmd.Run()
 }
 
-// resolveModels prefers models already installed on the local Ollama so init does
-// not point the config at a model that is absent (which silently disables semantic
-// search) or ask the user to pull one when an equivalent is already present. It
-// keeps the tier preset when those models are installed, substitutes an installed
-// embedding/chat model when they are not, and falls back to the preset names (to
-// be pulled) when nothing suitable is installed or Ollama is unreachable.
-func resolveModels(ctx context.Context, oll *assist.Ollama, p config.ModelPreset) (embed, gen string) {
-	embed, gen = p.EmbedModel, p.AssistModel
+// resolveAssistModel prefers an assist model already installed on the local
+// Ollama so init does not ask for a redundant pull, keeping the tier preset when
+// it is installed and falling back to the preset name (to be pulled) when nothing
+// suitable is installed or Ollama is unreachable. Embedding models are excluded:
+// they cannot generate or rerank, and prowl never uses Ollama for embeddings.
+func resolveAssistModel(ctx context.Context, oll *assist.Ollama, p config.ModelPreset) string {
+	gen := p.AssistModel
 	have, err := oll.Models(ctx)
 	if err != nil || len(have) == 0 {
-		return embed, gen
-	}
-	if !installedModel(have, embed) {
-		if m := pickEmbedModel(have); m != "" {
-			embed = m
-		}
+		return gen
 	}
 	if !installedModel(have, gen) {
 		if m := pickChatModel(have); m != "" {
 			gen = m
 		}
 	}
-	return embed, gen
+	return gen
 }
 
 // installedModel reports whether want is among have, tolerating Ollama's implicit
@@ -185,17 +176,6 @@ func modelBase(m string) string {
 		return m[:i]
 	}
 	return m
-}
-
-// pickEmbedModel returns the first installed model whose base name is a known
-// embedding model, or "" when none is installed.
-func pickEmbedModel(have []string) string {
-	for _, h := range have {
-		if isEmbedModel(modelBase(h)) {
-			return h
-		}
-	}
-	return ""
 }
 
 // pickChatModel returns the first installed model that is not an embedding model,

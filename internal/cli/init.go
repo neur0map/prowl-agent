@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
@@ -25,11 +26,8 @@ import (
 
 // InitOptions controls a non-interactive init.
 type InitOptions struct {
-	Root string
-	Tier string
-	// EmbedModel and AssistModel override the tier preset when non-empty. The
-	// init command fills them from models already installed on Ollama.
-	EmbedModel  string
+	Root        string
+	Tier        string
 	AssistModel string
 	// Provider/AgentCommand select the semantic-assist backend. Provider
 	// "agent" borrows a coding-agent CLI (AgentCommand, e.g. "claude -p") for
@@ -46,6 +44,10 @@ type InitOptions struct {
 	// excluding the repo's real stack) that the post-init warning points at.
 	Languages    []string
 	LanguagesSet bool
+	// EmbedProgress, when set, receives semantic-index build progress. The first
+	// build on a large repo is thousands of model round trips; without a signal it
+	// is indistinguishable from a hang.
+	EmbedProgress func(embedded, remaining int)
 }
 
 // RunInit creates the workspace, writes config/rules, runs the first index,
@@ -85,14 +87,10 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	switch {
 	case opt.Tier != "":
 		p := config.PresetByName(opt.Tier)
-		cfg.AI.EmbedModel, cfg.AI.AssistModel = p.EmbedModel, p.AssistModel
+		cfg.AI.AssistModel = p.AssistModel
 	case !existed:
 		p := config.PresetByName(tier)
-		cfg.AI.EmbedModel = firstNonEmpty(g.EmbedModel, p.EmbedModel)
 		cfg.AI.AssistModel = firstNonEmpty(g.AssistModel, p.AssistModel)
-	}
-	if opt.EmbedModel != "" {
-		cfg.AI.EmbedModel = opt.EmbedModel
 	}
 	if opt.AssistModel != "" {
 		cfg.AI.AssistModel = opt.AssistModel
@@ -117,7 +115,6 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 		_ = config.SaveGlobal(config.GlobalConfig{
 			AIEnabled:   true,
 			Tier:        tier,
-			EmbedModel:  cfg.AI.EmbedModel,
 			AssistModel: cfg.AI.AssistModel,
 		})
 	}
@@ -128,7 +125,11 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 			return index.Summary{}, err
 		}
 	}
-	project, err := application.OpenProject(context.Background(), root, application.Options{})
+	// Open with AI so init builds the semantic index it reports as ready. Without
+	// an inferencer, init printed "semantic search ready" while embedding nothing.
+	project, err := application.OpenProject(context.Background(), root, application.Options{
+		EnableAI: cfg.AI.Enabled, InferencerProvider: maybeInferencer,
+	})
 	if err != nil {
 		return index.Summary{}, err
 	}
@@ -143,6 +144,16 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 			sum.Symbols = status.Counts.Symbols
 			sum.Edges = status.Counts.Edges
 		}
+	}
+
+	// init is the explicit setup step, so it drains the embedding backlog rather
+	// than leaving the semantic index it advertises half-built.
+	var embedProgress func(index.VectorPass)
+	if opt.EmbedProgress != nil {
+		embedProgress = func(pass index.VectorPass) { opt.EmbedProgress(pass.Embedded, pass.Remaining) }
+	}
+	if _, embedErr := project.BuildSemanticIndex(context.Background(), embedProgress); embedErr != nil {
+		return sum, embedErr
 	}
 	integrations := append([]string(nil), allIntegrations...)
 	if opt.IntegrationsSet {
@@ -342,7 +353,7 @@ func newInitCmd() *cobra.Command {
 			// reranking) when installed, else borrow a coding-agent CLI (reranking
 			// only) so semantic assist is meaningful even without a local model.
 			provider, agentCommand := aiProvider, aiCommand
-			var embedModel, assistModel string
+			var assistModel string
 			if provider == "" {
 				if pc, e := config.Load(projDir); e == nil {
 					provider = pc.AI.Provider
@@ -368,9 +379,9 @@ func newInitCmd() *cobra.Command {
 					provider = "ollama"
 				case detected != "":
 					provider, agentCommand = "agent", detected
-					uiLog.Infof("semantic search on via the built-in embedder; %q adds rewrite+rerank (cheap tier). Override with --ai-command", agentCommand)
+					uiLog.Infof("semantic search is on (built-in embedder); %q adds rewrite+rerank (cheap tier). Override with --ai-command", agentCommand)
 				default:
-					uiLog.Infof("semantic search on via the built-in embedder; install Ollama (higher-quality embeddings) or a coding agent (rewrite+rerank) to upgrade")
+					uiLog.Infof("semantic search is on (built-in embedder); install Ollama or a coding agent to add query rewrite and rerank")
 				}
 			}
 			if provider == "agent" && agentCommand == "" {
@@ -386,8 +397,8 @@ func newInitCmd() *cobra.Command {
 					}
 				}
 				p := config.PresetByName(tier)
-				oll := assist.NewOllama("", p.EmbedModel, p.AssistModel)
-				embedModel, assistModel = resolveModels(cmd.Context(), oll, p)
+				oll := assist.NewOllama("", p.AssistModel)
+				assistModel = resolveAssistModel(cmd.Context(), oll, p)
 			}
 
 			if !asJSON {
@@ -400,7 +411,21 @@ func newInitCmd() *cobra.Command {
 					langs, langsSet, healed = healedLangs, true, true
 				}
 			}
-			sum, err := RunInit(InitOptions{Root: root, Tier: tier, EmbedModel: embedModel, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet})
+			var embedProgress func(int, int)
+			if !asJSON {
+				lastReport := time.Time{}
+				embedProgress = func(embedded, remaining int) {
+					if remaining > 0 && time.Since(lastReport) < time.Second {
+						return
+					}
+					lastReport = time.Now()
+					fmt.Fprintf(out, "\rBuilding semantic index: %d embedded, %d to go ...", embedded, remaining)
+					if remaining == 0 {
+						fmt.Fprintln(out)
+					}
+				}
+			}
+			sum, err := RunInit(InitOptions{Root: root, Tier: tier, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet, EmbedProgress: embedProgress})
 			if err != nil {
 				return err
 			}
@@ -414,7 +439,7 @@ func newInitCmd() *cobra.Command {
 				if asJSON {
 					aiOut = io.Discard
 				}
-				setupAI(cmd.Context(), aiOut, config.ModelPreset{Name: tier, EmbedModel: final.AI.EmbedModel, AssistModel: final.AI.AssistModel}, !nonInteractive)
+				setupAI(cmd.Context(), aiOut, config.ModelPreset{Name: tier, AssistModel: final.AI.AssistModel}, !nonInteractive)
 			}
 			if asJSON {
 				return json.NewEncoder(out).Encode(map[string]any{"root": root, "indexed": sum, "integrations": integrations, "verified": true})

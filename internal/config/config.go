@@ -13,16 +13,18 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/boundedio"
 )
 
-// AI holds the optional semantic-assist settings (wired in M2).
+// AI holds the optional semantic-assist settings. There is deliberately no embed
+// model setting: embeddings always come from the code embedder bundled into the
+// binary, so semantic search is identical on every machine and a vector index is
+// never keyed to whichever daemon happened to be running when it was built.
 type AI struct {
 	Enabled     bool   `toml:"enabled"`
-	EmbedModel  string `toml:"embed_model"`
 	RerankModel string `toml:"rerank_model"`
 	AssistModel string `toml:"assist_model"`
 	OllamaURL   string `toml:"ollama_url"`
-	// Provider selects the semantic-assist backend: "" / "ollama" uses a local
-	// Ollama daemon (embeddings + reranking); "agent" borrows a coding-agent CLI
-	// named by AgentCommand for reranking only (no embeddings, no daemon).
+	// Provider selects the backend for the generate/rerank half only: "" /
+	// "ollama" uses a local Ollama daemon; "agent" borrows a coding-agent CLI
+	// named by AgentCommand. Neither supplies embeddings.
 	// Reranking is a lightweight ordering task, so AgentCommand should name a
 	// cheap/fast model (e.g. "claude -p --model haiku"); prowl is a support tool
 	// and the spawn must stay cheap.
@@ -76,35 +78,35 @@ func Default() Config {
 			// the runtime resolver degrades gracefully (local vectors -> borrowed
 			// coding-agent rerank -> structural) so "enabled" never blocks a query.
 			Enabled:     true,
-			EmbedModel:  p.EmbedModel,
 			AssistModel: p.AssistModel,
 			OllamaURL:   "http://localhost:11434",
 		},
 	}
 }
 
-// ModelPreset is a named pair of local models for the AI layer.
+// ModelPreset is a named assist model for the AI layer. Embeddings are not part
+// of a tier: they always come from the bundled in-process code embedder, so a
+// tier only chooses how much machine the optional rewrite/rerank model uses.
 type ModelPreset struct {
 	Name        string
 	Desc        string
-	EmbedModel  string
 	AssistModel string
 }
 
 // DefaultTier is the recommended preset when none is chosen.
 const DefaultTier = "smart"
 
-// Presets are the AI model tiers offered at init, fastest to best. Sizes and
+// Presets are the assist model tiers offered at init, fastest to best. Sizes and
 // VRAM are rough guidance for choosing one.
 var Presets = []ModelPreset{
-	{"fast", "runs anywhere, CPU ok (~1 GB)", "embeddinggemma", "gemma3:1b"},
-	{"smart", "newer assist, ~10 GB VRAM", "qwen3-embedding:4b", "gemma4:e2b"},
-	{"max", "best quality, ~16 GB VRAM", "qwen3-embedding:8b", "gemma4:e4b"},
+	{"fast", "runs anywhere, CPU ok (~1 GB)", "gemma3:1b"},
+	{"smart", "newer assist, ~10 GB VRAM", "gemma4:e2b"},
+	{"max", "best quality, ~16 GB VRAM", "gemma4:e4b"},
 }
 
-// KnownEmbedModels lists Ollama models prowl can use for embeddings, by base
-// name (tag stripped). init prefers one of these when it is already installed so
-// it does not point the config at an absent model or ask for a redundant pull.
+// KnownEmbedModels lists Ollama models that are embedding-only, by base name (tag
+// stripped). prowl never uses Ollama for embeddings; this list exists so init does
+// not mistake an installed embedder for a usable assist (generate/rerank) model.
 var KnownEmbedModels = []string{
 	"nomic-embed-text",
 	"mxbai-embed-large",

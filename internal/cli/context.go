@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -135,7 +136,7 @@ func addContextFlags(command *cobra.Command, mode *string, budgetTokens, budgetB
 }
 
 func openContextService(ctx context.Context) (*contextpacket.Service, func(), error) {
-	project, err := application.OpenProject(ctx, "", application.Options{EnableAI: true, InferencerProvider: maybeInferencer})
+	project, err := application.OpenProject(ctx, "", application.Options{EnableAI: true, InferencerProvider: maybeInferencer, VectorProgress: semanticBuildReporter(os.Stderr)})
 	if err != nil {
 		return nil, nil, err
 	}

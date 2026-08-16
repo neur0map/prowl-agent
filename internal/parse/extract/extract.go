@@ -195,7 +195,15 @@ func chunkStructured(src []byte, symbols []Symbol, window int) []Chunk {
 	var out []Chunk
 	curA, curB := 0, 0
 	emit := func() {
-		out = append(out, Chunk{StartLine: curA, EndLine: curB, Text: strings.Join(lines[curA-1:curB], "\n")})
+		text := strings.Join(lines[curA-1:curB], "\n")
+		// A run of blank lines between symbols carries nothing retrievable, and an
+		// empty chunk is actively harmful: a static embedder maps it to its
+		// degenerate mean vector, which sits nearer an arbitrary query than real
+		// code does, so blank chunks monopolize vector KNN and crowd real matches
+		// out of every result page.
+		if strings.TrimSpace(text) != "" {
+			out = append(out, Chunk{StartLine: curA, EndLine: curB, Text: text})
+		}
 		curA, curB = 0, 0
 	}
 	for _, at := range buildAtoms(mergeSymbolSpans(symbols, n), n, window) {

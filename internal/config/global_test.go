@@ -14,7 +14,7 @@ func TestGlobalConfigRoundTrip(t *testing.T) {
 		t.Fatalf("absent global config should default AIEnabled=false, got %+v", g)
 	}
 
-	want := GlobalConfig{AIEnabled: true, Tier: "smart", EmbedModel: "e-model", AssistModel: "a-model"}
+	want := GlobalConfig{AIEnabled: true, Tier: "smart", AssistModel: "a-model"}
 	if err := SaveGlobal(want); err != nil {
 		t.Fatalf("SaveGlobal: %v", err)
 	}

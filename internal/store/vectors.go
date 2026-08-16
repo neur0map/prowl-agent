@@ -42,8 +42,22 @@ func (s *Store) VectorsInitialized() bool {
 	return err == nil && n > 0
 }
 
-// VectorsReady reports whether a complete vector generation was published.
+// VectorsReady reports whether a usable vector index exists. Partial coverage
+// counts: on a large repo the embedding backlog is rarely empty, and gating
+// semantic search on a fully drained backlog switched it off for exactly the
+// repos that need it most. Chunks that lack a vector are simply not vector-
+// matched yet; lexical ranking still covers them.
 func (s *Store) VectorsReady() bool {
+	if !s.VectorsInitialized() {
+		return false
+	}
+	var n int
+	err := s.sql().QueryRow(`SELECT count(*) FROM (SELECT rowid FROM vec_chunks LIMIT 1)`).Scan(&n)
+	return err == nil && n > 0
+}
+
+// VectorsComplete reports whether every indexed chunk has an embedding.
+func (s *Store) VectorsComplete() bool {
 	complete, err := s.GetMeta("vectors_complete")
 	return err == nil && complete == "1" && s.VectorsInitialized()
 }
@@ -98,14 +112,34 @@ func (s *Store) VectorSearch(vec []float32, k int) ([]ChunkHit, error) {
 	return out, rows.Err()
 }
 
-// ChunksWithoutVectors returns chunks that still need an embedding. If the vec
-// table does not exist yet, every chunk is returned.
-func (s *Store) ChunksWithoutVectors() ([]ChunkText, error) {
-	q := `SELECT c.id, c.text FROM chunks c ORDER BY c.id`
+// chunkHasContent excludes content-free chunks from embedding. Such a chunk
+// embeds to the model's degenerate mean vector, which ranks nearer an arbitrary
+// query than real code does, so a handful of them monopolize every KNN result.
+// The chunker no longer emits them; this keeps indexes built by older versions
+// from poisoning vector search until they are re-chunked.
+// SQLite's one-argument trim() strips spaces only, so the whitespace set is given
+// explicitly: tab, newline, carriage return, and space.
+const chunkWhitespace = `' ' || char(9) || char(10) || char(13)`
+
+const chunkHasContent = `trim(c.text, ` + chunkWhitespace + `) <> ''`
+
+// ChunksWithoutVectors returns at most limit chunks that still need an embedding,
+// lowest id first. A non-positive limit returns all of them. Embedding a large
+// repo means walking ~100k chunks of source text, so callers window the backlog
+// instead of materializing every pending chunk body at once. If the vec table
+// does not exist yet, every chunk still needs one.
+func (s *Store) ChunksWithoutVectors(limit int) ([]ChunkText, error) {
+	q := `SELECT c.id, c.text FROM chunks c WHERE ` + chunkHasContent
 	if s.VectorsInitialized() {
-		q = `SELECT c.id, c.text FROM chunks c WHERE c.id NOT IN (SELECT rowid FROM vec_chunks) ORDER BY c.id`
+		q += ` AND c.id NOT IN (SELECT rowid FROM vec_chunks)`
 	}
-	rows, err := s.sql().Query(q)
+	q += ` ORDER BY c.id`
+	args := []any{}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.sql().Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +153,43 @@ func (s *Store) ChunksWithoutVectors() ([]ChunkText, error) {
 		out = append(out, ct)
 	}
 	return out, rows.Err()
+}
+
+// CountChunksWithoutVectors reports how much embedding work is still outstanding,
+// so a caller can tell the user semantic search is still warming up.
+func (s *Store) CountChunksWithoutVectors() (int, error) {
+	q := `SELECT count(*) FROM chunks c WHERE ` + chunkHasContent
+	if s.VectorsInitialized() {
+		q += ` AND c.id NOT IN (SELECT rowid FROM vec_chunks)`
+	}
+	var n int
+	err := s.sql().QueryRow(q).Scan(&n)
+	return n, err
+}
+
+// CountEmbeddableChunks reports how many chunks are eligible for an embedding, so
+// coverage is reported against the work that actually exists rather than against
+// every chunk row.
+func (s *Store) CountEmbeddableChunks() (int, error) {
+	var n int
+	err := s.sql().QueryRow(`SELECT count(*) FROM chunks c WHERE ` + chunkHasContent).Scan(&n)
+	return n, err
+}
+
+// PruneContentFreeVectors drops vectors stored for content-free chunks by an
+// older version, so an existing index recovers without a full re-embed. Returns
+// the number removed.
+func (s *Store) PruneContentFreeVectors() (int, error) {
+	if !s.VectorsInitialized() {
+		return 0, nil
+	}
+	res, err := s.sql().Exec(`DELETE FROM vec_chunks WHERE rowid IN
+		(SELECT c.id FROM chunks c WHERE NOT (` + chunkHasContent + `))`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // deleteChunkVectors removes vectors for a file's chunks (if the table exists),

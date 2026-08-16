@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -27,31 +28,34 @@ type Inferencer interface {
 	Rerank(ctx context.Context, query string, docs []string) ([]int, error)
 }
 
-// Ollama talks to a local Ollama daemon over HTTP.
+// Ollama talks to a local Ollama daemon over HTTP. prowl uses it for the
+// generate/rerank half only; embeddings always come from the bundled in-process
+// model, so no embed model is configured here.
 type Ollama struct {
-	BaseURL    string
-	EmbedModel string
-	GenModel   string
-	HTTP       *http.Client
+	BaseURL  string
+	GenModel string
+	HTTP     *http.Client
 }
 
 var _ Inferencer = (*Ollama)(nil)
 
 // NewOllama builds a client; baseURL defaults to http://localhost:11434.
-func NewOllama(baseURL, embedModel, genModel string) *Ollama {
+func NewOllama(baseURL, genModel string) *Ollama {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
 	}
 	return &Ollama{
-		BaseURL:    baseURL,
-		EmbedModel: embedModel,
-		GenModel:   genModel,
-		HTTP:       &http.Client{Timeout: 60 * time.Second},
+		BaseURL:  baseURL,
+		GenModel: genModel,
+		HTTP:     &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
-// EmbedModelID reports the embedding model identity for vector metadata keying.
-func (o *Ollama) EmbedModelID() string { return o.EmbedModel }
+// errNoOllamaEmbeddings reports that this backend is not an embedding provider.
+// Ollama satisfies Inferencer for its generate/rerank half; prowl routes every
+// embedding through the bundled in-process model instead, so a vector index is
+// never keyed to a daemon that may or may not be running.
+var errNoOllamaEmbeddings = errors.New("ollama backend provides generation and rerank only; embeddings come from the built-in model")
 
 // Available reports whether the Ollama daemon is reachable.
 func (o *Ollama) Available(ctx context.Context) bool {
@@ -67,27 +71,23 @@ func (o *Ollama) Available(ctx context.Context) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// Embed returns one vector per input text via /api/embed.
-func (o *Ollama) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	var out struct {
-		Embeddings [][]float32 `json:"embeddings"`
-	}
-	body := map[string]any{"model": o.EmbedModel, "input": texts}
-	if err := o.post(ctx, "/api/embed", body, &out); err != nil {
-		return nil, err
-	}
-	return out.Embeddings, nil
+// Embed is not provided by this backend: see errNoOllamaEmbeddings.
+func (o *Ollama) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, errNoOllamaEmbeddings
 }
 
-// Warm loads model into memory and pins it for keepAlive (e.g. "30m") via a tiny
-// embed, so the first real query after init is hot instead of paying a cold
-// start. Best-effort: callers ignore the error.
+// Warm loads model into memory and pins it for keepAlive (e.g. "30m") with a
+// minimal generation, so the first rerank after init is hot instead of paying a
+// cold start. Best-effort: callers ignore the error.
 func (o *Ollama) Warm(ctx context.Context, model, keepAlive string) error {
 	var out struct {
-		Embeddings [][]float32 `json:"embeddings"`
+		Response string `json:"response"`
 	}
-	body := map[string]any{"model": model, "input": ".", "keep_alive": keepAlive}
-	return o.post(ctx, "/api/embed", body, &out)
+	body := map[string]any{
+		"model": model, "prompt": ".", "stream": false, "keep_alive": keepAlive,
+		"options": map[string]any{"temperature": 0, "num_predict": 1},
+	}
+	return o.post(ctx, "/api/generate", body, &out)
 }
 
 // Generate runs a deterministic (temperature 0) completion via /api/generate.

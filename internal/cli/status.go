@@ -94,6 +94,14 @@ func printPlainStatus(out io.Writer, root string, st query.Status, upd selfupdat
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "AI-assist: %v\n", st.AIEnabled)
+	if sem := st.Semantic; st.AIEnabled && sem.Chunks > 0 {
+		if sem.Complete {
+			fmt.Fprintf(out, "Semantic:  fully built (%d chunks embedded)\n", sem.Embedded)
+		} else {
+			fmt.Fprintf(out, "Semantic:  building, %d of %d chunks embedded, %d to go (lexical search covers the rest; 'prowl-agent init' continues it)\n",
+				sem.Embedded, sem.Chunks, sem.Remaining)
+		}
+	}
 	if st.Savings.Queries > 0 {
 		fmt.Fprintf(out, "Saved:     ~%s tokens across %d answers (estimated)\n",
 			humanTokens(st.Savings.SavedTokens), st.Savings.Queries)

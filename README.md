@@ -329,21 +329,30 @@ Add `--smart` to rewrite the query and re-rank the results, which helps on vague
 questions. Plain `search` never spawns anything, so it stays fast enough for an
 agent to call on every turn.
 
-Want higher-quality embeddings? `init` can point the embedder at a local
-[Ollama](https://ollama.com) model instead, still no cloud and no API key. Pick
-a tier with `--tier fast|smart|max`:
+Embeddings always come from the code embedder compiled into the binary
+(`potion-code-16M`, a static model distilled from `bge-base-en-v1.5` and tuned
+for code). There is nothing to download, no daemon, no API key, and no cache: it
+works on first run and fully offline, identically on every machine. It is also
+the fast path: roughly 650 chunks/second in-process versus about 47 through a
+local Ollama embed model, which is the difference between a semantic index that
+builds in two minutes and one that takes half an hour on a large repo.
 
-| tier | embed model | needs |
+Optionally add query rewrite and re-ranking (the `--smart` half), which helps on
+vague questions. That step genuinely needs an LLM, so it uses a local
+[Ollama](https://ollama.com) model, still no cloud and no API key. Pick a tier
+with `--tier fast|smart|max`:
+
+| tier | assist model | needs |
 |---|---|---|
-| fast | `embeddinggemma` | runs anywhere, CPU ok |
-| smart | `qwen3-embedding:4b` | about 10 GB VRAM |
-| max | `qwen3-embedding:8b` | about 16 GB VRAM |
+| fast | `gemma3:1b` | runs anywhere, CPU ok |
+| smart | `gemma4:e2b` | about 10 GB VRAM |
+| max | `gemma4:e4b` | about 16 GB VRAM |
 
-Or borrow an installed coding-agent CLI for the rewrite and re-rank step with
-`--ai-provider agent` (it autodetects a cheap tier like `claude -p --model
-haiku`; override with `--ai-command`). Both are optional upgrades; the built-in
-model already gives you meaning-based search out of the box. Over MCP, an agent
-can also pass `rerank: true` to have its own model reorder results in-process.
+Or borrow an installed coding-agent CLI for that same rewrite and re-rank step
+with `--ai-provider agent` (it autodetects a cheap tier like `claude -p --model
+haiku`; override with `--ai-command`). Both are optional: without either, vector
+plus full-text search still answers every query. Over MCP, an agent can also pass
+`rerank: true` to have its own model reorder results in-process.
 
 ## Supported formats
 

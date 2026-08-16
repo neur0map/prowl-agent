@@ -33,6 +33,10 @@ type InferencerProvider func(context.Context, config.Config) assist.Inferencer
 type Options struct {
 	EnableAI           bool
 	InferencerProvider InferencerProvider
+	// VectorProgress, when set, receives semantic-index build progress. A binary
+	// upgrade re-chunks the repository and so invalidates every vector; rebuilding
+	// them is fast but not instant, and a transport that can report it should.
+	VectorProgress func(index.VectorPass)
 }
 
 // inferencerEmbeds reports whether an inferencer can produce embeddings. A
@@ -45,25 +49,27 @@ func inferencerEmbeds(inf assist.Inferencer) bool {
 	return true
 }
 
-// embedModelID returns the embedding model identity an inferencer actually uses
-// for vectors (the in-process static model, or an Ollama model name), falling
-// back to the configured name when the backend reports none. It keys stored
-// vectors so switching backends triggers a clean re-embed.
-func embedModelID(inf assist.Inferencer, fallback string) string {
+// embedModelID returns the identity of the embedder that produced a project's
+// vectors. It keys stored vectors, so a change of embedder (or a version bump of
+// the bundled model) triggers a clean re-embed. There is no configured fallback:
+// the embedding backend is not user-selectable.
+func embedModelID(inf assist.Inferencer) string {
 	if m, ok := inf.(interface{ EmbedModelID() string }); ok {
-		if id := m.EmbedModelID(); id != "" {
-			return id
-		}
+		return m.EmbedModelID()
 	}
-	return fallback
+	return ""
 }
 
 // RefreshResult describes one deterministic refresh. EmbeddingError is a
 // best-effort AI warning; structural indexing failures are returned as errors.
+// VectorsRemaining is how many chunks still lack an embedding once the refresh
+// finished, so a caller can say semantic search is still warming rather than
+// leave an agent guessing.
 type RefreshResult struct {
-	Summary        index.Summary
-	Embedded       int
-	EmbeddingError error
+	Summary          index.Summary
+	Embedded         int
+	VectorsRemaining int
+	EmbeddingError   error
 }
 
 // Project is the shared, deterministic project service graph. It starts no
@@ -82,10 +88,11 @@ type Project struct {
 	// project state during assembly.
 	InitialRefresh RefreshResult
 
-	refreshGate chan struct{}
-	closeOnce   sync.Once
-	closeErr    error
-	closed      atomic.Bool
+	refreshGate    chan struct{}
+	vectorProgress func(index.VectorPass)
+	closeOnce      sync.Once
+	closeErr       error
+	closed         atomic.Bool
 	// beforeIndex and afterIndex are package-private deterministic test seams.
 	beforeIndex func()
 	// afterIndex is a package-private test seam invoked while generation writes
@@ -175,16 +182,17 @@ func assembleProject(
 		contextService.Reranker = reranker
 	}
 	project := &Project{
-		Workspace:    state,
-		Config:       cfg,
-		Store:        database,
-		Capabilities: catalog,
-		Query:        querier,
-		Context:      contextService,
-		Knowledge:    knowledgeRepo,
-		Inferencer:   inferencer,
-		ReadGuard:    readGuard,
-		refreshGate:  make(chan struct{}, 1),
+		Workspace:      state,
+		Config:         cfg,
+		Store:          database,
+		Capabilities:   catalog,
+		Query:          querier,
+		Context:        contextService,
+		Knowledge:      knowledgeRepo,
+		Inferencer:     inferencer,
+		ReadGuard:      readGuard,
+		refreshGate:    make(chan struct{}, 1),
+		vectorProgress: opts.VectorProgress,
 	}
 	if err := database.SetMetaContext(ctx, "ai_enabled", strconv.FormatBool(cfg.AI.Enabled)); err != nil {
 		return fail(fmt.Errorf("record AI state: %w", err))
@@ -202,32 +210,45 @@ func (p *Project) Refresh(ctx context.Context) (RefreshResult, error) {
 	return p.refreshWithProgress(ctx, nil)
 }
 
-func (p *Project) refreshWithProgress(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
+// Embedding is never rationed. It runs in-process against the bundled code
+// embedder at roughly 650 chunks/second, so a repository's whole backlog is
+// seconds to a minute of local CPU -- there is nothing to ration. This used to be
+// capped per invocation because embeddings could be routed to a remote Ollama
+// model at ~47 chunks/second, where a full build took tens of minutes; that path
+// is gone. A binary upgrade re-chunks every file and so invalidates every vector,
+// and draining here is what keeps semantic search whole immediately afterwards
+// instead of creeping back a couple of seconds per command.
+
+// withRefreshLock serializes derived-index mutation against other goroutines in
+// this process and other prowl processes on the same project.
+func (p *Project) withRefreshLock(ctx context.Context, mutate func() error) error {
 	if p.closed.Load() {
-		return RefreshResult{}, errors.New("project is closed")
+		return errors.New("project is closed")
 	}
 	select {
 	case p.refreshGate <- struct{}{}:
 		defer func() { <-p.refreshGate }()
 	case <-ctx.Done():
-		return RefreshResult{}, ctx.Err()
+		return ctx.Err()
 	}
 	if p.closed.Load() {
-		return RefreshResult{}, errors.New("project is closed")
+		return errors.New("project is closed")
 	}
-
 	fileLock := flock.New(filepath.Join(p.Workspace.Path, "index-refresh.lock"))
 	locked, err := fileLock.TryLockContext(ctx, 25*time.Millisecond)
 	if err != nil {
-		return RefreshResult{}, err
+		return err
 	}
 	if !locked {
 		if err := ctx.Err(); err != nil {
-			return RefreshResult{}, err
+			return err
 		}
-		return RefreshResult{}, errors.New("project refresh lock was not acquired")
+		return errors.New("project refresh lock was not acquired")
 	}
+	return errors.Join(mutate(), fileLock.Unlock())
+}
 
+func (p *Project) refreshWithProgress(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
 	reporter := report
 	if report != nil {
 		lastProgress := -1
@@ -240,23 +261,55 @@ func (p *Project) refreshWithProgress(ctx context.Context, report index.Progress
 		}
 	}
 	var result RefreshResult
-	for attempt := 0; attempt < 2; attempt++ {
-		result, err = p.refresh(ctx, reporter)
-		if !errors.Is(err, errSourcesChanged) {
-			break
+	err := p.withRefreshLock(ctx, func() error {
+		var err error
+		for range 2 {
+			result, err = p.refresh(ctx, reporter, index.VectorBudget{})
+			if !errors.Is(err, errSourcesChanged) {
+				break
+			}
 		}
+		if err != nil {
+			if stateErr := p.Store.SetMeta("index_state", "incomplete"); stateErr != nil {
+				err = errors.Join(err, stateErr)
+			}
+		}
+		return err
+	})
+	return result, err
+}
+
+// refreshVectors embeds outstanding chunks without touching the structural
+// index. An incomplete embedding backlog used to force a full reindex of the
+// repository on every command; the structural index is already current here, so
+// only the derived vectors need work.
+func (p *Project) refreshVectors(ctx context.Context, budget index.VectorBudget) (RefreshResult, error) {
+	if p.Inferencer == nil || !inferencerEmbeds(p.Inferencer) {
+		return RefreshResult{}, nil
 	}
+	remaining, err := p.Store.CountChunksWithoutVectors()
 	if err != nil {
-		if stateErr := p.Store.SetMeta("index_state", "incomplete"); stateErr != nil {
-			err = errors.Join(err, stateErr)
-		}
+		return RefreshResult{}, err
 	}
-	return result, errors.Join(err, fileLock.Unlock())
+	stored, _ := p.Store.GetMeta("embed_model")
+	if remaining == 0 && stored == p.embedModel() {
+		return RefreshResult{}, nil
+	}
+	var result RefreshResult
+	lockErr := p.withRefreshLock(ctx, func() error {
+		pass, embedErr := p.embedPass(ctx, budget)
+		result.Embedded, result.VectorsRemaining, result.EmbeddingError = pass.Embedded, pass.Remaining, embedErr
+		if embedErr != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return nil
+	})
+	return result, lockErr
 }
 
 var errSourcesChanged = index.ErrSourcesChanged
 
-func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (RefreshResult, error) {
+func (p *Project) refresh(ctx context.Context, report index.ProgressReporter, budget index.VectorBudget) (RefreshResult, error) {
 	var result RefreshResult
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -290,29 +343,7 @@ func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (R
 	if p.afterIndex != nil {
 		p.afterIndex()
 	}
-	if err := current.SetMeta("vectors_complete", "0"); err != nil {
-		return result, err
-	}
-	if p.Inferencer != nil && inferencerEmbeds(p.Inferencer) {
-		model := embedModelID(p.Inferencer, p.Config.AI.EmbedModel)
-		result.Embedded, result.EmbeddingError = index.BuildVectors(ctx, current, p.Inferencer, model)
-		if result.EmbeddingError != nil {
-			if ctx.Err() != nil {
-				return result, ctx.Err()
-			}
-			if err := current.ResetVectors(); err != nil {
-				return result, errors.Join(result.EmbeddingError, err)
-			}
-		} else {
-			stored, err := current.GetMeta("embed_model")
-			if err != nil {
-				return result, err
-			}
-			if stored != model {
-				return result, fmt.Errorf("vector model metadata = %q, want %q", stored, model)
-			}
-		}
-	}
+
 	sig, err := index.SignatureWithOptionsContext(ctx, p.Workspace.Root, opt)
 	if err != nil {
 		return result, err
@@ -332,9 +363,62 @@ func (p *Project) refresh(ctx context.Context, report index.ProgressReporter) (R
 	if err := generation.Commit(); err != nil {
 		return result, err
 	}
+
+	// Vectors are a derived cache, not part of the atomic structural generation.
+	// Embedding them after the commit is what makes a large repo tractable: a
+	// first pass over ~100k chunks takes tens of minutes, and inside the
+	// generation transaction every interruption rolled all of it back, so the
+	// semantic index could never finish. Each batch is now durable on its own
+	// and the next pass resumes from the remaining backlog.
+	pass, embedErr := p.embedPass(ctx, budget)
+	result.Embedded, result.VectorsRemaining, result.EmbeddingError = pass.Embedded, pass.Remaining, embedErr
+	if embedErr != nil && ctx.Err() != nil {
+		return result, ctx.Err()
+	}
 	return result, nil
 }
 
+// embedPass runs one budgeted, resumable embedding pass against the published
+// store. A project with no embedding backend has no work to do.
+func (p *Project) embedPass(ctx context.Context, budget index.VectorBudget) (index.VectorPass, error) {
+	if p.Inferencer == nil || !inferencerEmbeds(p.Inferencer) {
+		return index.VectorPass{}, nil
+	}
+	return index.BuildVectors(ctx, p.Store, p.Inferencer, p.embedModel(), budget, p.vectorProgress)
+}
+
+// embedModel is the model identity stored vectors are keyed by.
+func (p *Project) embedModel() string {
+	return embedModelID(p.Inferencer)
+}
+
+// BuildSemanticIndex drains the embedding backlog with no time budget, reporting
+// progress after each committed batch. It is the explicit counterpart to the
+// bounded pass every command runs: on a large repo the first build is thousands
+// of model round trips, so it must be both visible and resumable rather than a
+// silent wait a user can only lose by interrupting.
+func (p *Project) BuildSemanticIndex(ctx context.Context, progress func(index.VectorPass)) (RefreshResult, error) {
+	if p.Inferencer == nil || !inferencerEmbeds(p.Inferencer) {
+		return RefreshResult{}, nil
+	}
+	var result RefreshResult
+	lockErr := p.withRefreshLock(ctx, func() error {
+		pass, embedErr := index.BuildVectors(ctx, p.Store, p.Inferencer, p.embedModel(), index.VectorBudget{}, progress)
+		result.Embedded, result.VectorsRemaining, result.EmbeddingError = pass.Embedded, pass.Remaining, embedErr
+		if embedErr != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return nil
+	})
+	return result, lockErr
+}
+
+// ensureFresh brings the derived index up to date before any query is served. A
+// stale structural index is reindexed and the embedding backlog is then drained,
+// so a prowl upgrade heals itself on the next command: a new binary revision
+// forces a full re-parse, which re-chunks every file and thereby invalidates
+// every vector, and semantic search is whole again when the command answers
+// rather than creeping back over hundreds of invocations.
 func (p *Project) ensureFresh(ctx context.Context) (RefreshResult, error) {
 	opt := index.Options{Ignore: p.Config.Ignore, Languages: p.Config.Languages}
 	sig, sigErr := index.SignatureWithOptionsContext(ctx, p.Workspace.Root, opt)
@@ -344,14 +428,8 @@ func (p *Project) ensureFresh(ctx context.Context) (RefreshResult, error) {
 	oldSig, _ := p.Store.GetMeta("cli_sig")
 	oldVersion, _ := p.Store.GetMeta("index_version")
 	indexState, _ := p.Store.GetMeta("index_state")
-	vectorsComplete, _ := p.Store.GetMeta("vectors_complete")
-	embedModel, _ := p.Store.GetMeta("embed_model")
-	current := sigErr == nil && indexState == "complete" && oldVersion == index.Version() && oldSig == strconv.FormatUint(sig, 16)
-	if p.Inferencer != nil && (vectorsComplete != "1" || embedModel != p.Config.AI.EmbedModel) {
-		current = false
-	}
-	if current {
-		return RefreshResult{}, nil
+	if sigErr == nil && indexState == "complete" && oldVersion == index.Version() && oldSig == strconv.FormatUint(sig, 16) {
+		return p.refreshVectors(ctx, index.VectorBudget{})
 	}
 	return p.Refresh(ctx)
 }

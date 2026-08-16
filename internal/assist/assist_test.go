@@ -3,6 +3,7 @@ package assist
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,27 +14,22 @@ func TestOllamaClient(t *testing.T) {
 	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"models":[]}`))
 	})
-	mux.HandleFunc("/api/embed", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0.1, 0.2}, {0.3, 0.4}}})
-	})
 	mux.HandleFunc("/api/generate", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"response": "ok"})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	o := NewOllama(srv.URL, "embed", "gen")
+	o := NewOllama(srv.URL, "gen")
 	ctx := context.Background()
 
 	if !o.Available(ctx) {
 		t.Fatal("expected Available true")
 	}
-	emb, err := o.Embed(ctx, []string{"a", "b"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(emb) != 2 || len(emb[0]) != 2 || emb[1][1] != 0.4 {
-		t.Fatalf("embeddings = %v", emb)
+	// Embeddings are never served by Ollama: they always come from the bundled
+	// in-process model, so a vector index is never keyed to a running daemon.
+	if _, err := o.Embed(ctx, []string{"a", "b"}); !errors.Is(err, errNoOllamaEmbeddings) {
+		t.Fatalf("Embed error = %v, want errNoOllamaEmbeddings", err)
 	}
 	gen, err := o.Generate(ctx, "hi")
 	if err != nil {
@@ -59,7 +55,7 @@ func TestOllamaRerank(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	o := NewOllama(srv.URL, "embed", "gen")
+	o := NewOllama(srv.URL, "gen")
 	order, err := o.Rerank(context.Background(), "q", []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatal(err)
@@ -74,16 +70,16 @@ func TestOllamaRerank(t *testing.T) {
 func TestOllamaWarm(t *testing.T) {
 	var gotKeepAlive, gotModel any
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/embed", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/generate", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		gotKeepAlive, gotModel = body["keep_alive"], body["model"]
-		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0.1}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"response": ""})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	o := NewOllama(srv.URL, "embed", "gen")
+	o := NewOllama(srv.URL, "gen")
 	if err := o.Warm(context.Background(), "warm-model", "30m"); err != nil {
 		t.Fatal(err)
 	}

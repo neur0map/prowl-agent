@@ -237,24 +237,25 @@ type Overview struct {
 	Hotspots        []store.FanRow      `json:"hotspots"`
 }
 
-// OverviewLimits hard-bounds every row-producing input to OverviewContext.
+// OverviewLimits bounds Overview's output shape and the size of any single
+// metadata string. It deliberately does not bound repository size: overview is
+// an agent's first call, so on a large repo it must still answer with a compact,
+// honest map instead of refusing. Bulk inputs (files, edges, resource links) are
+// read in full, exactly as the `clusters` command already does.
 type OverviewLimits struct {
-	Files, Symbols, Edges, Resources, Chunks int
-	DependencyEdges, ResourceLinks           int
-	Palette, Keybinds, Hotspots              int
-	Languages, Roles                         int
-	Docs, Entrypoints, Clusters              int
-	StringBytes                              int
+	Palette, Hotspots           int
+	Languages, Roles            int
+	Docs, Entrypoints, Clusters int
+	StringBytes                 int
 }
 
 // DefaultOverviewLimits returns fresh limits preserving Overview's compact output
 // while preventing callers from mutating process-global defaults.
 func DefaultOverviewLimits() OverviewLimits {
 	return OverviewLimits{
-		Files: 10000, Symbols: 100_000_000, Edges: 100_000_000, Resources: 100_000_000, Chunks: 100_000_000,
-		DependencyEdges: 50000, ResourceLinks: 10000,
-		Palette: 16, Keybinds: 10000, Hotspots: 5,
-		Languages: 64, Roles: 64, Docs: 8, Entrypoints: 20, Clusters: 8,
+		Palette: 16, Hotspots: 5,
+		Languages: 64, Roles: 64,
+		Docs: 8, Entrypoints: 20, Clusters: 8,
 		StringBytes: 4096,
 	}
 }
@@ -274,7 +275,7 @@ func (q *Querier) Overview() (Overview, error) {
 	return q.OverviewContext(context.Background(), DefaultOverviewLimits())
 }
 
-// OverviewContext assembles a bounded high-level map and passes ctx to every SQL read.
+// OverviewContext assembles the high-level map and passes ctx to every SQL read.
 func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (Overview, error) {
 	if err := validateOverviewLimits(limits); err != nil {
 		return Overview{}, err
@@ -285,39 +286,21 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 	}
 	defer release()
 	var o Overview
-	c, err := q.s.CountsContext(ctx, store.OverviewCountLimits{
-		Files: limits.Files + 1, Symbols: limits.Symbols + 1, Edges: limits.Edges + 1,
-		Resources: limits.Resources + 1, Chunks: limits.Chunks + 1, Languages: limits.Languages + 1,
-	})
+	c, err := q.s.CountsContext(ctx)
 	if err != nil {
 		return o, err
 	}
 	if len(c.Langs) > limits.Languages {
 		return o, bounded("languages", limits.Languages)
 	}
-	for _, aggregate := range []struct {
-		component string
-		count     int
-		limit     int
-	}{
-		{"files", c.Files, limits.Files}, {"symbols", c.Symbols, limits.Symbols}, {"edges", c.Edges, limits.Edges},
-		{"resources", c.Resources, limits.Resources}, {"chunks", c.Chunks, limits.Chunks},
-	} {
-		if aggregate.count > aggregate.limit {
-			return o, bounded(aggregate.component, aggregate.limit)
-		}
-	}
 	if err := validateIdentifierMap(c.Langs, limits.StringBytes, "language identifiers"); err != nil {
 		return o, err
 	}
 	o.Counts = c
 
-	files, err := q.s.AllFilesContext(ctx, limits.Files+1)
+	files, err := q.s.AllFilesContext(ctx)
 	if err != nil {
 		return o, err
-	}
-	if len(files) > limits.Files {
-		return o, bounded("files", limits.Files)
 	}
 	if q.afterOverviewRead != nil {
 		q.afterOverviewRead()
@@ -351,12 +334,9 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 	}
 
 	// Entrypoints: files that depend on others but nothing depends on them.
-	dep, err := q.s.FileDepEdgesContext(ctx, limits.DependencyEdges+1)
+	dep, err := q.s.FileDepEdgesContext(ctx)
 	if err != nil {
 		return o, err
-	}
-	if len(dep) > limits.DependencyEdges {
-		return o, bounded("dependency_edges", limits.DependencyEdges)
 	}
 	hasIncoming := map[string]bool{}
 	hasOutgoing := map[string]bool{}
@@ -394,12 +374,9 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 		o.Entrypoints = o.Entrypoints[:limits.Entrypoints]
 	}
 
-	links, err := q.s.ResourceFileLinksContext(ctx, limits.ResourceLinks+1)
+	links, err := q.s.ResourceFileLinksContext(ctx)
 	if err != nil {
 		return o, err
-	}
-	if len(links) > limits.ResourceLinks {
-		return o, bounded("resource_links", limits.ResourceLinks)
 	}
 	uf := newUnionFind()
 	langOf := make(map[string]string, len(files))
@@ -437,9 +414,7 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 		o.Clusters[i] = ClusterSummary{Label: c.Label, Lang: c.Lang, Files: len(c.Files)}
 	}
 
-	// Palette and hotspots are bounded output samples. Their GROUP BY input work
-	// is also bounded: CountsContext has already proved total resources and edges
-	// do not exceed their hard aggregate caps.
+	// Palette and hotspots are bounded output samples.
 	o.Palette, err = q.s.ColorPaletteContext(ctx, limits.Palette)
 	if err != nil {
 		return o, err
@@ -456,14 +431,10 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 			return o, err
 		}
 	}
-	kb, err := q.s.SymbolsByKindContext(ctx, "keybind", limits.Keybinds+1)
+	o.Keybinds, err = q.s.CountSymbolsByKindContext(ctx, "keybind")
 	if err != nil {
 		return o, err
 	}
-	if len(kb) > limits.Keybinds {
-		return o, bounded("keybinds", limits.Keybinds)
-	}
-	o.Keybinds = len(kb)
 	o.Hotspots = centralFromEdges(dep, limits.Hotspots)
 
 	for _, row := range o.Hotspots {
@@ -502,11 +473,7 @@ func validateOverviewLimits(limits OverviewLimits) error {
 		value int
 		max   int
 	}{
-		{"files", limits.Files, 10000}, {"symbols", limits.Symbols, 100_000_000},
-		{"edges", limits.Edges, 100_000_000}, {"resources", limits.Resources, 100_000_000},
-		{"chunks", limits.Chunks, 100_000_000}, {"dependency edges", limits.DependencyEdges, 50000},
-		{"resource links", limits.ResourceLinks, 10000}, {"palette", limits.Palette, 16},
-		{"keybinds", limits.Keybinds, 10000}, {"hotspots", limits.Hotspots, 5},
+		{"palette", limits.Palette, 16}, {"hotspots", limits.Hotspots, 5},
 		{"languages", limits.Languages, 64}, {"roles", limits.Roles, 64},
 		{"docs", limits.Docs, 8}, {"entrypoints", limits.Entrypoints, 20},
 		{"clusters", limits.Clusters, 8}, {"string bytes", limits.StringBytes, 4096},

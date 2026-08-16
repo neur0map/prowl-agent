@@ -1,5 +1,7 @@
 package store
 
+import "context"
+
 // FanOut returns files ranked by number of outgoing resolved dependency edges,
 // excluding "instantiates" and any extra kinds given.
 func (s *Store) FanOut(limit int, exclude ...string) ([]FanRow, error) {
@@ -43,24 +45,7 @@ type FileEdge struct {
 // FileDepEdges returns resolved file-to-file edges (owning file as source),
 // optionally filtered by kind. Used for cycle and layer-crossing checks.
 func (s *Store) FileDepEdges(kinds ...string) ([]FileEdge, error) {
-	clause, args := inClause("e.kind", kinds)
-	q := `SELECT sf.rel_path, e.file_id, df.rel_path, e.dst_id, e.kind, IFNULL(e.line,0)
-		FROM edges e JOIN files sf ON sf.id=e.file_id JOIN files df ON df.id=e.dst_id
-		WHERE e.resolved=1 AND e.dst_type='file'` + clause + ` ORDER BY sf.rel_path, e.line`
-	rows, err := s.sql().Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []FileEdge
-	for rows.Next() {
-		var e FileEdge
-		if err := rows.Scan(&e.SrcFile, &e.SrcID, &e.DstFile, &e.DstID, &e.Kind, &e.Line); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return s.FileDepEdgesContext(context.Background(), kinds...)
 }
 
 // FileMetric carries per-file size signals for health checks.
@@ -97,27 +82,7 @@ func (s *Store) FileMetrics() ([]FileMetric, error) {
 // that uses a resource (SrcFile) and the file that declares it (DstFile). Used
 // to cluster files that share colors, fonts, or variables.
 func (s *Store) ResourceFileLinks() ([]FileEdge, error) {
-	rows, err := s.sql().Query(`
-		SELECT uf.rel_path, e.file_id, df.rel_path, r.file_id
-		FROM edges e
-		JOIN resources r ON e.dst_type='resource' AND e.dst_id=r.id
-		JOIN files uf ON uf.id=e.file_id
-		JOIN files df ON df.id=r.file_id
-		WHERE e.kind='uses_resource' AND e.resolved=1 AND r.file_id IS NOT NULL AND r.file_id<>e.file_id
-		ORDER BY uf.rel_path`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []FileEdge
-	for rows.Next() {
-		e := FileEdge{Kind: "resource"}
-		if err := rows.Scan(&e.SrcFile, &e.SrcID, &e.DstFile, &e.DstID); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return s.ResourceFileLinksContext(context.Background())
 }
 
 // ColorPalette returns declared color resources (named) deduped by name.

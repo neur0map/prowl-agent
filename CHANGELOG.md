@@ -55,6 +55,20 @@ All notable changes are recorded here. The format follows
   and `--fail-on` (CI gate). A composite GitHub Action and example workflow run
   doctor on every pull request and upload SARIF, surfacing new issues inline.
 
+- The bundled code embedder ships int8 instead of float32, taking the binary from
+  118.4 MB to **72.9 MB** with no measured retrieval cost. A static embedding is the
+  weighted mean of its tokens' rows followed by L2 normalization, so per-element
+  quantization error is zero-mean, cancels across a chunk's tokens, and loses its
+  residual scale to normalization. Measured over 20,000 real source chunks and 10
+  natural-language queries: mean cos(fp32, int8) = 0.99998 (worst 0.99992),
+  overlap@10 = 100% on every query, overlap@50 = 99.0%; re-indexing an 8.5k-file
+  repo returns byte-identical top-3 results. Each row carries its own symmetric
+  scale, folded into the pooling weight so the inner loop is unchanged -- int8
+  costs no throughput and saves the same 45 MB of resident memory. The upstream
+  project already distributes these models at roughly one byte per parameter;
+  shipping float32 was our own overhead. `cmd/quantize-embed-model` regenerates the
+  blob so the committed artifact has reproducible provenance.
+
 ### Changed
 - `status` and `overview` no longer lump external module imports with broken
   references under one scary "dangling" count. Edges are now reported as
@@ -85,6 +99,87 @@ All notable changes are recorded here. The format follows
   force. All reversible with `--remove-integrations`.
 
 ### Fixed
+- A prowl upgrade now heals its own index before answering anything. The indexing
+  logic version is the binary's revision, so a new binary already forced a full
+  re-parse -- which re-chunks every file and thereby drops every vector with it.
+  The embedding backlog was then refilled only two seconds per command, so
+  semantic search silently sat near-empty for hundreds of invocations after an
+  update. The backlog is now drained during that same refresh, so the first
+  command after `prowl-agent update` returns with whole semantic coverage. The
+  per-invocation ration is gone entirely: it only ever existed to survive remote
+  embedding at ~47 chunks/second, and the bundled in-process embedder does ~650.
+  Measured on an 8.5k-file repo without deleting the index: first command after an
+  upgrade takes 43s (full re-parse plus 80,379 chunks re-embedded) and narrates
+  itself on stderr once it passes a two-second grace period; the next command is
+  0.98s and silent. The embedder itself ships inside the binary, so `update` needs
+  no separate model download.
+- Vector search returned nothing but blank lines. The chunker emitted a chunk for
+  every run of blank lines between symbols (982 of them on an 8.5k-file repo, 2814
+  with three or fewer non-space characters). A static embedder maps a
+  whitespace-only chunk to its degenerate mean vector, which sits nearer an
+  arbitrary query than real code does, so those chunks monopolized k-nearest-
+  neighbour results: a direct probe returned 10 blank chunks out of 10, and because
+  reciprocal-rank fusion interleaves the vector and lexical lists, **half of every
+  top-50 result page was empty** (25/50 measured). Content-free chunks are no
+  longer emitted, are never embedded, and vectors stored for them by an earlier
+  version are pruned on the next pass. Blank results in the top 50: 25 -> 0, and
+  the vector half now contributes 4-7 of the top 10 results that lexical search
+  alone never surfaced (for "keep secrets out of the log file" it adds
+  `agent/secret_scope.py`).
+- Embeddings always come from the code embedder bundled in the binary
+  (`potion-code-16M`), never from Ollama. Preferring an Ollama embed model when one
+  happened to be installed cost 14x throughput (47 vs ~650 chunks/second measured),
+  which is why a first semantic index on an 8.5k-file repo took ~30 minutes instead
+  of 44 seconds. Worse, stored vectors are keyed by their producing model, so
+  choosing the embedder by "is the daemon up right now" silently invalidated and
+  rebuilt the entire vector index whenever Ollama or a model came or went. Ollama
+  and coding-agent CLIs now serve only the generate/rerank half, which genuinely
+  needs an LLM.
+- AI tiers no longer name an embedding model, because they never controlled
+  embeddings. `ai.embed_model` is gone from project and global config, `--tier`
+  selects only the optional rewrite/rerank model, and `init` no longer pulls or
+  warms an embed model or claims "semantic search ready" after embedding nothing
+  (it opened the project with AI disabled, so it never embedded at all).
+- The `--smart` query rewrite described the wrong corpus. Its prompt asked for
+  "a short keyword search query for a dotfiles/config index" -- a leftover from
+  prowl's origins -- steering rewrites of code questions toward configuration
+  vocabulary. It now asks for identifiers, type and function names, and domain
+  nouns. On "keep secrets out of the log file" the rewrite yields
+  `secret credential token key log logger logfile redact sanitize mask filter` and
+  surfaces `agent/redact.py`, which neither half found on its own.
+- Large repositories work again. `overview` (and `explore`, `init`'s AGENTS.md
+  map refresh, and the `overview` MCP tool/resource) hard-failed with
+  `overview files exceeds limit 10000` on any repo above 10k files, plus matching
+  caps at 50k dependency edges, 10k resource links, and 10k keybinds. Overview is
+  an agent's first call, so refusing it left large repos with no map at all --
+  while `clusters`, which does the same connected-component work with no cap,
+  succeeded on the same repo. The repo-size caps are gone; only Overview's output
+  shape stays bounded (8 docs, 20 entrypoints, 8 subsystems, 16 palette entries,
+  5 hotspots). Verified on a 15,568-file / 793k-symbol checkout: 2.5s warm.
+- Overview counts are exact. They came from sentinel-capped SQL
+  (`count(*) FROM (SELECT 1 FROM t LIMIT ?)`), so above the cap the reported file
+  and language totals were the cap itself, and the language histogram covered
+  only a bounded prefix of the file table. `overview` and `status` now report the
+  same numbers, from one shared exact-counting path.
+- The first semantic index no longer restarts from zero. Embedding ran inside the
+  atomic index generation, so every interruption rolled back the whole pass; on a
+  repo needing ~30 minutes of model round trips (83k chunks) the vector index
+  could never finish. Vectors are a derived cache and are now built against the
+  published store, committing each batch, so an interrupted build resumes from
+  the remaining backlog.
+- An incomplete embedding backlog no longer marks the whole index stale. Any
+  command with AI enabled re-indexed the entire repository and then blocked
+  indefinitely on the backlog with no output, which is what made `search` appear
+  to hang on a large repo. Implicit refreshes now do a time-bounded embedding
+  pass; `init` drains the backlog explicitly and reports progress.
+- Semantic search is no longer switched off repo-wide while the backlog drains.
+  It required a fully drained backlog, which on a large repo is almost never
+  true. Partial vector coverage is now used, with lexical ranking covering the
+  rest, and `status` reports coverage (`Semantic: building -- N of M chunks
+  embedded`) so a partially built index is visible instead of looking like a
+  hang.
+- `init` builds the semantic index it advertises. It opened the project with AI
+  disabled, so it printed "semantic search ready" having embedded nothing.
 - `search` (and the `similar_code` / `smart_search` MCP tools) now surface files
   whose path names the concept. It ranked purely by full-text over chunk bodies,
   so a file literally named `stash-download.sh` never surfaced for "download" if

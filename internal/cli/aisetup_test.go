@@ -7,6 +7,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/assist"
 	"github.com/prowl-agent/prowl-agent/internal/config"
+	"github.com/prowl-agent/prowl-agent/internal/embed"
 )
 
 // In non-interactive mode setupAI reports the chosen tier and never runs an
@@ -20,7 +21,12 @@ func TestSetupAINonInteractive(t *testing.T) {
 	var b strings.Builder
 	setupAI(context.Background(), &b, config.PresetByName("fast"), false)
 	s := b.String()
-	if !strings.Contains(s, "fast") || !strings.Contains(s, "embeddinggemma") {
-		t.Fatalf("setupAI output missing tier/model:\n%s", s)
+	if !strings.Contains(s, "fast") || !strings.Contains(s, "gemma3:1b") {
+		t.Fatalf("setupAI output missing tier/assist model:\n%s", s)
+	}
+	// A tier configures the optional rewrite/rerank model only; embeddings are
+	// bundled, so setupAI must say so rather than name an Ollama embed model.
+	if !strings.Contains(s, embed.ModelName) {
+		t.Fatalf("setupAI output does not report the bundled embedder:\n%s", s)
 	}
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"path"
 	"path/filepath"
@@ -79,20 +80,7 @@ func (s *Store) GetFileByPath(relPath string) (File, bool, error) {
 
 // AllFiles returns every indexed file ordered by path.
 func (s *Store) AllFiles() ([]File, error) {
-	rows, err := s.sql().Query(`SELECT id,rel_path,lang,IFNULL(role,''),size,hash,mtime,indexed_at FROM files ORDER BY rel_path`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []File
-	for rows.Next() {
-		f, err := scanFile(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return s.AllFilesContext(context.Background())
 }
 
 // DeleteFileByPath removes a file and all its derived rows.

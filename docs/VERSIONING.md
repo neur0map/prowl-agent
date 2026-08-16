@@ -1,0 +1,90 @@
+# Versioning and release channels
+
+One number, bumped automatically, carried into every published binary.
+
+## The version
+
+`var version` in `cmd/prowl-agent/main.go` is the single source of truth. Nothing
+else stores a version, and no human edits it.
+
+```
+0 . 15 . 3
+│    │    └── patch: one per commit landed on unstable
+│    └─────── minor: rolls over when patch would reach 10
+└──────────── major: manual, never automated
+```
+
+**Every push to `unstable` advances the patch.** The tenth bump rolls into the
+minor and resets the patch, so `0.9.9` is followed by `0.10.0`. The major stays
+manual: automation never decides that a release is breaking.
+
+The bump is committed by CI as `chore: bump version to vX.Y.Z [bump]`. The
+`[bump]` marker is what stops the bump from bumping itself. It deliberately is
+*not* `[skip ci]`: GitHub skips every workflow for a `[skip ci]` head commit, so a
+merge whose tip was a bump would silently publish nothing, which is exactly how a
+stable release was once lost.
+
+## The channels
+
+| channel | fed by | release tag | who gets it |
+|---|---|---|---|
+| **stable** | pushes to `main` | `vX.Y.Z`, plus rolling `stable` | every install, by default |
+| **preview** | pushes to `unstable` | rolling `preview` | opt-in only |
+
+Both channels publish the same five targets: `linux-amd64`, `linux-arm64`,
+`darwin-arm64`, `darwin-amd64`, `windows-amd64`, each with a `.sha256`.
+
+- **Stable** is what `prowl-agent update` downloads. Each release is permanent
+  under its own `vX.Y.Z` tag, and the rolling `stable` tag always points at the
+  newest. Only reviewed work reaches it, because it only moves when `main` moves.
+- **Preview** carries every `unstable` commit as it lands, unreviewed. Opt in per
+  machine:
+
+  ```sh
+  export PROWL_UPDATE_CHANNEL=preview
+  prowl-agent update
+  ```
+
+  Unset the variable and update again to return to stable.
+
+The `nightly` tag is retired. It is still refreshed in step with stable so
+binaries released before the channel split keep updating; it will be dropped once
+those installs have rolled forward. Do not point anything new at it.
+
+## What the updater compares
+
+`prowl-agent update` does not compare version strings. It compares the running
+binary's embedded VCS revision against the head commit of its channel's branch
+(`main` for stable, `unstable` for preview), then downloads the channel's asset
+and verifies its SHA-256 before replacing the executable in place. The version
+string is for humans and for the changelog; the commit is what decides freshness.
+
+This is why the release build checks out the branch tip rather than the commit
+that triggered it: on `unstable` the tip is the bump commit, and a binary built
+from the pre-bump commit would report an available update forever.
+
+## The pipeline
+
+Bump, build and publish are one workflow (`.github/workflows/release.yml`) on
+purpose. They cannot be split: a bump pushed with `GITHUB_TOKEN` does not trigger
+another workflow run, so a tag- or push-triggered release chained after it would
+never fire.
+
+```
+push to unstable ──► resolve + bump ──► build ×5 ──► publish `preview`
+push to main     ──► resolve         ──► build ×5 ──► publish `vX.Y.Z` + `stable` (+ `nightly`)
+pull request     ──► resolve         ──► build ×5 ──► publish nothing
+```
+
+Every build injects the resolved version with
+`-ldflags "-X main.version=vX.Y.Z"`, and then asserts that `prowl-agent --version`
+actually reports it. Before this was enforced, releases were built with
+`git describe` and shipped reporting a commit SHA, so the bumped version never
+reached a single user.
+
+## Releasing
+
+Nothing manual. Land work on `unstable`; merge `unstable` into `main` when it is
+ready to ship. `workflow_dispatch` with an explicit `version` input exists for
+recovery (republishing a version, or cutting one by hand), and is not part of the
+normal flow.

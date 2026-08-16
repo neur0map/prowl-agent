@@ -7,6 +7,16 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- A documented versioning standard with two release channels
+  (`docs/VERSIONING.md`). `var version` in `cmd/prowl-agent/main.go` is the one
+  source of truth: every push to `unstable` advances the patch, and the tenth bump
+  rolls into the minor (`0.9.9` then `0.10.0`), with the major left manual.
+  **stable** is fed by `main` and is what `prowl-agent update` and the installers
+  use; each release is permanent under its own `vX.Y.Z` tag with a rolling
+  `stable` tag pointing at the newest. **preview** is fed by `unstable`, carries
+  every commit as it lands, and is opt-in with `PROWL_UPDATE_CHANNEL=preview`.
+  Both publish all five targets with checksums. The `nightly` tag is retired and
+  kept in step with stable so binaries released before the split keep updating.
 - Enabling AI no longer requires a local model. `init` now resolves the
   semantic-assist backend up front: it prefers Ollama when installed, otherwise
   it borrows an installed coding-agent CLI (reranking only) instead of walking

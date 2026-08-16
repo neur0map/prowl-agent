@@ -1,7 +1,10 @@
-// Package selfupdate checks for and installs newer published builds. The check
-// compares the running binary's commit (from the build's embedded VCS info)
-// against the latest commit on main, is cached for a day, and offline-safe. It
-// sends nothing about the user; it is an anonymous read of public commit data.
+// Package selfupdate checks for and installs newer published builds. It follows
+// one of two channels: stable, fed by main, which is what an install gets by
+// default; and preview, fed by unstable, opted into with PROWL_UPDATE_CHANNEL.
+// The check compares the running binary's commit (from the build's embedded VCS
+// info) against the latest commit on that channel's branch, is briefly cached,
+// and is offline-safe. It sends nothing about the user; it is an anonymous read
+// of public commit data.
 package selfupdate
 
 import (
@@ -21,12 +24,41 @@ import (
 
 const (
 	// DevVersion is the default version string of a locally built binary.
-	DevVersion  = "v0.8.1"
-	releaseBase = "https://github.com/neur0map/prowl-agent/releases/download/nightly"
-	asset       = "prowl-agent-linux-amd64"
-	commitsAPI  = "https://api.github.com/repos/neur0map/prowl-agent/commits/main"
-	cacheTTL    = 2 * time.Minute
+	DevVersion = "v0.8.1"
+	asset      = "prowl-agent-linux-amd64"
+	releaseAt  = "https://github.com/neur0map/prowl-agent/releases/download/"
+	commitsAt  = "https://api.github.com/repos/neur0map/prowl-agent/commits/"
+	cacheTTL   = 2 * time.Minute
+	// ChannelEnv opts a binary into a non-default channel.
+	ChannelEnv = "PROWL_UPDATE_CHANNEL"
 )
+
+// Channel is one published build stream: a rolling release tag holding the
+// artifacts, and the branch whose head decides whether a build is current.
+type Channel struct {
+	Name   string
+	tag    string
+	branch string
+}
+
+// Stable is fed by main and is the default. Preview is fed by unstable, so it
+// carries every commit as it lands rather than only reviewed merges.
+var (
+	Stable  = Channel{Name: "stable", tag: "stable", branch: "main"}
+	Preview = Channel{Name: "preview", tag: "preview", branch: "unstable"}
+)
+
+// Current resolves the channel this binary follows.
+func Current() Channel {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(ChannelEnv)), Preview.Name) {
+		return Preview
+	}
+	return Stable
+}
+
+func (c Channel) assetURL() string    { return releaseAt + c.tag + "/" + asset }
+func (c Channel) checksumURL() string { return c.assetURL() + ".sha256" }
+func (c Channel) commitsAPI() string  { return commitsAt + c.branch }
 
 // Result reports update status. Checked is true once we determined up-to-date or
 // not; Available is true when a newer build exists.
@@ -37,30 +69,34 @@ type Result struct {
 	Note      string // "offline", "unknown build", or empty
 }
 
-// Check reports whether main has advanced past the running binary's commit.
+// Check reports whether the followed channel's branch has advanced past the
+// running binary's commit.
 func Check(version string) Result {
+	channel := Current()
 	local := localCommit(version)
 	if local == "" {
 		return Result{Note: "unknown build"}
 	}
-	latest, ok := cachedLatest()
+	latest, ok := cachedLatest(channel)
 	if !ok {
-		fetched, err := latestCommit(2 * time.Second)
+		fetched, err := latestCommit(channel, 2*time.Second)
 		if err != nil {
 			return Result{Current: shortSum(local), Note: "offline"}
 		}
 		latest = fetched
-		writeCache(cache{CheckedAt: time.Now().Unix(), Latest: latest})
+		writeCache(cache{CheckedAt: time.Now().Unix(), Latest: latest, Channel: channel.Name})
 	}
 	return Result{Available: !sameCommit(local, latest), Checked: true, Current: shortSum(local)}
 }
 
-// cachedLatest returns the last fetched main commit while the cache is fresh. It
+// cachedLatest returns the last fetched branch head while the cache is fresh. It
 // caches the commit (not the verdict) so the result is recomputed against the
-// current binary every call, staying correct immediately after an update.
-func cachedLatest() (string, bool) {
+// current binary every call, staying correct immediately after an update. A
+// cache written for another channel is ignored rather than compared across
+// branches.
+func cachedLatest(channel Channel) (string, bool) {
 	c, ok := readCache()
-	if !ok || c.Latest == "" {
+	if !ok || c.Latest == "" || c.Channel != channel.Name {
 		return "", false
 	}
 	return c.Latest, true
@@ -82,9 +118,10 @@ func localCommit(version string) string {
 	return ""
 }
 
-// latestCommit reads the latest commit SHA on main from the public GitHub API.
-func latestCommit(timeout time.Duration) (string, error) {
-	body, err := download(commitsAPI, timeout)
+// latestCommit reads the head commit SHA of the channel's branch from the public
+// GitHub API.
+func latestCommit(channel Channel, timeout time.Duration) (string, error) {
+	body, err := download(channel.commitsAPI(), timeout)
 	if err != nil {
 		return "", err
 	}
@@ -126,14 +163,15 @@ func Apply() (string, error) {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	want, err := fetchChecksum(10 * time.Second)
+	channel := Current()
+	want, err := fetchChecksum(channel, 10*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("fetch checksum: %w", err)
 	}
 	if cur, err := selfChecksum(); err == nil && strings.EqualFold(cur, want) {
 		return "already on the latest build", nil
 	}
-	body, err := download(releaseBase+"/"+asset, 120*time.Second)
+	body, err := download(channel.assetURL(), 120*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("download: %w", err)
 	}
@@ -162,7 +200,7 @@ func Apply() (string, error) {
 		return "", fmt.Errorf("replace %s: %w", exe, err)
 	}
 	clearCache()
-	return "updated to the latest build (" + shortSum(want) + ")", nil
+	return "updated to the latest " + channel.Name + " build (" + shortSum(want) + ")", nil
 }
 
 // parseChecksum extracts the hex digest from a "sha256sum" line.
@@ -174,8 +212,8 @@ func parseChecksum(data []byte) (string, error) {
 	return fields[0], nil
 }
 
-func fetchChecksum(timeout time.Duration) (string, error) {
-	body, err := download(releaseBase+"/"+asset+".sha256", timeout)
+func fetchChecksum(channel Channel, timeout time.Duration) (string, error) {
+	body, err := download(channel.checksumURL(), timeout)
 	if err != nil {
 		return "", err
 	}
@@ -229,6 +267,7 @@ func shortSum(s string) string {
 type cache struct {
 	CheckedAt int64  `json:"checked_at"`
 	Latest    string `json:"latest"`
+	Channel   string `json:"channel"`
 }
 
 func cachePath() string {

@@ -1,24 +1,113 @@
 name: build-binary
 
+# Versioning standard (see docs/VERSIONING.md):
+#
+#   every push to unstable  -> patch bump (0.0.x), build, publish the PREVIEW channel
+#   every push to main      -> build, publish vX.Y.Z and the STABLE channel
+#   ten patches roll over   -> 0.9.9 becomes 0.10.0, patch resets to 0
+#
+# Bump, build and publish are one workflow on purpose. Splitting them cannot work
+# here: a bump pushed with GITHUB_TOKEN does not trigger another workflow, and a
+# "[skip ci]" bump sitting at the head of a merge suppresses the release run
+# entirely (which is exactly how a stable release was silently skipped once).
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [main, unstable]
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release, e.g. v0.8.8 (blank = build/nightly only)'
+        description: 'Version to publish, e.g. v0.8.8 (blank = derive from the branch)'
         required: false
         default: ''
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # version owns the single source of truth: var version in cmd/prowl-agent/main.go.
+  # unstable advances it and pushes the bump; main publishes whatever unstable
+  # already produced, so a merge never renumbers itself.
+  version:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[bump]')
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Resolve version and channel
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          file=cmd/prowl-agent/main.go
+          current=$(grep -oP 'var version = "v\K[0-9]+\.[0-9]+\.[0-9]+' "$file")
+          if [ -z "$current" ]; then
+            echo "could not read the current version from $file" >&2
+            exit 1
+          fi
+
+          channel=none
+          publish=false
+          case "${{ github.ref_name }}" in
+            unstable) channel=preview; publish=true ;;
+            main)     channel=stable;  publish=true ;;
+          esac
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            publish=false
+          fi
+
+          if [ -n "$INPUT_VERSION" ]; then
+            version="${INPUT_VERSION#v}"
+          elif [ "$channel" = "preview" ] && [ "${{ github.event_name }}" = "push" ]; then
+            # Patch is single digit: the tenth bump rolls into the minor and
+            # resets patch. Major stays manual.
+            major=${current%%.*}; rest=${current#*.}
+            minor=${rest%%.*};    patch=${rest##*.}
+            patch=$((patch + 1))
+            if [ "$patch" -ge 10 ]; then minor=$((minor + 1)); patch=0; fi
+            version="${major}.${minor}.${patch}"
+          else
+            version="$current"
+          fi
+
+          echo "version=v${version}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "resolved v${version} on ${{ github.ref_name }} (channel=${channel}, publish=${publish})"
+
+      - name: Commit the bump
+        id: commit
+        if: steps.resolve.outputs.channel == 'preview' && github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          want="${{ steps.resolve.outputs.version }}"
+          sed -i "s/var version = \"v[0-9]\+\.[0-9]\+\.[0-9]\+\"/var version = \"${want}\"/" cmd/prowl-agent/main.go
+          if git diff --quiet; then
+            echo "version already ${want}"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add cmd/prowl-agent/main.go
+            git commit -m "chore: bump version to ${want} [bump]"
+            git push origin HEAD:unstable
+          fi
+
   build-unix:
     name: ${{ matrix.target }}
+    needs: version
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -44,6 +133,8 @@ jobs:
             cross: "true"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.ref || github.ref_name }}
 
       - uses: actions/setup-go@v5
         with:
@@ -55,23 +146,19 @@ jobs:
         env:
           CGO_ENABLED: "1"
           OUTPUT: ${{ matrix.output }}
-          INPUT_VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            version="$INPUT_VERSION"
-          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            version="$GITHUB_REF_NAME"
-          else
-            version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)-${GITHUB_SHA::7}"
-          fi
           arch="${{ matrix.goarch }}"
           [ -n "$arch" ] && export GOARCH="$arch"
           go build -tags sqlite_fts5 -trimpath \
-            -ldflags "-s -w -X main.version=${version}" \
+            -ldflags "-s -w -X main.version=${VERSION}" \
             -o "$OUTPUT" ./cmd/prowl-agent
           shasum -a 256 "$OUTPUT" > "$OUTPUT.sha256"
           if [ -z "${{ matrix.cross }}" ]; then
             "./$OUTPUT" --version
+            # The published binary must report the semantic version, not a commit
+            # description: the update channel and the changelog are keyed to it.
+            "./$OUTPUT" --version | grep -q "${VERSION}"
             scripts/release-smoke.sh "$OUTPUT" "$OUTPUT.sha256"
           fi
 
@@ -86,10 +173,13 @@ jobs:
 
   build-windows:
     name: windows-amd64
+    needs: version
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.ref || github.ref_name }}
 
       - uses: actions/setup-go@v5
         with:
@@ -108,19 +198,10 @@ jobs:
         env:
           CGO_ENABLED: "1"
           OUTPUT: prowl-agent-windows-amd64.exe
-          INPUT_VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          if ($env:INPUT_VERSION) {
-            $version = $env:INPUT_VERSION
-          } elseif ($env:GITHUB_REF_TYPE -eq 'tag') {
-            $version = $env:GITHUB_REF_NAME
-          } else {
-            $describe = git describe --tags --always --dirty 2>$null
-            if (-not $describe) { $describe = 'dev' }
-            $version = "$describe-$($env:GITHUB_SHA.Substring(0, 7))"
-          }
           go build -tags sqlite_fts5 -trimpath `
-            -ldflags "-X main.version=$version" `
+            -ldflags "-X main.version=$env:VERSION" `
             -o $env:OUTPUT ./cmd/prowl-agent
           & (Join-Path $PWD $env:OUTPUT) --version
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:OUTPUT).Hash.ToLowerInvariant()
@@ -136,46 +217,77 @@ jobs:
             prowl-agent-windows-amd64.exe
             prowl-agent-windows-amd64.exe.sha256
 
-  publish-nightly:
-    needs: [build-unix, build-windows]
-    if: github.ref == 'refs/heads/main' && github.event.inputs.version == ''
+  # Preview: every unstable commit, as it lands. Opt in with
+  # PROWL_UPDATE_CHANNEL=preview; nothing here reaches a default install.
+  publish-preview:
+    needs: [version, build-unix, build-windows]
+    if: needs.version.outputs.publish == 'true' && needs.version.outputs.channel == 'preview'
     runs-on: ubuntu-latest
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v5
         with:
           path: release
-
-      - name: Publish nightly release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly
-          name: Nightly (latest main)
+          tag_name: preview
+          name: Preview ${{ needs.version.outputs.version }} (latest unstable)
           prerelease: true
           make_latest: false
           files: release/**/*
           body: >
-            Rolling cross-platform build of prowl-agent from the latest main
-            commit (${{ github.sha }}). Verify every binary with its included
+            Preview build of prowl-agent ${{ needs.version.outputs.version }} from
+            the latest unstable commit (${{ github.sha }}). Unreviewed: every
+            commit is published here as it lands. Opt in with
+            PROWL_UPDATE_CHANNEL=preview. Verify every binary with its included
             SHA-256 file.
 
-  publish-tag:
-    needs: [build-unix, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.version != ''
+  # Stable: what a default install receives. vX.Y.Z is the permanent record,
+  # `stable` is the rolling tag the updater downloads, and `nightly` is the
+  # retired name kept fed so binaries released before the channel split keep
+  # updating.
+  publish-stable:
+    needs: [version, build-unix, build-windows]
+    if: needs.version.outputs.publish == 'true' && needs.version.outputs.channel == 'stable'
     runs-on: ubuntu-latest
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v5
         with:
           path: release
 
-      - name: Publish versioned release
+      - name: Publish the versioned release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.version != '' && github.event.inputs.version || github.ref_name }}
-          name: ${{ github.event.inputs.version != '' && github.event.inputs.version || github.ref_name }}
+          tag_name: ${{ needs.version.outputs.version }}
+          name: ${{ needs.version.outputs.version }}
           prerelease: false
+          make_latest: true
           files: release/**/*
           body: >
-            Cross-platform build of prowl-agent ${{ github.event.inputs.version != '' && github.event.inputs.version || github.ref_name }}. Verify
-            every binary with its included SHA-256 file.
+            Cross-platform build of prowl-agent ${{ needs.version.outputs.version }}.
+            Verify every binary with its included SHA-256 file.
+
+      - name: Refresh the rolling stable channel
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: stable
+          name: Stable ${{ needs.version.outputs.version }} (latest main)
+          prerelease: false
+          make_latest: false
+          files: release/**/*
+          body: >
+            Rolling stable channel, currently prowl-agent
+            ${{ needs.version.outputs.version }}. This is what `prowl-agent update`
+            downloads by default. Verify every binary with its included SHA-256 file.
+
+      - name: Refresh the retired nightly alias
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Stable ${{ needs.version.outputs.version }} (retired nightly alias)
+          prerelease: true
+          make_latest: false
+          files: release/**/*
+          body: >
+            Retired tag, kept in step with the stable channel so binaries released
+            before the stable/preview split keep updating. New installs follow
+            `stable`. Verify every binary with its included SHA-256 file.

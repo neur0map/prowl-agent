@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $repo = 'neur0map/prowl-agent'
-$base = if ($env:PROWL_RELEASE_BASE) { $env:PROWL_RELEASE_BASE } else { "https://github.com/$repo/releases/download/nightly" }
+$base = if ($env:PROWL_RELEASE_BASE) { $env:PROWL_RELEASE_BASE } else { "https://github.com/$repo/releases/download/stable" }
 $dest = if ($env:PROWL_INSTALL_DIR) { $env:PROWL_INSTALL_DIR } else { Join-Path $HOME '.local\bin' }
 
 switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {

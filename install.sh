@@ -1,10 +1,11 @@
 #!/bin/sh
-# Install the latest Prowl build on Linux or macOS.
+# Install the latest stable Prowl build on Linux or macOS. Set PROWL_RELEASE_BASE
+# to .../releases/download/preview for the unreviewed preview channel.
 #   curl -fsSL https://raw.githubusercontent.com/neur0map/prowl-agent/main/install.sh | sh
 set -eu
 
 REPO="neur0map/prowl-agent"
-BASE="${PROWL_RELEASE_BASE:-https://github.com/$REPO/releases/download/nightly}"
+BASE="${PROWL_RELEASE_BASE:-https://github.com/$REPO/releases/download/stable}"
 DEST="${PROWL_INSTALL_DIR:-$HOME/.local/bin}"
 
 case "$(uname -s)" in

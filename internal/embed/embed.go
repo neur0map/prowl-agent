@@ -6,10 +6,12 @@
 // the binary's behavior and needs nothing installed.
 //
 // The model (minishlab/potion-code-16M, a code-tuned static model distilled from
-// bge-base-en-v1.5) is fetched once and cached locally; see fetch.go. Embedding
-// quality is far below a large neural model but far above lexical FTS: it
-// captures meaning, so "how do I refresh the widget" finds RefreshWidget even
-// with no shared tokens.
+// bge-base-en-v1.5) is compiled into the binary; see bundle.go. There is no
+// download, no cache, and no network path. Embedding quality is far below a large
+// neural model but far above lexical FTS: it captures meaning, so "how do I
+// refresh the widget" finds RefreshWidget even with no shared tokens. It is also
+// ~14x faster per chunk than a remote Ollama embed model, which is what keeps the
+// first semantic index on a large repo to minutes instead of half an hour.
 package embed
 
 import (
@@ -29,7 +31,9 @@ const ModelName = "static:potion-code-16M"
 // loading and safe for concurrent use.
 type Model struct {
 	vocab    map[string]int
-	matrix   []float32 // row-major [rows*dim]
+	matrix   []float32 // row-major [rows*dim], float32 models
+	quant    []int8    // row-major [rows*dim], int8 models
+	scales   []float32 // len rows, dequantization scale per row (int8 models)
 	weights  []float64 // per-token weights, or nil (unweighted mean)
 	mapping  []int     // token->row map, or nil (identity)
 	rows     int
@@ -78,8 +82,18 @@ func (m *Model) embedOne(text string) []float32 {
 			w = m.weights[id]
 		}
 		off := row * m.dim
-		for j := range m.dim {
-			acc[j] += w * float64(m.matrix[off+j])
+		if m.quant != nil {
+			// Folding the row's dequantization scale into the pooling weight keeps
+			// the inner loop identical to the float32 path: one multiply-add per
+			// dimension, no extra work for storing the matrix as int8.
+			qw := w * float64(m.scales[row])
+			for j := range m.dim {
+				acc[j] += qw * float64(m.quant[off+j])
+			}
+		} else {
+			for j := range m.dim {
+				acc[j] += w * float64(m.matrix[off+j])
+			}
 		}
 		wsum += w
 	}
@@ -118,6 +132,8 @@ func loadModel(matrixBytes, tokenizerBytes []byte) (*Model, error) {
 	return &Model{
 		vocab:    vocab,
 		matrix:   st.matrix,
+		quant:    st.quant,
+		scales:   st.scales,
 		weights:  st.weights,
 		mapping:  st.mapping,
 		rows:     st.rows,

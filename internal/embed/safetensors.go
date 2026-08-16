@@ -8,11 +8,14 @@ import (
 )
 
 // staticTensors holds a model2vec static model's tensors: the embedding matrix
-// (required), optional per-token weights for weighted mean-pooling, and an
-// optional token->row mapping. Newer models (e.g. potion-code-16M) ship weights
-// (and an identity mapping); older ones (potion-base-8M) ship only the matrix.
+// (required, float32 or int8 with per-row scales), optional per-token weights for
+// weighted mean-pooling, and an optional token->row mapping. Newer models (e.g.
+// potion-code-16M) ship weights (and an identity mapping); older ones
+// (potion-base-8M) ship only the matrix. Exactly one of matrix and quant is set.
 type staticTensors struct {
-	matrix  []float32 // row-major [rows*dim]
+	matrix  []float32 // row-major [rows*dim], float32 models
+	quant   []int8    // row-major [rows*dim], int8 models
+	scales  []float32 // len rows, dequantization scale per row (int8 models)
 	rows    int
 	dim     int
 	weights []float64 // len rows, or nil (unweighted mean)
@@ -64,18 +67,45 @@ func loadSafetensors(raw []byte) (*staticTensors, error) {
 	if !ok {
 		return nil, fmt.Errorf("safetensors %s: no \"embeddings\" tensor", path)
 	}
-	if em.DType != "F32" || len(em.Shape) != 2 {
-		return nil, fmt.Errorf("safetensors %s: embeddings dtype %q shape %v (want F32 matrix)", path, em.DType, em.Shape)
+	if len(em.Shape) != 2 {
+		return nil, fmt.Errorf("safetensors %s: embeddings shape %v (want a matrix)", path, em.Shape)
 	}
 	rows, dim := em.Shape[0], em.Shape[1]
-	if len(eb) != rows*dim*4 {
-		return nil, fmt.Errorf("safetensors %s: embeddings byte count mismatch", path)
+	st := &staticTensors{rows: rows, dim: dim}
+	switch em.DType {
+	case "F32":
+		if len(eb) != rows*dim*4 {
+			return nil, fmt.Errorf("safetensors %s: embeddings byte count mismatch", path)
+		}
+		st.matrix = make([]float32, rows*dim)
+		for i := range st.matrix {
+			st.matrix[i] = math.Float32frombits(binary.LittleEndian.Uint32(eb[i*4:]))
+		}
+	case "I8":
+		if len(eb) != rows*dim {
+			return nil, fmt.Errorf("safetensors %s: embeddings byte count mismatch", path)
+		}
+		sb, sm, ok, err := tensor("scales")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("safetensors %s: int8 embeddings without a \"scales\" tensor", path)
+		}
+		if sm.DType != "F32" || len(sm.Shape) != 1 || sm.Shape[0] != rows || len(sb) != rows*4 {
+			return nil, fmt.Errorf("safetensors %s: scales dtype/shape mismatch", path)
+		}
+		st.quant = make([]int8, rows*dim)
+		for i := range st.quant {
+			st.quant[i] = int8(eb[i])
+		}
+		st.scales = make([]float32, rows)
+		for i := range st.scales {
+			st.scales[i] = math.Float32frombits(binary.LittleEndian.Uint32(sb[i*4:]))
+		}
+	default:
+		return nil, fmt.Errorf("safetensors %s: embeddings dtype %q (want F32 or I8)", path, em.DType)
 	}
-	matrix := make([]float32, rows*dim)
-	for i := range matrix {
-		matrix[i] = math.Float32frombits(binary.LittleEndian.Uint32(eb[i*4:]))
-	}
-	st := &staticTensors{matrix: matrix, rows: rows, dim: dim}
 
 	if wb, wm, ok, err := tensor("weights"); err != nil {
 		return nil, err

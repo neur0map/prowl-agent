@@ -18,11 +18,17 @@ else stores a version, and no human edits it.
 minor and resets the patch, so `0.9.9` is followed by `0.10.0`. The major stays
 manual: automation never decides that a release is breaking.
 
-The bump is committed by CI as `chore: bump version to vX.Y.Z [bump]`. The
-`[bump]` marker is what stops the bump from bumping itself. It deliberately is
-*not* `[skip ci]`: GitHub skips every workflow for a `[skip ci]` head commit, so a
-merge whose tip was a bump would silently publish nothing, which is exactly how a
-stable release was once lost.
+The bump is committed by CI as `chore: bump version to vX.Y.Z (automated)`, and
+the workflow skips it by matching the bot **author**, not text in the message.
+Matching text is a trap twice over: it also matches any commit that merely
+mentions the marker, and on `main` it would skip a merge whose tip happened to be
+a bump.
+
+> **Never write GitHub's CI-skip token in a commit message, even in prose.**
+> GitHub skips *every* workflow for a head commit containing it, with no way to
+> opt out. A stable release was once lost to a bump commit carrying it, and then
+> the very commit introducing this document was skipped for quoting it. The bump
+> no longer uses it.
 
 ## The channels
 

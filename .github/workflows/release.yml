@@ -35,7 +35,14 @@ jobs:
   # already produced, so a merge never renumbers itself.
   version:
     runs-on: ubuntu-latest
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[bump]')
+    # Skip only the bot's own bump on unstable, so the bump does not bump itself.
+    # Keyed on the author, not on a marker in the message: matching message text
+    # also matches any commit that merely mentions the marker, and on main it
+    # would skip a merge whose tip happens to be a bump.
+    if: >-
+      github.event_name != 'push' ||
+      github.ref_name != 'unstable' ||
+      github.event.head_commit.author.name != 'github-actions[bot]'
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       channel: ${{ steps.resolve.outputs.channel }}
@@ -101,7 +108,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add cmd/prowl-agent/main.go
-            git commit -m "chore: bump version to ${want} [bump]"
+            git commit -m "chore: bump version to ${want} (automated)"
             git push origin HEAD:unstable
           fi
 

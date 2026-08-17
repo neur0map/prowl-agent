@@ -1044,8 +1044,15 @@ func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, er
 	res := SmartResult{Query: text}
 	if q.inf == nil {
 		hits, err := q.searchChunksRanked(text, DefaultLimit)
-		res.Matches = hits
-		return res, err
+		if err != nil {
+			return res, err
+		}
+		// AI fully disabled: the lexical ranking is the base, and the doc signal
+		// runs as the same recall appendix plain `search` (SimilarCode) already
+		// applies, so --smart is not silently missing doc recall its sibling
+		// entry point has on the same tier (see mergeDocRecall).
+		res.Matches = mergeDocRecall(hits, q.docChunks(text, DefaultLimit), DefaultLimit)
+		return res, nil
 	}
 	search := text
 	if rw := q.rewriteQuery(ctx, text); rw != text {
@@ -1055,7 +1062,15 @@ func (q *Querier) SmartSearch(ctx context.Context, text string) (SmartResult, er
 	if q.s.VectorsReady() {
 		cand, err = q.hybrid(ctx, search, 20)
 	} else {
-		cand, err = q.searchChunksRanked(search, 20)
+		// No local vector index (the agent tier): rank lexically, then apply the
+		// same doc recall appendix hybrid and SimilarCode use, so --smart matches
+		// plain `search` on this tier. The model rerank below reorders the pool
+		// regardless, so this only widens recall; it cannot break C5's base order.
+		var fts []store.ChunkHit
+		fts, err = q.searchChunksRanked(search, 20)
+		if err == nil {
+			cand = mergeDocRecall(fts, q.docChunks(search, 20), 20)
+		}
 	}
 	if err != nil {
 		return res, err

@@ -494,17 +494,19 @@ func indexVersion() string {
 
 // mapResult converts an extract.Result into store rows, masking every
 // secret-shaped value before it becomes a row. Masking runs at every sink --
-// chunk text, symbol signatures, resource values, and edge targets -- so no
-// raw-source field reaches the store (C4). The returned count, however, is the
-// chunk pass alone: chunkStructured tiles every non-blank line, so a credential
-// (necessarily non-blank) appears in exactly one chunk, while signatures,
-// resource values and edge targets are derived views of that same text. Counting
-// the derived sinks too would report one credential as two or three.
+// chunk text, symbol signatures, symbol doc comments, resource values, and edge
+// targets -- so no raw-source field reaches the store (C4). The returned count,
+// however, is the chunk pass alone: chunkStructured tiles every non-blank line,
+// so a credential (necessarily non-blank) appears in exactly one chunk, while
+// signatures, doc comments, resource values and edge targets are derived views
+// of that same text. Counting the derived sinks too would report one credential
+// as two or three.
 func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk, int) {
 	syms := make([]store.Symbol, len(r.Symbols))
 	for i, s := range r.Symbols {
 		sig, _ := redact.Text(s.Signature)
-		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: sig, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent, Complexity: s.Complexity}
+		doc, _ := redact.Text(s.Doc)
+		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: sig, Doc: doc, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent, Complexity: s.Complexity}
 	}
 	ress := make([]store.Resource, len(r.Resources))
 	for i, rs := range r.Resources {

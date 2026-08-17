@@ -734,3 +734,43 @@ func TestIndexSkipsGeneratedArtifacts(t *testing.T) {
 		}
 	}
 }
+
+// Reindexing a file whose doc comment changed must replace the stored doc, not
+// leave the old one searchable. This exercises the full path: PopulateDocs reads
+// the new comment, ReplaceFileGraph deletes the old symbol (symbols_ad clears its
+// fts_docs entry) and inserts the new one (symbols_ai indexes the new doc).
+func TestReindexUpdatesStoredDoc(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "svc.go")
+	write := func(doc string) {
+		t.Helper()
+		src := "package svc\n\n// Serve " + doc + "\nfunc Serve() {}\n"
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	write("alphaunique brings the listener online")
+	if _, err := Index(s, root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := s.SearchDocs("alphaunique", 10); len(hits) != 1 {
+		t.Fatalf("SearchDocs(alphaunique) after first index = %+v, want 1", hits)
+	}
+
+	write("betaunique takes the listener offline")
+	if _, err := Index(s, root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if hits, _ := s.SearchDocs("alphaunique", 10); len(hits) != 0 {
+		t.Fatalf("stale doc still searchable after reindex: %+v", hits)
+	}
+	if hits, _ := s.SearchDocs("betaunique", 10); len(hits) != 1 {
+		t.Fatalf("updated doc not searchable after reindex: %+v", hits)
+	}
+}

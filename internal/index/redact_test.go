@@ -101,6 +101,30 @@ func TestMapResultCountsDistinctCredentials(t *testing.T) {
 	}
 }
 
+// A doc comment is verbatim source and a new at-rest sink: a docstring showing
+// an example connection string can carry a credential (C4). mapResult must mask
+// it before it reaches symbols.doc, but must NOT count it -- the doc's text also
+// lives inside the enclosing chunk, and the count is the chunk pass alone, so
+// counting the doc too would re-count one credential (the R28 double-count fix).
+func TestMapResultMasksDocWithoutRecounting(t *testing.T) {
+	secret := "sk_live_" + "51H8xQ2eZvKYlo2CabcdefghijklmnopQRST"
+	doc := "// connect opens the billing session using key " + secret + "."
+	r := extract.Result{
+		Symbols: []extract.Symbol{{Name: "connect", Kind: "function", Doc: doc, StartLine: 2, EndLine: 4}},
+		Chunks:  []extract.Chunk{{StartLine: 1, EndLine: 4, Text: doc + "\nfunc connect() {}"}},
+	}
+	syms, _, _, _, n := mapResult(r)
+	if strings.Contains(syms[0].Doc, "sk_live") {
+		t.Fatalf("doc not masked before storage (C4): %q", syms[0].Doc)
+	}
+	if !strings.Contains(syms[0].Doc, redact.Mask) {
+		t.Fatalf("mask marker absent from doc; masking did not run: %q", syms[0].Doc)
+	}
+	if n != 1 {
+		t.Fatalf("redacted count = %d, want 1 (doc masked but not counted)", n)
+	}
+}
+
 // End-to-end through Index: files.redacted counts each credential once, tracks
 // reindexing, and returns to zero when the credential is removed from source. A
 // generic .conf setting masks the value in both a signature and a chunk, so the

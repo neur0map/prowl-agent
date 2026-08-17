@@ -141,18 +141,23 @@ func hasKeyMaterial(body string) bool {
 }
 
 // pemPaired matches a complete private key block: both markers with a body
-// between them. The BEGIN marker is anchored to a line start ((^|\n)) so a marker
-// named mid-line in prose cannot begin the match ahead of a real key. Only the
-// body is replaced; both markers (and the line-start prefix) are kept.
-var pemPaired = regexp.MustCompile(`(?s)(^|\n)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
+// between them. The BEGIN marker must be at the end of its line (a required \n
+// after the closing dashes) so a marker named MID-SENTENCE in prose
+// (`-----BEGIN ... KEY----- in the docs`) cannot begin the match ahead of a real
+// key, while a real key -- even one opening a raw-string literal on the same line
+// as `const k = ...` -- still matches, because its marker ends the line. Only the
+// body is replaced; both markers are kept.
+var pemPaired = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
-// pemBegin matches the head half of a key split across chunks: a line-anchored
-// BEGIN marker whose bounded body runs to end of input. The trailing `-*` lets
-// the body absorb a dash run left at a chunk boundary (a cut inside a marker's
-// opening dashes), which stays safe because a live END marker's five dashes are
-// followed by `END `, so `-*` before `$` cannot consume across one. The body is
-// masked; the BEGIN marker (and the line-start prefix) is kept.
-var pemBegin = regexp.MustCompile(`(^|\n)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemBodyTemper + `-*)$`)
+// pemBegin matches the head half of a key split across chunks: a BEGIN marker
+// ending its line, then a bounded body that runs to end of input. Requiring the
+// \n after the marker keeps a prose mid-sentence mention from matching while
+// still catching an embedded key whose BEGIN shares a line with surrounding
+// source. The trailing `-*` lets the body absorb a dash run left at a chunk
+// boundary (a cut inside a marker's opening dashes), which stays safe because a
+// live END marker's five dashes are followed by `END `, so `-*` before `$` cannot
+// consume across one. The body is masked; the BEGIN marker is kept.
+var pemBegin = regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n)(` + pemBodyTemper + `-*)$`)
 
 // pemEnd matches the tail half of a split key: a body from start of input that
 // reaches an END marker without crossing a BEGIN marker. The body is masked; the
@@ -199,22 +204,22 @@ func Text(s string) (string, int) {
 	// redacts both without one destroying the other.
 	s = pemPaired.ReplaceAllStringFunc(s, func(m string) string {
 		g := pemPaired.FindStringSubmatch(m)
-		// g: 1 line-start prefix, 2 BEGIN, 3 body, 4 END. Skip an empty or
+		// g: 1 BEGIN marker + newline, 2 body, 3 END. Skip an empty or
 		// already-masked body, and a marker named in prose (no key material).
-		if g[3] == "" || strings.Contains(g[3], Mask) || !hasKeyMaterial(g[3]) {
+		if g[2] == "" || strings.Contains(g[2], Mask) || !hasKeyMaterial(g[2]) {
 			return m
 		}
 		n++
-		return g[1] + g[2] + "\n" + Mask + "\n" + g[4]
+		return g[1] + Mask + "\n" + g[3]
 	})
 	s = pemBegin.ReplaceAllStringFunc(s, func(m string) string {
 		g := pemBegin.FindStringSubmatch(m)
-		// g: 1 line-start prefix, 2 BEGIN, 3 body.
-		if g[3] == "" || strings.Contains(g[3], Mask) || !hasKeyMaterial(g[3]) {
+		// g: 1 BEGIN marker + newline, 2 body.
+		if g[2] == "" || strings.Contains(g[2], Mask) || !hasKeyMaterial(g[2]) {
 			return m
 		}
 		n++
-		return g[1] + g[2] + "\n" + Mask
+		return g[1] + Mask
 	})
 	s = pemEnd.ReplaceAllStringFunc(s, func(m string) string {
 		g := pemEnd.FindStringSubmatch(m)

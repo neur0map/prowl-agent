@@ -545,3 +545,39 @@ func TestChunksTwoChunkKeyUnchangedBehaviour(t *testing.T) {
 		t.Fatalf("key body survived")
 	}
 }
+
+// Finding 3 regression (C4): a private key embedded in a raw-string literal opens
+// with the BEGIN marker MID-LINE (const rsaKey = `-----BEGIN...). The head chunk's
+// base64 body must still be masked. Anchoring the marker to the END of its line
+// (a required newline after the closing dashes), not the start, is what keeps
+// this working while still rejecting a marker named mid-sentence in prose.
+func TestTextMasksEmbeddedKeyHeadChunkMidLineBegin(t *testing.T) {
+	body := strings.TrimRight(strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\n", 37), "\n")
+	in := "const rsaKey = `-----BEGIN RSA PRIVATE KEY-----\n" + body
+	got, n := Text(in)
+	if n != 1 {
+		t.Fatalf("masked %d, want 1: %q", n, got)
+	}
+	if strings.Contains(got, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw") {
+		t.Fatalf("head-chunk key body survived: %q", got)
+	}
+	if !strings.Contains(got, "const rsaKey = `-----BEGIN RSA PRIVATE KEY-----") {
+		t.Fatalf("marker/surrounding source lost: %q", got)
+	}
+}
+
+// A complete key embedded inline (mid-line BEGIN) in one chunk masks its body
+// and keeps the surrounding source byte-identical around the markers.
+func TestTextMasksInlineCompleteKeyMidLineBegin(t *testing.T) {
+	in := "const k = `-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIAAAAAAAAAAAAAAAAAAAAAbbbbccccddddeeee\n-----END EC PRIVATE KEY-----`"
+	got, n := Text(in)
+	if n != 1 {
+		t.Fatalf("masked %d, want 1: %q", n, got)
+	}
+	if strings.Contains(got, "MHcCAQEEIAAAAAAAAAAAAAAAAAAAAAbbbbccccddddeeee") {
+		t.Fatalf("inline key body survived: %q", got)
+	}
+	if !strings.HasPrefix(got, "const k = `-----BEGIN EC PRIVATE KEY-----") || !strings.HasSuffix(got, "-----END EC PRIVATE KEY-----`") {
+		t.Fatalf("surrounding source/markers lost: %q", got)
+	}
+}

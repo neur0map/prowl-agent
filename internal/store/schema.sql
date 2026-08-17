@@ -57,7 +57,11 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(text, content='chunks', content_rowid='id');
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_symbols USING fts5(name, signature, content='symbols', content_rowid='id');
-CREATE VIRTUAL TABLE IF NOT EXISTS fts_docs USING fts5(doc, content='symbols', content_rowid='id');
+-- Doc prose is natural language, not identifiers, so fts_docs stems with porter:
+-- a query for "logs"/"secrets" then matches a docstring's "log"/"secret". The
+-- code-token indexes (fts_symbols, fts_chunks) keep the default tokenizer, where
+-- identifier substrings must stay verbatim.
+CREATE VIRTUAL TABLE IF NOT EXISTS fts_docs USING fts5(doc, content='symbols', content_rowid='id', tokenize='porter unicode61');
 
 -- Keep external-content FTS indexes in sync with their content tables.
 CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN

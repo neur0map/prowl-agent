@@ -20,7 +20,12 @@ python3 - "$tmp/plan.json" <<'PY'
 import json, pathlib, sys
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload['dry_run'] is True
-assert {a['integration'] for a in payload['plan']['actions']} == {'agents', 'cursor'}
+# Selecting cursor,agents plans those two destinations plus the per-skill installs
+# they imply, and nothing else. Asserting equality with {agents, cursor} silently
+# rotted when skill actions joined the plan.
+kinds = {a['integration'] for a in payload['plan']['actions']}
+assert {'agents', 'cursor'} <= kinds, kinds
+assert kinds <= {'agents', 'cursor', 'skill'}, kinds
 PY
 test ! -e .prowl
 

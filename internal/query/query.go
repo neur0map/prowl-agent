@@ -809,7 +809,7 @@ func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHi
 		// no-inferencer tier too. The tier-ordered lexical list leads; the doc
 		// list is additive and passed last, so it adds recall without demoting a
 		// lexical hit (see fuseRRF, constraint C5).
-		return fuseRRF(DefaultLimit, fts, q.docChunks(text, DefaultLimit)), nil
+		return fuseRRF(DefaultLimit, weightedHits{fts, 1}, weightedHits{q.docChunks(text, DefaultLimit), docFuseWeight}), nil
 	}
 	return q.hybrid(ctx, text, DefaultLimit)
 }
@@ -1013,13 +1013,13 @@ func (q *Querier) hybrid(ctx context.Context, text string, k int) ([]store.Chunk
 	docs := q.docChunks(text, k)
 	vecs, err := q.inf.Embed(ctx, []string{text})
 	if err != nil || len(vecs) == 0 {
-		return fuseRRF(k, fts, docs), nil
+		return fuseRRF(k, weightedHits{fts, 1}, weightedHits{docs, docFuseWeight}), nil
 	}
 	vhits, err := q.s.VectorSearch(vecs[0], k)
 	if err != nil {
-		return fuseRRF(k, fts, docs), nil
+		return fuseRRF(k, weightedHits{fts, 1}, weightedHits{docs, docFuseWeight}), nil
 	}
-	return fuseRRF(k, vhits, fts, docs), nil
+	return fuseRRF(k, weightedHits{vhits, 1}, weightedHits{fts, 1}, weightedHits{docs, docFuseWeight}), nil
 }
 
 // SmartResult is the assist-augmented search result.

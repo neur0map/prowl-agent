@@ -11,7 +11,7 @@ import "strconv"
 // fifty results.
 //
 // Matching mirrors SearchChunks' precision tiers (exact phrase, then all terms,
-// then any term via ftsMatchTiers), NOT SearchDocs' strict AND. A concept query
+// then any term via ftsMatchTiers), not a strict AND of every term. A concept query
 // like "keep secrets out of the log file" overlaps the answering docstring
 // ("secret redaction for logs ... reach log files") on only a few terms, so a
 // strict AND of every term returns nothing; the recall that makes this feature

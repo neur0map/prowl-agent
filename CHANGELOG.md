@@ -21,12 +21,17 @@ All notable changes are recorded here. The format follows
   unambiguous enough to carry no false positives: provider-prefixed API keys (AWS,
   GitHub, Slack, Google, Stripe, OpenAI/Anthropic), JWTs, the password field of a
   URL userinfo section (including the username-less `redis://:pass@host` form),
-  and PEM private-key bodies. A homegrown credential with no vendor prefix -- a
+  and PEM private-key bodies in any textual embedding -- a multi-line block, or a
+  one-line `.env`/JSON/YAML value that carries the key with literal `\n` escapes.
+  Two things are deliberately NOT masked, because catching them would mean
+  destroying real source. A homegrown credential with no vendor prefix -- a
   random-looking value assigned to a secret-named variable, `API_KEY = "8f3k..."`
-  -- is deliberately NOT masked: a generic entropy/character-class heuristic was
-  measured masking ordinary camelCase identifiers at six real sites in this
-  repository, and destructive masking cannot afford a false positive, so it was
-  removed. Unreliable detection belongs in a non-destructive warning, never in
+  -- is left alone: a generic entropy/character-class heuristic was measured
+  masking ordinary camelCase identifiers at six real sites in this repository, and
+  destructive masking cannot afford a false positive. And a whole private key
+  re-encoded as a single opaque base64 blob with no BEGIN/END marker is not masked,
+  because detecting it would mean decoding arbitrary base64 and masking anything
+  key-shaped. Unreliable detection belongs in a non-destructive warning, never in
   destructive masking.
 - `doctor` reports a `hardcoded_secret` finding, at `warn`, for each file that had
   a value masked. The count comes from the per-file `files.redacted` column

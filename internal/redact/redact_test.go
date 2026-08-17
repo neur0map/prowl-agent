@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -579,5 +580,58 @@ func TestTextMasksInlineCompleteKeyMidLineBegin(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "const k = `-----BEGIN EC PRIVATE KEY-----") || !strings.HasSuffix(got, "-----END EC PRIVATE KEY-----`") {
 		t.Fatalf("surrounding source/markers lost: %q", got)
+	}
+}
+
+// Finding 3/4 embedding matrix: a private key appears in source in many
+// separator styles, and each must mask, while a marker merely NAMED in prose in
+// each style must survive byte-identical. Built as an explicit matrix so the
+// boundary is pinned rather than chased one input shape at a time. `b` is a
+// base64 body line; `\n` inside a raw-string literal is a LITERAL backslash-n
+// (the .env/JSON/quoted-string escape), while "\n" is a real newline.
+func TestTextPEMEmbeddingMatrix(t *testing.T) {
+	const b = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDabcXYZ0123"
+	blob := base64.StdEncoding.EncodeToString([]byte("-----BEGIN RSA PRIVATE KEY-----\n" + b + "\n" + b + "\n-----END RSA PRIVATE KEY-----"))
+	cases := []struct {
+		name     string
+		in       string
+		wantMask bool
+	}{
+		// Real key present -> MUST mask (body b gone, markers kept).
+		{"bare multi-line", "-----BEGIN RSA PRIVATE KEY-----\n" + b + "\n" + b + "\n-----END RSA PRIVATE KEY-----", true},
+		{"go raw string (mid-line BEGIN)", "var key = `-----BEGIN RSA PRIVATE KEY-----\n" + b + "\n" + b + "\n-----END RSA PRIVATE KEY-----`", true},
+		{"quoted string escaped \\n", `PRIVATE_KEY = "-----BEGIN RSA PRIVATE KEY-----\n` + b + `\n` + b + `\n-----END RSA PRIVATE KEY-----"`, true},
+		{"json string value escaped \\n", `{"private_key": "-----BEGIN PRIVATE KEY-----\n` + b + `\n` + b + `\n-----END PRIVATE KEY-----\n"}`, true},
+		{"yaml block scalar indented", "private_key: |\n  -----BEGIN PRIVATE KEY-----\n  " + b + "\n  " + b + "\n  -----END PRIVATE KEY-----", true},
+		// Prose mention only -> MUST survive byte-identical.
+		{"prose bare (marker ends line)", "// format is -----BEGIN RSA PRIVATE KEY-----\nfunc load() error { return nil }", false},
+		{"prose mid-sentence", "# see -----BEGIN RSA PRIVATE KEY----- for the on-disk format here", false},
+		{"prose escaped \\n", `msg := "expected -----BEGIN RSA PRIVATE KEY-----\nbut the file was empty"`, false},
+		{"prose json", `{"hint": "keys start with -----BEGIN PRIVATE KEY----- normally"}`, false},
+		{"prose yaml", "note: each file opens with -----BEGIN PRIVATE KEY----- as its header", false},
+		// Opaque base64 of a WHOLE key -> MUST NOT match (no literal marker; masking
+		// arbitrary base64 is the destructive class we refuse).
+		{"base64-of-whole-key", blob, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, n := Text(c.in)
+			if c.wantMask {
+				if n == 0 || strings.Contains(got, b) || !strings.Contains(got, Mask) {
+					t.Fatalf("want masked: n=%d bodyPresent=%v got=%q", n, strings.Contains(got, b), got)
+				}
+				if !strings.Contains(got, "PRIVATE KEY-----") {
+					t.Fatalf("markers lost: %q", got)
+				}
+			} else {
+				if n != 0 || got != c.in {
+					t.Fatalf("want survive byte-identical: n=%d got=%q", n, got)
+				}
+			}
+			// Idempotent regardless of cell.
+			if got2, n2 := Text(got); n2 != 0 || got2 != got {
+				t.Fatalf("not idempotent: n2=%d got2=%q", n2, got2)
+			}
+		})
 	}
 }

@@ -484,9 +484,10 @@ func indexVersion() string {
 
 // mapResult converts an extract.Result into store rows, masking every
 // secret-shaped value before it becomes a row. Masking here, not on output, is
-// what keeps chunks.text, symbol signatures, and resource values -- the three
-// raw-source sinks the store persists -- free of committed credentials (C4). It
-// returns the store rows and how many values were masked, for Summary.Redacted.
+// what keeps chunks.text, symbol signatures, resource values, and edge targets
+// -- every raw-source field the store persists -- free of committed credentials
+// (C4). It returns the store rows and how many values were masked, for
+// Summary.Redacted.
 func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk, int) {
 	redacted := 0
 	syms := make([]store.Symbol, len(r.Symbols))
@@ -503,7 +504,9 @@ func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawE
 	}
 	edges := make([]store.RawEdge, len(r.Edges))
 	for i, e := range r.Edges {
-		edges[i] = store.RawEdge{SrcName: e.SrcName, Kind: e.Kind, Raw: e.Raw, Line: e.Line}
+		raw, n := redact.Text(e.Raw)
+		redacted += n
+		edges[i] = store.RawEdge{SrcName: e.SrcName, Kind: e.Kind, Raw: raw, Line: e.Line}
 	}
 	chunks := make([]store.Chunk, len(r.Chunks))
 	for i, c := range r.Chunks {

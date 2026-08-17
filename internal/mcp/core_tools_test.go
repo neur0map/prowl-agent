@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prowl-agent/prowl-agent/internal/capability"
 	contextpacket "github.com/prowl-agent/prowl-agent/internal/context"
+	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge"
 	"github.com/prowl-agent/prowl-agent/internal/knowledge/okfv01"
 	"github.com/prowl-agent/prowl-agent/internal/query"
@@ -118,5 +121,78 @@ func TestContextLensParityMCP(t *testing.T) {
 	}
 	if packet.TraceID != "" || bytes.Contains(encoded, []byte(`"trace_id"`)) || !bytes.Equal(encoded, want) {
 		t.Fatalf("MCP canonical packet differs:\n got: %s\nwant: %s", encoded, want)
+	}
+}
+
+// The history MCP tool used to discard its context; it now forwards it, so an MCP
+// client that drops the call cancels the underlying git line-history walk instead
+// of leaving it running on a large repository. The control call proves the tool
+// still returns commits under its new ctx-first signature; the cancellation call
+// shadows git with a shim that blocks ~10s, so a handler that ignored ctx would
+// take that long -- a prompt empty return proves the context reaches git.
+func TestHistoryToolForwardsContextCancellation(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "--quiet")
+	if err := os.WriteFile(filepath.Join(root, "a.go"),
+		[]byte("package p\n\nfunc Target() int {\n\treturn 1\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "feat: add Target")
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := index.Index(db, root, nil); err != nil {
+		t.Fatal(err)
+	}
+	h := &handlers{q: query.New(db), root: root}
+
+	// Control: the tool returns commits with its new ctx-first signature.
+	if _, out, err := h.history(context.Background(), nil, historyIn{Symbol: "Target"}); err != nil {
+		t.Fatalf("history tool errored on a tracked symbol: %v", err)
+	} else if len(out.Commits) == 0 {
+		t.Fatal("history tool returned no commits for a tracked, committed symbol")
+	}
+
+	// Cancellation: shadow git with a blocking shim, then cancel a call in flight.
+	// `exec sleep` is a single process the ctx SIGKILL can reap cleanly.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan historyOut, 1)
+	go func() {
+		_, o, _ := h.history(ctx, nil, historyIn{Symbol: "Target"})
+		done <- o
+	}()
+	time.Sleep(200 * time.Millisecond) // let git actually start
+	start := time.Now()
+	cancel()
+	select {
+	case o := <-done:
+		if len(o.Commits) != 0 {
+			t.Fatalf("cancelled history tool = %d commits, want 0", len(o.Commits))
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("history tool took %v after cancellation; ctx is not reaching git", elapsed)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("history tool did not return within 3s of cancellation; ctx is not reaching git")
 	}
 }

@@ -28,13 +28,17 @@ var ErrSourcesChanged = errors.New("project sources changed during refresh")
 
 // Summary reports what an Index run did.
 type Summary struct {
-	Indexed  int // supported files seen
-	Parsed   int // files (re)parsed this run
-	Skipped  int // unchanged files
-	Deleted  int // files removed from the index
-	Symbols  int // symbols in the index (total)
-	Edges    int // edges in the index (total)
-	Redacted int // secret-shaped values masked before storage this run
+	Indexed int // supported files seen
+	Parsed  int // files (re)parsed this run
+	Skipped int // unchanged files
+	Deleted int // files removed from the index
+	Symbols int // symbols in the index (total)
+	Edges   int // edges in the index (total)
+	// Redacted counts mask operations across all sinks (a secret present in a
+	// chunk, a signature and a resource is counted once per sink), so it is
+	// internal accounting, not a distinct-secret total. Nothing user-facing reads
+	// it; doctor reports secrets from the persisted files.redacted column instead.
+	Redacted int
 }
 
 // Options controls which files and detected languages enter the structural

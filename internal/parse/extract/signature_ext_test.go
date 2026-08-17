@@ -69,3 +69,28 @@ func TestClipSignatureCaps(t *testing.T) {
 		t.Errorf("whitespace not collapsed: %q", clipSignature("func  F(\n\ta int)"))
 	}
 }
+
+// A Go struct or interface has no `body` field to stop the header at, so its
+// whole body is flattened into the signature; inline field comments must not
+// survive, or once newlines collapse to spaces a `// ...` runs into the next
+// field (the outline corruption `InferencerProvider // VectorProgress...`).
+func TestSignatureElidesStructAndInterfaceComments(t *testing.T) {
+	cases := []struct{ lang, src, sym string }{
+		{"go", "package p\ntype Options struct {\n\tName string // short name\n\tProvider Inferencer // when set, receives progress\n}\n", "Options"},
+		{"go", "package p\ntype Doer interface {\n\tDo() error // does the thing\n}\n", "Doer"},
+	}
+	for _, c := range cases {
+		got := sigOf(mustExtract(t, c.lang, c.src), c.sym)
+		if got == "" {
+			t.Errorf("%s: no signature for %q", c.lang, c.sym)
+			continue
+		}
+		if strings.Contains(got, "//") || strings.Contains(got, "/*") {
+			t.Errorf("%s: signature for %q leaked a comment: %q", c.lang, c.sym, got)
+		}
+		// The field declarations themselves are kept (option-a fix is informative).
+		if c.sym == "Options" && !strings.Contains(got, "Provider Inferencer") {
+			t.Errorf("field declaration dropped along with the comment: %q", got)
+		}
+	}
+}

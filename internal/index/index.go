@@ -18,6 +18,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/graph"
 	"github.com/prowl-agent/prowl-agent/internal/parse"
 	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
+	"github.com/prowl-agent/prowl-agent/internal/redact"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -27,12 +28,13 @@ var ErrSourcesChanged = errors.New("project sources changed during refresh")
 
 // Summary reports what an Index run did.
 type Summary struct {
-	Indexed int // supported files seen
-	Parsed  int // files (re)parsed this run
-	Skipped int // unchanged files
-	Deleted int // files removed from the index
-	Symbols int // symbols in the index (total)
-	Edges   int // edges in the index (total)
+	Indexed  int // supported files seen
+	Parsed   int // files (re)parsed this run
+	Skipped  int // unchanged files
+	Deleted  int // files removed from the index
+	Symbols  int // symbols in the index (total)
+	Edges    int // edges in the index (total)
+	Redacted int // secret-shaped values masked before storage this run
 }
 
 // Options controls which files and detected languages enter the structural
@@ -193,7 +195,8 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 			drain()
 			return sum, err
 		}
-		syms, ress, edges, chunks := mapResult(fp.res)
+		syms, ress, edges, chunks, redacted := mapResult(fp.res)
+		sum.Redacted += redacted
 		if err := s.ReplaceFileGraph(fid, syms, ress, edges, chunks); err != nil {
 			drain()
 			return sum, err
@@ -479,14 +482,24 @@ func indexVersion() string {
 	return "dev"
 }
 
-func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk) {
+// mapResult converts an extract.Result into store rows, masking every
+// secret-shaped value before it becomes a row. Masking here, not on output, is
+// what keeps chunks.text, symbol signatures, and resource values -- the three
+// raw-source sinks the store persists -- free of committed credentials (C4). It
+// returns the store rows and how many values were masked, for Summary.Redacted.
+func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk, int) {
+	redacted := 0
 	syms := make([]store.Symbol, len(r.Symbols))
 	for i, s := range r.Symbols {
-		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: s.Signature, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent, Complexity: s.Complexity}
+		sig, n := redact.Text(s.Signature)
+		redacted += n
+		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: sig, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent, Complexity: s.Complexity}
 	}
 	ress := make([]store.Resource, len(r.Resources))
 	for i, rs := range r.Resources {
-		ress[i] = store.Resource{Kind: rs.Kind, Name: rs.Name, Value: rs.Value, Line: rs.Line}
+		val, n := redact.Text(rs.Value)
+		redacted += n
+		ress[i] = store.Resource{Kind: rs.Kind, Name: rs.Name, Value: val, Line: rs.Line}
 	}
 	edges := make([]store.RawEdge, len(r.Edges))
 	for i, e := range r.Edges {
@@ -494,9 +507,11 @@ func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawE
 	}
 	chunks := make([]store.Chunk, len(r.Chunks))
 	for i, c := range r.Chunks {
-		chunks[i] = store.Chunk{StartLine: c.StartLine, EndLine: c.EndLine, Text: c.Text}
+		text, n := redact.Text(c.Text)
+		redacted += n
+		chunks[i] = store.Chunk{StartLine: c.StartLine, EndLine: c.EndLine, Text: text}
 	}
-	return syms, ress, edges, chunks
+	return syms, ress, edges, chunks, redacted
 }
 
 // goModulePath returns the module path declared in go.mod at root, or "" when

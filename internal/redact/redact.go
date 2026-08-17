@@ -22,6 +22,16 @@
 // eventually masking real source, and because masking is destructive that is an
 // unacceptable trade. An unreliable signal belongs in a non-destructive warning,
 // never in destructive masking, so the recall loss is accepted on purpose.
+//
+// A PEM key re-encoded as one opaque base64 blob (base64 of the whole
+// "-----BEGIN...-----...-----END...-----" text) is likewise NOT masked, and for
+// the same reason: the blob carries no literal marker, so detecting it would mean
+// decoding arbitrary base64 and masking whatever decodes to something key-shaped
+// -- which would destroy legitimate embedded assets, test vectors, and minified
+// data. That recall gap is accepted on purpose; masking real source is the worse
+// failure. A PEM key in any TEXTUAL embedding -- bare, a raw-string literal, a
+// quoted string with \n escapes (.env / JSON / YAML-flow), or an indented YAML
+// block scalar -- is masked, because it still carries the literal markers.
 package redact
 
 import (

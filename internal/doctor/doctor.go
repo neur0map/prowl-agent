@@ -389,6 +389,8 @@ func checkDangling(s *store.Store, _ Options) ([]Finding, error) {
 // hardcodedSecrets reports files where a credential was masked at index time. The
 // mask marker is the durable evidence: the value itself was never stored, so the
 // check keys off the marker in chunks rather than a transient index-run counter.
+// It is a warning, not an error: the secret is already neutralised in the index,
+// so this is a repository-hygiene signal (doctor --fail-on gates CI when needed).
 func hardcodedSecrets(s *store.Store, _ Options) ([]Finding, error) {
 	rows, err := s.ChunksContainingMarker(redact.Mask)
 	if err != nil {
@@ -398,7 +400,7 @@ func hardcodedSecrets(s *store.Store, _ Options) ([]Finding, error) {
 	for _, r := range rows {
 		out = append(out, Finding{
 			Check:    "hardcoded_secret",
-			Severity: SevError,
+			Severity: SevWarn,
 			File:     r.File,
 			Detail:   fmt.Sprintf("%d masked credential value(s); move them to the environment", r.Count),
 		})

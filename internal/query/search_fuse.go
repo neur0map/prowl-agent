@@ -106,6 +106,14 @@ func mergeDocRecall(base, docHits []store.ChunkHit, limit int) []store.ChunkHit 
 			misses = append(misses, h)
 		}
 	}
+	// Respect the base tiering inside the recall tail too: a source file whose doc
+	// comment answers the query is higher-value recall than a test or doc file that
+	// merely mentions the concept, so source misses lead, then tests, then
+	// docs/vendored -- the same order searchChunksRanked imposes. Stable, so
+	// bm25(fts_docs) order is kept within each tier.
+	sort.SliceStable(misses, func(i, j int) bool {
+		return searchTier(misses[i].File) < searchTier(misses[j].File)
+	})
 	if len(misses) == 0 {
 		if len(out) > limit {
 			out = out[:limit]

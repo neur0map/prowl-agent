@@ -735,9 +735,39 @@ func TestIndexSkipsGeneratedArtifacts(t *testing.T) {
 	}
 }
 
+// symbolDoc reads the stored doc of the single symbol named `sym` in `rel`,
+// through the public store surface (SymbolsByName + SymbolDocsInFile), so the
+// assertion reflects what actually landed in symbols.doc after indexing.
+func symbolDoc(t *testing.T, s *store.Store, rel, sym string) string {
+	t.Helper()
+	fh, ok, err := s.GetFileByPath(rel)
+	if err != nil || !ok {
+		t.Fatalf("GetFileByPath(%s): ok=%v err=%v", rel, ok, err)
+	}
+	docs, err := s.SymbolDocsInFile(fh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range mustSymbols(t, s, sym) {
+		if h.File == rel {
+			return docs[h.ID]
+		}
+	}
+	return ""
+}
+
+func mustSymbols(t *testing.T, s *store.Store, name string) []store.SymbolHit {
+	t.Helper()
+	hits, err := s.SymbolsByName(name, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hits
+}
+
 // Reindexing a file whose doc comment changed must replace the stored doc, not
-// leave the old one searchable. This exercises the full path: PopulateDocs reads
-// the new comment, ReplaceFileGraph deletes the old symbol (symbols_ad clears its
+// leave the old one. This exercises the full path: PopulateDocs reads the new
+// comment, ReplaceFileGraph deletes the old symbol (symbols_ad clears its
 // fts_docs entry) and inserts the new one (symbols_ai indexes the new doc).
 func TestReindexUpdatesStoredDoc(t *testing.T) {
 	root := t.TempDir()
@@ -759,18 +789,15 @@ func TestReindexUpdatesStoredDoc(t *testing.T) {
 	if _, err := Index(s, root, nil); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.SearchDocComments("alphaunique", 10); len(hits) != 1 {
-		t.Fatalf("SearchDocComments(alphaunique) after first index = %+v, want 1", hits)
+	if got := symbolDoc(t, s, "svc.go", "Serve"); got != "// Serve alphaunique brings the listener online" {
+		t.Fatalf("stored doc after first index = %q", got)
 	}
 
 	write("betaunique takes the listener offline")
 	if _, err := Index(s, root, nil); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.SearchDocComments("alphaunique", 10); len(hits) != 0 {
-		t.Fatalf("stale doc still searchable after reindex: %+v", hits)
-	}
-	if hits, _ := s.SearchDocComments("betaunique", 10); len(hits) != 1 {
-		t.Fatalf("updated doc not searchable after reindex: %+v", hits)
+	if got := symbolDoc(t, s, "svc.go", "Serve"); got != "// Serve betaunique takes the listener offline" {
+		t.Fatalf("stored doc not updated on reindex (stale?): %q", got)
 	}
 }

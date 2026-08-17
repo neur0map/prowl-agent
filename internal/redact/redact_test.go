@@ -212,3 +212,58 @@ func TestTextNoCountInflation(t *testing.T) {
 		})
 	}
 }
+
+// R16: all three PEM patterns run unconditionally with bounded unpaired bodies,
+// so a chunk holding more than one key redacts every body without one match
+// destroying another. Covers the reported residual leak (a complete key plus a
+// second key's split half) and two complete keys sharing a chunk. Each case must
+// also be idempotent.
+func TestTextMasksMultipleKeysInChunk(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         string
+		bodiesGone []string
+		markers    []string
+		wantN      int
+	}{
+		{
+			name:       "complete key plus split half",
+			in:         "-----BEGIN A PRIVATE KEY-----\nBODYONE\n-----END A PRIVATE KEY-----\n-----BEGIN B PRIVATE KEY-----\nLEAKEDBODYTWO",
+			bodiesGone: []string{"BODYONE", "LEAKEDBODYTWO"},
+			markers:    []string{"-----BEGIN A PRIVATE KEY-----", "-----END A PRIVATE KEY-----", "-----BEGIN B PRIVATE KEY-----"},
+			wantN:      2,
+		},
+		{
+			name:       "two complete keys",
+			in:         "-----BEGIN A PRIVATE KEY-----\nBODYONE\n-----END A PRIVATE KEY-----\n-----BEGIN B PRIVATE KEY-----\nBODYTWO\n-----END B PRIVATE KEY-----",
+			bodiesGone: []string{"BODYONE", "BODYTWO"},
+			markers:    []string{"-----BEGIN A PRIVATE KEY-----", "-----END A PRIVATE KEY-----", "-----BEGIN B PRIVATE KEY-----", "-----END B PRIVATE KEY-----"},
+			wantN:      2,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, n := Text(c.in)
+			if n != c.wantN {
+				t.Fatalf("masked %d values, want %d: %q", n, c.wantN, got)
+			}
+			for _, b := range c.bodiesGone {
+				if strings.Contains(got, b) {
+					t.Fatalf("key body %q survived: %q", b, got)
+				}
+			}
+			for _, m := range c.markers {
+				if !strings.Contains(got, m) {
+					t.Fatalf("marker %q lost: %q", m, got)
+				}
+			}
+			got2, n2 := Text(got)
+			if n2 != 0 {
+				t.Fatalf("second pass masked %d, want 0: %q", n2, got2)
+			}
+			if got2 != got {
+				t.Fatalf("not idempotent: %q != %q", got, got2)
+			}
+		})
+	}
+}

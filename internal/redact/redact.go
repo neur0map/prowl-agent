@@ -45,22 +45,34 @@ var provider = regexp.MustCompile(
 var urlCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)([^\s@/]{4,})(@)`)
 
 // PEM private keys are matched by three separate patterns applied in sequence
-// (see Text). A single alternation was the root cause of three defects: Go's
-// leftmost-match rule could prefer a start-anchored tail alternative over the
-// paired one and destroy all preceding source. Keeping the patterns distinct lets
-// each retain its markers and increment the count only when it rewrites text.
+// and unconditionally (see Text). A single alternation was the root cause of
+// three defects: Go's leftmost-match rule could prefer a start-anchored tail
+// alternative over the paired one and destroy all preceding source. The unpaired
+// patterns are bounded so their bodies cannot cross a marker boundary, which is
+// what lets all three run unconditionally without one key's split half leaking
+// past another key that shares the chunk.
+//
+// The bound is expressed by pemBodyTemper below. Go's regexp is RE2 and has no
+// lookahead, so the body cannot be written as a tempered `-(?!----END)` token.
+// Instead the body admits runs of at most four dashes: the only five-dash runs in
+// a PEM stream are the BEGIN/END markers themselves (base64 payloads and headers
+// such as `DEK-Info` never contain five consecutive dashes), so refusing a
+// five-dash run makes the body stop exactly at the next marker.
+const pemBodyTemper = `(?:[^-]|-{1,4}[^-])*-{0,4}`
 
 // pemPaired matches a complete private key block: both markers with a body
 // between them. Only the body is replaced; both markers are kept.
 var pemPaired = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
 // pemBegin matches the head half of a key split across chunks: a BEGIN marker
-// with a body and no END after it. Everything after the marker is masked.
-var pemBegin = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.+)$`)
+// whose body runs to end of input without crossing an END marker. The body is
+// masked; the marker is kept.
+var pemBegin = regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemBodyTemper + `)$`)
 
-// pemEnd matches the tail half of a split key: a body and an END marker with no
-// BEGIN before it. Everything up to the marker is masked.
-var pemEnd = regexp.MustCompile(`(?s)^(.+?)(-----END [A-Z ]*PRIVATE KEY-----)`)
+// pemEnd matches the tail half of a split key: a body from start of input that
+// reaches an END marker without crossing a BEGIN marker. The body is masked; the
+// marker is kept.
+var pemEnd = regexp.MustCompile(`^(` + pemBodyTemper + `)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
 // Text masks every secret-shaped value in s, returning the result and how many
 // values were masked. The count is idempotent: running Text twice on the same
@@ -68,37 +80,34 @@ var pemEnd = regexp.MustCompile(`(?s)^(.+?)(-----END [A-Z ]*PRIVATE KEY-----)`)
 func Text(s string) (string, int) {
 	n := 0
 
-	// PEM keys: the paired pattern owns any input that contains a complete block.
-	// The unpaired head/tail patterns run only when no complete block was found,
-	// so they cannot interact with a paired match.
-	if pemPaired.MatchString(s) {
-		s = pemPaired.ReplaceAllStringFunc(s, func(m string) string {
-			g := pemPaired.FindStringSubmatch(m)
-			// An empty or already-masked body has nothing to rewrite.
-			if g[2] == "" || strings.Contains(g[2], Mask) {
-				return m
-			}
-			n++
-			return g[1] + "\n" + Mask + "\n" + g[3]
-		})
-	} else {
-		s = pemBegin.ReplaceAllStringFunc(s, func(m string) string {
-			g := pemBegin.FindStringSubmatch(m)
-			if strings.Contains(g[2], Mask) {
-				return m
-			}
-			n++
-			return g[1] + "\n" + Mask
-		})
-		s = pemEnd.ReplaceAllStringFunc(s, func(m string) string {
-			g := pemEnd.FindStringSubmatch(m)
-			if strings.Contains(g[1], Mask) {
-				return m
-			}
-			n++
-			return Mask + "\n" + g[2]
-		})
-	}
+	// PEM keys: all three patterns run unconditionally. The unpaired bodies are
+	// bounded so they cannot cross a marker, so a chunk holding a complete key
+	// plus another key's split half redacts both without one destroying the other.
+	s = pemPaired.ReplaceAllStringFunc(s, func(m string) string {
+		g := pemPaired.FindStringSubmatch(m)
+		// An empty or already-masked body has nothing to rewrite.
+		if g[2] == "" || strings.Contains(g[2], Mask) {
+			return m
+		}
+		n++
+		return g[1] + "\n" + Mask + "\n" + g[3]
+	})
+	s = pemBegin.ReplaceAllStringFunc(s, func(m string) string {
+		g := pemBegin.FindStringSubmatch(m)
+		if g[2] == "" || strings.Contains(g[2], Mask) {
+			return m
+		}
+		n++
+		return g[1] + "\n" + Mask
+	})
+	s = pemEnd.ReplaceAllStringFunc(s, func(m string) string {
+		g := pemEnd.FindStringSubmatch(m)
+		if g[1] == "" || strings.Contains(g[1], Mask) {
+			return m
+		}
+		n++
+		return Mask + "\n" + g[2]
+	})
 
 	s = provider.ReplaceAllStringFunc(s, func(string) string {
 		n++

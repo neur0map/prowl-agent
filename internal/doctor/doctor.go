@@ -16,6 +16,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/parse"
+	"github.com/prowl-agent/prowl-agent/internal/redact"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -90,7 +91,7 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	opt = opt.withDefaults()
 	var f []Finding
 	for _, fn := range []func(*store.Store, Options) ([]Finding, error){
-		checkCycles, checkFan, checkOversized, checkDangling, checkUnindexedLanguages,
+		checkCycles, checkFan, checkOversized, checkDangling, checkUnindexedLanguages, hardcodedSecrets,
 	} {
 		got, err := fn(s, opt)
 		if err != nil {
@@ -381,6 +382,26 @@ func checkDangling(s *store.Store, _ Options) ([]Finding, error) {
 		}
 		out = append(out, Finding{Check: "dangling_reference", Severity: SevError, File: e.File, Line: e.Line,
 			Detail: e.Kind + ": " + e.Raw})
+	}
+	return out, nil
+}
+
+// hardcodedSecrets reports files where a credential was masked at index time. The
+// mask marker is the durable evidence: the value itself was never stored, so the
+// check keys off the marker in chunks rather than a transient index-run counter.
+func hardcodedSecrets(s *store.Store, _ Options) ([]Finding, error) {
+	rows, err := s.ChunksContainingMarker(redact.Mask)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Finding, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Finding{
+			Check:    "hardcoded_secret",
+			Severity: SevError,
+			File:     r.File,
+			Detail:   fmt.Sprintf("%d masked credential value(s); move them to the environment", r.Count),
+		})
 	}
 	return out, nil
 }

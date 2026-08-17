@@ -8,6 +8,7 @@ import (
 
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/graph"
+	"github.com/prowl-agent/prowl-agent/internal/redact"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -147,5 +148,38 @@ func TestCheckUnindexedLanguages(t *testing.T) {
 	}
 	if got, err := checkUnindexedLanguages(indexed, Options{Root: root}); err != nil || len(got) != 0 {
 		t.Fatalf("indexed go must not warn: got %+v err %v", got, err)
+	}
+}
+
+// Masking protects the index; reporting is what lets a human fix the repository.
+// The finding keys off the mask marker stored in a chunk -- the durable record
+// that a value was removed at index time -- not off a transient index-run
+// counter, so a doctor run over an already-built index still reports it.
+func TestDoctorReportsHardcodedSecrets(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	fid, err := s.UpsertFile(store.File{RelPath: "config.py", Lang: "python", Role: "source", Hash: "h", Size: 1, MTime: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.ReplaceFileGraph(fid, nil, nil, nil, []store.Chunk{
+		{StartLine: 1, EndLine: 1, Text: `STRIPE_TOKEN = "` + redact.Mask + `"`},
+	}))
+
+	rep, err := Run(s, config.Rules{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, f := range rep.Findings {
+		if f.Check == "hardcoded_secret" && f.File == "config.py" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no hardcoded_secret finding in %+v", rep.Findings)
 	}
 }

@@ -178,8 +178,8 @@ func (h *handlers) span(_ context.Context, _ *sdk.CallToolRequest, in spanIn) (*
 	return nil, spansOut{Spans: spans}, nil
 }
 
-func (h *handlers) history(_ context.Context, _ *sdk.CallToolRequest, in historyIn) (*sdk.CallToolResult, historyOut, error) {
-	commits, err := h.q.History(h.root, in.Symbol, in.Limit)
+func (h *handlers) history(ctx context.Context, _ *sdk.CallToolRequest, in historyIn) (*sdk.CallToolResult, historyOut, error) {
+	commits, err := h.q.History(ctx, h.root, in.Symbol, in.Limit)
 	if err != nil {
 		return nil, historyOut{}, err
 	}

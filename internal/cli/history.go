@@ -37,12 +37,12 @@ func newHistoryCmd() *cobra.Command {
 				return err
 			}
 			defer closer()
-			commits, err := q.History(ws.Root, a[0], limit)
+			commits, err := q.History(cmd.Context(), ws.Root, a[0], limit)
 			if err != nil {
 				return err
 			}
 			if len(commits) == 0 {
-				fmt.Fprintf(cmd.ErrOrStderr(), "hint: no commit history for %q; the symbol may be unknown ('prowl-agent find %s'), its file untracked, or this not a git repository\n", a[0], a[0])
+				fmt.Fprintf(cmd.ErrOrStderr(), "hint: no commit history for %q; the symbol may be unknown ('prowl-agent find %s'), its file untracked, this not a git repository, or the history walk timed out on a very large repository\n", a[0], a[0])
 			} else if files := distinctFiles(commits); len(files) > 1 {
 				fmt.Fprintf(cmd.ErrOrStderr(), "note: %q matches %d symbols (%v); history for each is shown, tagged by file\n", a[0], len(files), files)
 			}

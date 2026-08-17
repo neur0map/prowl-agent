@@ -330,3 +330,218 @@ func TestTextSkipsPlaceholderURLPasswords(t *testing.T) {
 		t.Errorf("Text(%q) = %q, %d; want the password masked", real, got, n)
 	}
 }
+
+// Finding 1 (release blocker): the sk- provider branch must not mask kebab-case
+// identifiers or documentation placeholders. A real vendor sk- key is a long
+// random run (OpenAI/DeepSeek sk-+48, Anthropic sk-ant-api03-+95, OpenRouter
+// sk-or-v1-+64), so its body is >=40 chars, or -- for a short OpenAI-compatible
+// key -- a single dash-free run of >=24 chars. A false positive is a
+// human-readable dash-separated identifier or an sk-your-... placeholder, always
+// short and dash-separated. These must survive byte-identical. Includes the
+// reviewer's four verified examples and the thirteen dash-separated (or
+// too-short) fixtures from the Hermes-corpus measurement.
+func TestTextKeepsSkKebabAndPlaceholders(t *testing.T) {
+	survive := []string{
+		// Reviewer's verified false positives (from other repositories / a real corpus).
+		`--sk-color-primary-background`,
+		`sk-fading-circle-container`,
+		`sk-chase-dot-before-animation`,
+		`OPENAI_API_KEY=sk-your-openai-key-here`,
+		// Dash-separated credential-shaped fixtures measured in the Hermes corpus:
+		// short and dash-separated, structurally indistinguishable from an
+		// identifier. Skipped because destroying a real dash-separated identifier
+		// is exactly the failure this blocker is about; the fixtures they mimic
+		// carry no real secret, so the recall loss is on synthetic data only.
+		`sk-ant-` + `api-rotated-away`,
+		`sk-ant-` + `oat-cc-test-token`,
+		`sk-ant-` + `oat-legacy-manual`,
+		`sk-ant-` + `setup-oauth-token`,
+		`sk-ant-` + `real-value-cafebabe`,
+		`sk-live-deadbeefdeadbeef`,
+		`sk-live-example-provider`,
+		`sk-live-neuralwatt-secret`,
+		`sk-future-secret-token-xyz`,
+		`sk-real-upstream-value-deadbeef`,
+		`sk-super-secret-should-not-leak`,
+		`sk-super-secret-value-do-not-log`,
+		`sk-xxxxxxxxxxxxxxxxxxxx`, // dash-free but 20<24: too short to be any real key
+	}
+	for _, in := range survive {
+		got, n := Text(in)
+		if n != 0 || got != in {
+			t.Errorf("Text(%q) = %q, %d; want unchanged, 0", in, got, n)
+		}
+	}
+}
+
+// Finding 1: real vendor sk- keys and dash-free credential runs must still mask.
+// Pins the (?:proj-)? simplification (a real sk-proj- key still masks through the
+// general branch) and the short-provider recall path (an OpenAI-compatible key of
+// ~32 dash-free chars is a single random run and masks via the no-internal-dash
+// clause). The lone dash-free fixture from the corpus's 14 (sk-deadbeef...) masks
+// because a dash-free hex run is key-shaped, not identifier-shaped.
+func TestTextMasksRealSkKeys(t *testing.T) {
+	mask := []struct{ name, in, leak string }{
+		{"openai project (pins proj- redundancy)", `key = "sk-proj-` + `1234567890abcdefGHIJKLMNOPqrstuvwxyz0987654321"`, "sk-proj-" + "1234567890abcdef"},
+		{"openai legacy 48", `sk-` + strings.Repeat("A1b2C3d4", 6), "sk-A1b2C3d4"},
+		{"deepseek 48 hex", `sk-` + strings.Repeat("0123456789abcdef", 3), "sk-0123456789abcdef"},
+		{"anthropic api03", `sk-ant-` + `api03-` + strings.Repeat("aB3", 32), "sk-ant-" + "api03-aB3"},
+		{"short dash-free provider ~33", `sk-` + strings.Repeat("Ab3", 11), "sk-Ab3Ab3"},
+		{"dash-free hex fixture 24", `sk-deadbeefdeadbeefdeadbeef`, "sk-deadbeef"},
+	}
+	for _, c := range mask {
+		got, n := Text(c.in)
+		if n == 0 || strings.Contains(got, c.leak) || !strings.Contains(got, Mask) {
+			t.Errorf("%s: Text(%q) = %q, %d; want masked", c.name, c.in, got, n)
+		}
+	}
+}
+
+// Finding 2 (C4): URL userinfo with an EMPTY username -- the redis:// and amqp://
+// connection-string shape that carries a password and no user -- must be masked,
+// not stored in cleartext. The placeholder skip must keep working with an empty
+// username too.
+func TestTextMasksEmptyUsernameURLCreds(t *testing.T) {
+	mask := []struct{ in, leak string }{
+		{`REDIS_URL=redis://:s3cr3tP4ss@redis.example.com:6379/0`, "s3cr3tP4ss"},
+		{`amqp://:guestpassword@rabbit:5672`, "guestpassword"},
+	}
+	for _, c := range mask {
+		got, n := Text(c.in)
+		if n != 1 || strings.Contains(got, c.leak) || !strings.Contains(got, Mask) {
+			t.Errorf("Text(%q) = %q, %d; want the password masked", c.in, got, n)
+		}
+	}
+	skip := []string{
+		`redis://:password@localhost:6379`,
+		`amqp://:${RABBIT_PASSWORD}@rabbit`,
+	}
+	for _, in := range skip {
+		if got, n := Text(in); got != in || n != 0 {
+			t.Errorf("Text(%q) = %q, %d; want unchanged, 0", in, got, n)
+		}
+	}
+}
+
+// Finding 3: a PEM BEGIN marker named in prose (a comment, README, or error
+// string) must not destroy the rest of the chunk. The marker is mid-line in a
+// comment and no key material follows, so nothing is masked and the function
+// body survives byte-identical.
+func TestTextPEMBeginInProseKeepsSource(t *testing.T) {
+	in := "// The file must start with -----BEGIN RSA PRIVATE KEY-----\nfunc LoadKey(path string) error {\n\treturn readPEM(path)\n}"
+	got, n := Text(in)
+	if n != 0 || got != in {
+		t.Fatalf("Text(%q) = %q, %d; want unchanged, 0", in, got, n)
+	}
+}
+
+// Finding 3 (related): a prose mention of a BEGIN marker followed later in the
+// same chunk by a real key must mask only the real key, not the intervening
+// source. Line-anchoring the BEGIN marker makes pemPaired start at the real key.
+func TestTextPEMProseThenRealKeyKeepsIntervening(t *testing.T) {
+	in := "// keys look like -----BEGIN RSA PRIVATE KEY----- in prose\ncfg := loadConfig()\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234\n-----END RSA PRIVATE KEY-----"
+	got, n := Text(in)
+	if n != 1 {
+		t.Fatalf("masked %d, want 1: %q", n, got)
+	}
+	if !strings.Contains(got, "cfg := loadConfig()") {
+		t.Fatalf("intervening source lost: %q", got)
+	}
+	if !strings.Contains(got, "// keys look like -----BEGIN RSA PRIVATE KEY----- in prose") {
+		t.Fatalf("prose comment lost: %q", got)
+	}
+	if strings.Contains(got, "MIIEowIBAAKCAQEA1234") {
+		t.Fatalf("real key body survived: %q", got)
+	}
+	if !strings.Contains(got, "-----END RSA PRIVATE KEY-----") {
+		t.Fatalf("END marker lost: %q", got)
+	}
+}
+
+// buildChunks tiles src into window-line chunks the way the indexer does for a
+// symbol-less region, so a test key is split exactly as it would be on disk.
+func buildChunks(src string, window int) []string {
+	lines := strings.Split(src, "\n")
+	var out []string
+	for i := 0; i < len(lines); i += window {
+		e := i + window
+		if e > len(lines) {
+			e = len(lines)
+		}
+		out = append(out, strings.Join(lines[i:e], "\n"))
+	}
+	return out
+}
+
+// Finding 4 (C4): a private-key body longer than one chunk window tiles into a
+// middle chunk with no BEGIN/END marker. Text alone stores that chunk verbatim
+// (raw key material at rest); Chunks masks it using whole-file order.
+func TestChunksMasksMarkerFreeMiddleOfLongKey(t *testing.T) {
+	body := strings.TrimRight(strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDabcdef01234567\n", 98), "\n")
+	key := "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----"
+	texts := buildChunks(key, 40) // 100 lines -> chunks 1-40, 41-80, 81-100
+	if len(texts) != 3 {
+		t.Fatalf("expected 3 chunks, got %d", len(texts))
+	}
+	// The middle chunk carries no marker: Text (per-chunk) leaks it.
+	if _, n := Text(texts[1]); n != 0 {
+		t.Fatalf("precondition: middle chunk should be a marker-free leak under Text, masked %d", n)
+	}
+	got, total := Chunks(texts)
+	if total < 3 {
+		t.Fatalf("total masked = %d, want >=3 (head, middle, tail)", total)
+	}
+	for i, c := range got {
+		if strings.Contains(c, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDabcdef01234567") {
+			t.Fatalf("chunk %d still holds raw key material: %q", i, c)
+		}
+	}
+	if !strings.Contains(got[0], "-----BEGIN PRIVATE KEY-----") || !strings.Contains(got[2], "-----END PRIVATE KEY-----") {
+		t.Fatalf("markers lost: %q ... %q", got[0], got[2])
+	}
+	// Idempotent: a second pass over the masked chunks masks nothing more.
+	got2, total2 := Chunks(got)
+	if total2 != 0 {
+		t.Fatalf("second pass masked %d, want 0", total2)
+	}
+	for i := range got {
+		if got2[i] != got[i] {
+			t.Fatalf("not idempotent at chunk %d: %q != %q", i, got2[i], got[i])
+		}
+	}
+}
+
+// Chunks must NOT mask a base64 blob that is not inside a private key: no BEGIN
+// precedes it, so it is legitimate embedded data, not key material.
+func TestChunksLeavesStandaloneBase64Alone(t *testing.T) {
+	blob := strings.TrimRight(strings.Repeat("YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU2Nzg5QUJDREVGR0hJSg==\n", 90), "\n")
+	texts := buildChunks("const asset = `\n"+blob+"\n`", 40)
+	got, total := Chunks(texts)
+	if total != 0 {
+		t.Fatalf("masked %d in a marker-free base64 blob, want 0", total)
+	}
+	if strings.Join(got, "\n") != strings.Join(texts, "\n") {
+		t.Fatalf("standalone base64 was altered")
+	}
+}
+
+// A key that fits in two chunks (head+tail, no marker-free middle) is fully
+// handled by the per-chunk pass; Chunks must not double-count or over-mask.
+func TestChunksTwoChunkKeyUnchangedBehaviour(t *testing.T) {
+	body := strings.TrimRight(strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\n", 50), "\n")
+	key := "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----"
+	texts := buildChunks(key, 40) // ~52 lines -> 2 chunks, both carry a marker
+	if len(texts) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(texts))
+	}
+	got, total := Chunks(texts)
+	if total != 2 {
+		t.Fatalf("total masked = %d, want 2 (head, tail)", total)
+	}
+	if !strings.Contains(got[0], "-----BEGIN PRIVATE KEY-----") || !strings.Contains(got[1], "-----END PRIVATE KEY-----") {
+		t.Fatalf("markers lost")
+	}
+	if strings.Contains(strings.Join(got, "\n"), "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw") {
+		t.Fatalf("key body survived")
+	}
+}

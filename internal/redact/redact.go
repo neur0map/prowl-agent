@@ -9,10 +9,12 @@
 //
 // Masking is destructive and happens before storage: there is no cleartext copy
 // anywhere, so a false positive permanently corrupts indexed source. Precision
-// therefore outranks recall. Text masks exactly three things, each with a shape
-// unambiguous enough to have produced zero false positives across review:
+// therefore outranks recall. Text masks exactly three things, each restricted to
+// a shape that separates a credential from ordinary source (an earlier claim of
+// zero false positives did not survive review; see skVendorKey and hasKeyMaterial):
 // provider credentials (vendor-prefixed keys, AWS key ids, Google keys, JWTs),
-// the password field of a URL userinfo section, and PEM private key bodies.
+// the password field of a URL userinfo section (with or without a username), and
+// PEM private key bodies.
 //
 // A homegrown credential with no vendor prefix -- a random-looking value assigned
 // to a secret-named variable -- is deliberately NOT masked here. A generic entropy
@@ -31,18 +33,49 @@ import (
 const Mask = "[redacted]"
 
 // provider matches credentials whose shape is unambiguous: a vendor prefix, an
-// AWS key id, a Google key, or a JWT. These need no entropy check.
+// AWS key id, a Google key, or a JWT. Each branch needs no entropy check. The
+// sk- branch is the exception: it collides with kebab identifiers (CSS custom
+// properties, SpinKit spinner classes) and sk-your-... doc placeholders, so its
+// matches are re-checked by skVendorKey in Text before masking.
 var provider = regexp.MustCompile(
 	`(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}` +
-		`|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}` +
+		`|\bsk-[A-Za-z0-9_-]{24,}` +
 		`|gh[pousr]_[A-Za-z0-9]{20,}` +
 		`|xox[abposr]-[A-Za-z0-9-]{10,}` +
 		`|AKIA[0-9A-Z]{16}` +
 		`|AIza[0-9A-Za-z_-]{35}` +
 		`|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)
 
-// urlCreds matches the password field of a URL userinfo section.
-var urlCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)([^\s@/]{4,})(@)`)
+// skVendorKey reports whether body (the text after an sk- prefix the provider
+// regex matched) has the shape of a real vendor key rather than a kebab
+// identifier or a documentation placeholder. Every real sk- key is a long random
+// run: OpenAI legacy and DeepSeek are sk-+48, sk-proj- ~160, Anthropic
+// sk-ant-api03- ~105, OpenRouter sk-or-v1- ~70 -- all >=40 body characters. The
+// shortest keys some OpenAI-compatible providers issue are a single dash-free run
+// of roughly 32 characters. A false positive is the opposite shape: a
+// human-readable, dash-separated identifier or an sk-your-... placeholder, whose
+// segments are short words joined by dashes. So a match is a key when its body is
+// long (>=40) or a dash-free run of >=24, and never when it is a short
+// dash-separated identifier. This is a STRUCTURAL test -- length and dash
+// separation -- not the character-class/entropy heuristic deleted under R13,
+// which tried to score randomness and masked real camelCase. The one residual it
+// does not guard: a hypothetical 40+ char all-lowercase-and-dashes identifier
+// beginning sk- would still mask; none exists in the corpus and it is far outside
+// observed identifier lengths, so it is a documented boundary, not a live risk.
+func skVendorKey(body string) bool {
+	if len(body) >= 40 {
+		return true
+	}
+	return len(body) >= 24 && !strings.Contains(body, "-")
+}
+
+// urlCreds matches the password field of a URL userinfo section. The username is
+// optional ([^\s:/@]*): redis:// and amqp:// connection strings conventionally
+// carry a password and no user (redis://:pass@host), and that cleartext must not
+// reach the store. Allowing an empty username cannot widen the false-positive
+// surface: it only additionally matches text where ":" immediately follows "://",
+// which is the empty-userinfo form itself.
+var urlCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]*:)([^\s@/]{4,})(@)`)
 
 // placeholderPassword reports whether the userinfo password p is a documentation
 // placeholder rather than a real credential, so URL examples in prose --
@@ -92,16 +125,34 @@ func placeholderPassword(p string) bool {
 // sits wholly within one line and no chunk cut can truncate it.
 const pemBodyTemper = `(?:[^-]|-{1,4}[^-])*-{0,4}`
 
-// pemPaired matches a complete private key block: both markers with a body
-// between them. Only the body is replaced; both markers are kept.
-var pemPaired = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
+// pemBodyLine matches a single line that is entirely base64 characters, the shape
+// of PEM key material. A comment, README example, or error string that merely
+// names a BEGIN/END marker has no such line (prose and code lines carry spaces or
+// punctuation), which is what lets hasKeyMaterial tell a real key body apart from
+// a marker mentioned in prose.
+var pemBodyLine = regexp.MustCompile(`(?m)^[A-Za-z0-9+/]{4,}={0,2}\r?$`)
 
-// pemBegin matches the head half of a key split across chunks: a BEGIN marker
-// whose bounded body runs to end of input. The trailing `-*` lets the body absorb
-// a dash run left at a chunk boundary (a cut inside a marker's opening dashes),
-// which stays safe because a live END marker's five dashes are followed by `END `,
-// so `-*` before `$` cannot consume across one. The body is masked; marker kept.
-var pemBegin = regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemBodyTemper + `-*)$`)
+// hasKeyMaterial reports whether body carries at least one base64-shaped line.
+// Requiring it before masking a PEM body removes the false positive where a bare
+// BEGIN marker named in prose would otherwise destroy the rest of the chunk,
+// while keeping the recall that matters -- a real key body always has such lines.
+func hasKeyMaterial(body string) bool {
+	return pemBodyLine.MatchString(body)
+}
+
+// pemPaired matches a complete private key block: both markers with a body
+// between them. The BEGIN marker is anchored to a line start ((^|\n)) so a marker
+// named mid-line in prose cannot begin the match ahead of a real key. Only the
+// body is replaced; both markers (and the line-start prefix) are kept.
+var pemPaired = regexp.MustCompile(`(?s)(^|\n)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
+
+// pemBegin matches the head half of a key split across chunks: a line-anchored
+// BEGIN marker whose bounded body runs to end of input. The trailing `-*` lets
+// the body absorb a dash run left at a chunk boundary (a cut inside a marker's
+// opening dashes), which stays safe because a live END marker's five dashes are
+// followed by `END `, so `-*` before `$` cannot consume across one. The body is
+// masked; the BEGIN marker (and the line-start prefix) is kept.
+var pemBegin = regexp.MustCompile(`(^|\n)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemBodyTemper + `-*)$`)
 
 // pemEnd matches the tail half of a split key: a body from start of input that
 // reaches an END marker without crossing a BEGIN marker. The body is masked; the
@@ -139,36 +190,48 @@ func Text(s string) (string, int) {
 	}
 	n := 0
 
-	// PEM keys: all three patterns run unconditionally. The unpaired bodies are
-	// bounded so they cannot cross a marker, so a chunk holding a complete key
-	// plus another key's split half redacts both without one destroying the other.
+	// PEM keys: all three patterns run in sequence. Each masks only a body that
+	// carries base64 key material (hasKeyMaterial), so a BEGIN/END marker named in
+	// prose does not destroy the surrounding source. pemPaired and pemBegin also
+	// anchor the BEGIN marker to a line start, so a prose mention cannot begin a
+	// match ahead of a real key. The unpaired bodies stay bounded so they cannot
+	// cross a marker: a chunk holding a complete key plus another key's split half
+	// redacts both without one destroying the other.
 	s = pemPaired.ReplaceAllStringFunc(s, func(m string) string {
 		g := pemPaired.FindStringSubmatch(m)
-		// An empty or already-masked body has nothing to rewrite.
-		if g[2] == "" || strings.Contains(g[2], Mask) {
+		// g: 1 line-start prefix, 2 BEGIN, 3 body, 4 END. Skip an empty or
+		// already-masked body, and a marker named in prose (no key material).
+		if g[3] == "" || strings.Contains(g[3], Mask) || !hasKeyMaterial(g[3]) {
 			return m
 		}
 		n++
-		return g[1] + "\n" + Mask + "\n" + g[3]
+		return g[1] + g[2] + "\n" + Mask + "\n" + g[4]
 	})
 	s = pemBegin.ReplaceAllStringFunc(s, func(m string) string {
 		g := pemBegin.FindStringSubmatch(m)
-		if g[2] == "" || strings.Contains(g[2], Mask) {
+		// g: 1 line-start prefix, 2 BEGIN, 3 body.
+		if g[3] == "" || strings.Contains(g[3], Mask) || !hasKeyMaterial(g[3]) {
 			return m
 		}
 		n++
-		return g[1] + "\n" + Mask
+		return g[1] + g[2] + "\n" + Mask
 	})
 	s = pemEnd.ReplaceAllStringFunc(s, func(m string) string {
 		g := pemEnd.FindStringSubmatch(m)
-		if g[1] == "" || strings.Contains(g[1], Mask) {
+		if g[1] == "" || strings.Contains(g[1], Mask) || !hasKeyMaterial(g[1]) {
 			return m
 		}
 		n++
 		return Mask + "\n" + g[2]
 	})
 
-	s = provider.ReplaceAllStringFunc(s, func(string) string {
+	s = provider.ReplaceAllStringFunc(s, func(m string) string {
+		// The sk- branch collides with kebab identifiers and sk-your-... doc
+		// placeholders; skip a match that is not key-shaped (see skVendorKey).
+		// Every other branch has an unambiguous prefix and always masks.
+		if strings.HasPrefix(m, "sk-") && !skVendorKey(m[len("sk-"):]) {
+			return m
+		}
 		n++
 		return Mask
 	})
@@ -181,4 +244,52 @@ func Text(s string) (string, int) {
 		return g[1] + Mask + g[3]
 	})
 	return s, n
+}
+
+// pemMarker matches either PEM private-key marker. Chunks uses it to read the
+// marker structure of an already body-masked chunk (Text keeps the markers).
+var pemMarker = regexp.MustCompile(`-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----`)
+
+// endsInsideOpenKey reports whether s ends inside an unterminated private key:
+// its last private-key marker is a BEGIN with no following END, so whatever
+// chunk comes next begins as raw key body.
+func endsInsideOpenKey(s string) bool {
+	markers := pemMarker.FindAllString(s, -1)
+	if len(markers) == 0 {
+		return false
+	}
+	return strings.HasPrefix(markers[len(markers)-1], "-----BEGIN")
+}
+
+// Chunks masks a file's chunk texts as an ordered set and returns the masked
+// texts and the total values masked. It runs Text on each chunk, then applies a
+// whole-file containment that Text cannot: a private-key body longer than one
+// chunk window tiles into a middle chunk carrying no BEGIN/END marker, so Text's
+// per-chunk trigger scan skips it and it would be stored verbatim as raw key
+// material (C4). Walking the chunks in order, a marker-free chunk seen while a
+// key opened by an earlier BEGIN has not been closed by an END is that middle
+// body, and is masked wholesale. A base64 blob that is not inside a key (no
+// BEGIN precedes it) is never masked, so legitimate embedded base64 survives.
+// The caller passes chunk texts in file order; masking the middle body is part
+// of the chunk pass, so it participates in the persisted count like any other.
+func Chunks(texts []string) ([]string, int) {
+	out := make([]string, len(texts))
+	total := 0
+	inKey := false
+	for i, t := range texts {
+		masked, n := Text(t)
+		total += n
+		switch {
+		case pemMarker.MatchString(masked):
+			// A chunk carrying a marker delimits the key itself; Text already
+			// handled its body. Its last marker sets whether the key stays open.
+			inKey = endsInsideOpenKey(masked)
+		case inKey && strings.TrimSpace(masked) != "" && !strings.Contains(masked, Mask):
+			// Marker-free chunk inside an open key: raw body, mask wholesale.
+			masked = Mask
+			total++
+		}
+		out[i] = masked
+	}
+	return out, total
 }

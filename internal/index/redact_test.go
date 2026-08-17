@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/redact"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
@@ -62,5 +63,95 @@ func TestIndexNeverStoresSecrets(t *testing.T) {
 	}
 	if !strings.Contains(chunk.Text, "STRIPE_TOKEN") {
 		t.Fatalf("identifier destroyed along with the value: %q", chunk.Text)
+	}
+}
+
+// R28: the same credential is masked in a chunk, a symbol signature and a
+// resource value, but the reported count is the chunk pass alone -- one masked
+// value is one, not three. Masking must still happen at every sink (C4).
+func TestMapResultCountsChunkPassOnly(t *testing.T) {
+	secret := "sk_live_" + "51H8xQ2eZvKYlo2CabcdefghijklmnopQRST"
+	line := "api_key = " + secret
+	r := extract.Result{
+		Symbols:   []extract.Symbol{{Name: "api_key", Kind: "setting", Signature: line, StartLine: 1, EndLine: 1}},
+		Resources: []extract.Resource{{Kind: "var", Name: "api_key", Value: secret, Line: 1}},
+		Chunks:    []extract.Chunk{{StartLine: 1, EndLine: 1, Text: line}},
+	}
+	syms, ress, _, chunks, n := mapResult(r)
+	if n != 1 {
+		t.Fatalf("redacted count = %d, want 1 (chunk pass only)", n)
+	}
+	if strings.Contains(chunks[0].Text, "sk_live") {
+		t.Errorf("chunk not masked: %q", chunks[0].Text)
+	}
+	if strings.Contains(syms[0].Signature, "sk_live") {
+		t.Errorf("signature not masked (C4 regression): %q", syms[0].Signature)
+	}
+	if strings.Contains(ress[0].Value, "sk_live") {
+		t.Errorf("resource value not masked (C4 regression): %q", ress[0].Value)
+	}
+}
+
+// Two distinct credentials on two lines are two masked values.
+func TestMapResultCountsDistinctCredentials(t *testing.T) {
+	text := "api_key = sk_live_" + "51H8xQ2eZvKYlo2CabcdefghijklmnopQRST\naws = AKIA" + "IOSFODNN7EXAMPLE"
+	_, _, _, _, n := mapResult(extract.Result{Chunks: []extract.Chunk{{StartLine: 1, EndLine: 2, Text: text}}})
+	if n != 2 {
+		t.Fatalf("redacted count = %d, want 2", n)
+	}
+}
+
+// End-to-end through Index: files.redacted counts each credential once, tracks
+// reindexing, and returns to zero when the credential is removed from source. A
+// generic .conf setting masks the value in both a signature and a chunk, so the
+// old all-sinks sum would report 2 where this must report 1.
+func TestFilesRedactedCountsCredentialsOncePerFile(t *testing.T) {
+	secret := "sk_live_" + "51H8xQ2eZvKYlo2CabcdefghijklmnopQRST"
+	root := t.TempDir()
+	conf := filepath.Join(root, "app.conf")
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	count := func() int {
+		rows, err := s.FilesWithRedactions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if r.File == "app.conf" {
+				return r.Count
+			}
+		}
+		return 0
+	}
+	reindex := func(body string) {
+		if err := os.WriteFile(conf, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Index(s, root, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reindex("title = my service\napi_key = " + secret + "\n")
+	if got := count(); got != 1 {
+		t.Fatalf("one credential: files.redacted = %d, want 1", got)
+	}
+	if _, err := Index(s, root, nil); err != nil { // reindex unchanged tree
+		t.Fatal(err)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("reindex unchanged: files.redacted = %d, want 1", got)
+	}
+	reindex("api_key = " + secret + "\naws = AKIA" + "IOSFODNN7EXAMPLE\n")
+	if got := count(); got != 2 {
+		t.Fatalf("two credentials: files.redacted = %d, want 2", got)
+	}
+	reindex("api_key = set-me-in-the-environment\naws = none\n")
+	if got := count(); got != 0 {
+		t.Fatalf("after removing credentials: files.redacted = %d, want 0", got)
 	}
 }

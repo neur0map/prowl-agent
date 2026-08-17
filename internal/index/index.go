@@ -34,10 +34,9 @@ type Summary struct {
 	Deleted int // files removed from the index
 	Symbols int // symbols in the index (total)
 	Edges   int // edges in the index (total)
-	// Redacted counts mask operations across all sinks (a secret present in a
-	// chunk, a signature and a resource is counted once per sink), so it is
-	// internal accounting, not a distinct-secret total. Nothing user-facing reads
-	// it; doctor reports secrets from the persisted files.redacted column instead.
+	// Redacted is the number of secret values masked this run, counted from the
+	// chunk pass so each masked value is counted once (masking still runs at all
+	// sinks for C4). doctor reports secrets per file from the files.redacted column.
 	Redacted int
 }
 
@@ -487,31 +486,30 @@ func indexVersion() string {
 }
 
 // mapResult converts an extract.Result into store rows, masking every
-// secret-shaped value before it becomes a row. Masking here, not on output, is
-// what keeps chunks.text, symbol signatures, resource values, and edge targets
-// -- every raw-source field the store persists -- free of committed credentials
-// (C4). It returns the store rows and how many values were masked, for
-// Summary.Redacted.
+// secret-shaped value before it becomes a row. Masking runs at every sink --
+// chunk text, symbol signatures, resource values, and edge targets -- so no
+// raw-source field reaches the store (C4). The returned count, however, is the
+// chunk pass alone: chunkStructured tiles every non-blank line, so a credential
+// (necessarily non-blank) appears in exactly one chunk, while signatures,
+// resource values and edge targets are derived views of that same text. Counting
+// the derived sinks too would report one credential as two or three.
 func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk, int) {
-	redacted := 0
 	syms := make([]store.Symbol, len(r.Symbols))
 	for i, s := range r.Symbols {
-		sig, n := redact.Text(s.Signature)
-		redacted += n
+		sig, _ := redact.Text(s.Signature)
 		syms[i] = store.Symbol{Name: s.Name, Kind: s.Kind, Signature: sig, StartLine: s.StartLine, EndLine: s.EndLine, ParentName: s.Parent, Complexity: s.Complexity}
 	}
 	ress := make([]store.Resource, len(r.Resources))
 	for i, rs := range r.Resources {
-		val, n := redact.Text(rs.Value)
-		redacted += n
+		val, _ := redact.Text(rs.Value)
 		ress[i] = store.Resource{Kind: rs.Kind, Name: rs.Name, Value: val, Line: rs.Line}
 	}
 	edges := make([]store.RawEdge, len(r.Edges))
 	for i, e := range r.Edges {
-		raw, n := redact.Text(e.Raw)
-		redacted += n
+		raw, _ := redact.Text(e.Raw)
 		edges[i] = store.RawEdge{SrcName: e.SrcName, Kind: e.Kind, Raw: raw, Line: e.Line}
 	}
+	redacted := 0
 	chunks := make([]store.Chunk, len(r.Chunks))
 	for i, c := range r.Chunks {
 		text, n := redact.Text(c.Text)

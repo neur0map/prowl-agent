@@ -59,6 +59,11 @@ type Options struct {
 	ChurnCommits    int
 	Ignore          []string
 	ExcludePaths    []string
+	// IncludeExcluded reports findings under lifecycle paths (ExcludePaths)
+	// instead of filtering them, so the full set -- including masked credentials
+	// in test fixtures -- is reachable. The default view rolls those secrets into
+	// a single info finding; this flag surfaces every one per file.
+	IncludeExcluded bool
 }
 
 func (o Options) withDefaults() Options {
@@ -115,7 +120,13 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	}
 	f = append(f, fb...)
 	f = append(f, checkChurn(s, opt)...) // best-effort; needs git
-	f = filterExcluded(f, opt.ExcludePaths)
+	if !opt.IncludeExcluded {
+		kept, excluded := filterExcluded(f, opt.ExcludePaths)
+		f = kept
+		if roll := excludedSecretRollup(excluded, opt.ExcludePaths); roll != nil {
+			f = append(f, *roll)
+		}
+	}
 
 	sort.SliceStable(f, func(i, j int) bool {
 		if f[i].Check != f[j].Check {
@@ -145,27 +156,71 @@ func Run(s *store.Store, rules config.Rules, opt Options) (Report, error) {
 	return Report{Findings: f, Summary: summary, Score: score}, nil
 }
 
-// filterExcluded drops findings whose file lives under a lifecycle directory
-// (migrations, installers, CI, vendor, hooks), which are not part of the live
-// graph and otherwise dominate the report with non-actionable noise.
-func filterExcluded(findings []Finding, prefixes []string) []Finding {
+// filterExcluded partitions findings by whether their file lives under a
+// lifecycle directory (migrations, installers, CI, vendor, hooks, tests): kept
+// are the live-graph findings, excluded are those under a prefix. Most excluded
+// findings are dropped as non-actionable noise, but the caller rescues masked
+// credentials from the excluded set (see excludedSecretRollup), because a leaked
+// key is actionable wherever it lives -- test fixtures included.
+func filterExcluded(findings []Finding, prefixes []string) (kept, excluded []Finding) {
 	if len(prefixes) == 0 {
-		return findings
+		return findings, nil
 	}
-	out := findings[:0]
 	for _, fd := range findings {
-		skip := false
+		under := false
 		for _, p := range prefixes {
 			if fd.File != "" && strings.HasPrefix(fd.File, p) {
-				skip = true
+				under = true
 				break
 			}
 		}
-		if !skip {
-			out = append(out, fd)
+		if under {
+			excluded = append(excluded, fd)
+		} else {
+			kept = append(kept, fd)
 		}
 	}
-	return out
+	return kept, excluded
+}
+
+// excludedSecretRollup summarises hardcoded_secret findings dropped by path
+// exclusion into one info-severity finding, so a credential masked under a
+// lifecycle path is never silently lost from the default report. It is info, not
+// warn: the value is already neutralised in the index and the paths were
+// excluded on purpose, so this must not trip `doctor --fail-on warn` on a repo
+// whose only credential-shaped files are safe test fixtures. The per-file list
+// stays reachable via `doctor --include-excluded`. Returns nil when none were
+// excluded.
+func excludedSecretRollup(excluded []Finding, prefixes []string) *Finding {
+	files := 0
+	matched := map[string]bool{}
+	for _, fd := range excluded {
+		if fd.Check != "hardcoded_secret" {
+			continue
+		}
+		files++
+		for _, p := range prefixes {
+			if strings.HasPrefix(fd.File, p) {
+				matched[p] = true
+				break
+			}
+		}
+	}
+	if files == 0 {
+		return nil
+	}
+	dirs := make([]string, 0, len(matched))
+	for p := range matched {
+		dirs = append(dirs, p)
+	}
+	sort.Strings(dirs)
+	return &Finding{
+		Check:    "hardcoded_secret_excluded",
+		Severity: SevInfo,
+		Detail: fmt.Sprintf(
+			"%d additional file(s) under excluded paths (%s) also had credentials masked; run `prowl doctor --include-excluded` to list them",
+			files, strings.Join(dirs, ", ")),
+	}
 }
 
 func checkCycles(s *store.Store, _ Options) ([]Finding, error) {

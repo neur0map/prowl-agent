@@ -21,7 +21,7 @@ import (
 const cRedHex = "#f38ba8"
 
 func newDoctorCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, includeExcluded bool
 	var profile, format, baseline, failOn string
 	c := &cobra.Command{
 		Use:   "doctor",
@@ -47,7 +47,7 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rep, err := doctor.Run(project.Store, rules, doctor.Options{Root: project.Workspace.Root, Ignore: project.Config.Ignore, Profile: profile})
+			rep, err := doctor.Run(project.Store, rules, doctor.Options{Root: project.Workspace.Root, Ignore: project.Config.Ignore, Profile: profile, IncludeExcluded: includeExcluded})
 			if err != nil {
 				return err
 			}
@@ -111,6 +111,7 @@ func newDoctorCmd() *cobra.Command {
 	c.Flags().StringVar(&baseline, "baseline", "", "prior --format json report; report only findings new since it")
 	c.Flags().StringVar(&failOn, "fail-on", "none", "exit non-zero when findings reach this severity: none, warn, or error")
 	c.Flags().StringVar(&profile, "profile", doctor.ProfileGeneral, "diagnostic profile: general or rice")
+	c.Flags().BoolVar(&includeExcluded, "include-excluded", false, "report findings under excluded lifecycle paths (tests/, vendor/, ...) instead of filtering them, including every file with a masked credential")
 	return c
 }
 

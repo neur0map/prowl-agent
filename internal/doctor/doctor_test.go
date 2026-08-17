@@ -216,3 +216,73 @@ func TestDoctorIgnoresMaskStringInSource(t *testing.T) {
 		}
 	}
 }
+
+// A credential masked in a file under an excluded lifecycle path (e.g. tests/)
+// must stay reachable. filterExcluded drops non-actionable graph noise under
+// those paths, but a leaked key is actionable wherever it lives -- test fixtures
+// are one of the most common places real credentials get committed. So doctor
+// rolls excluded secrets into a discoverable info summary by default, and
+// --include-excluded surfaces the per-file finding. The credential must never
+// vanish silently, which is exactly what plain path exclusion did.
+func TestDoctorSurfacesSecretsUnderExcludedPaths(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.UpsertFile(store.File{RelPath: "tests/fixtures/creds.py", Lang: "python", Role: "source", Hash: "h", Size: 1, MTime: 1, Redacted: 3}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default view: the per-file finding is filtered out of the live graph, but a
+	// rollup info finding records that a masked credential lives under an excluded
+	// path (info, so it does not trip --fail-on warn on a repo of safe fixtures).
+	rep, err := Run(s, config.Rules{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Check == "hardcoded_secret" && f.File == "tests/fixtures/creds.py" {
+			t.Fatalf("excluded-path secret should not be a per-file finding by default: %+v", f)
+		}
+	}
+	var rollup *Finding
+	for i := range rep.Findings {
+		if rep.Findings[i].Check == "hardcoded_secret_excluded" {
+			rollup = &rep.Findings[i]
+		}
+	}
+	if rollup == nil {
+		t.Fatalf("no rollup finding for excluded-path secret in %+v", rep.Findings)
+	}
+	if rollup.Severity != SevInfo {
+		t.Errorf("rollup severity = %q, want %q (must not trip --fail-on warn)", rollup.Severity, SevInfo)
+	}
+	if !strings.Contains(rollup.Detail, "1") || !strings.Contains(rollup.Detail, "include-excluded") {
+		t.Errorf("rollup detail %q should report the count and how to list the files", rollup.Detail)
+	}
+
+	// Unfiltered view: --include-excluded surfaces the per-file finding so the
+	// full list of redacted files is reachable, and drops the now-redundant rollup.
+	all, err := Run(s, config.Rules{}, Options{IncludeExcluded: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var perFile *Finding
+	for i := range all.Findings {
+		if all.Findings[i].Check == "hardcoded_secret" && all.Findings[i].File == "tests/fixtures/creds.py" {
+			perFile = &all.Findings[i]
+		}
+	}
+	if perFile == nil {
+		t.Fatalf("--include-excluded must surface the per-file secret; findings=%+v", all.Findings)
+	}
+	if perFile.Severity != SevWarn {
+		t.Errorf("per-file severity = %q, want %q", perFile.Severity, SevWarn)
+	}
+	for _, f := range all.Findings {
+		if f.Check == "hardcoded_secret_excluded" {
+			t.Errorf("--include-excluded should not emit the rollup: %+v", f)
+		}
+	}
+}

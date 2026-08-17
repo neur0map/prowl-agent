@@ -805,11 +805,9 @@ func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHi
 		if err != nil {
 			return nil, err
 		}
-		// Doc matching is lexical, not model-driven, so it must reach this
-		// no-inferencer tier too. The tier-ordered lexical list leads; the doc
-		// list is additive and passed last, so it adds recall without demoting a
-		// lexical hit (see fuseRRF, constraint C5).
-		return fuseRRF(DefaultLimit, weightedHits{fts, 1}, weightedHits{q.docChunks(text, DefaultLimit), docFuseWeight}), nil
+		// With AI disabled the lexical ranking is the base; the doc signal still
+		// runs, as a recall appendix that never reorders it (see mergeDocRecall).
+		return mergeDocRecall(fts, q.docChunks(text, DefaultLimit), DefaultLimit), nil
 	}
 	return q.hybrid(ctx, text, DefaultLimit)
 }
@@ -1001,10 +999,10 @@ func isDocOrLocalePath(p string) bool {
 	return false
 }
 
-// hybrid embeds the query, runs vector KNN, and fuses vector + lexical + doc
-// signals by RRF. If embedding fails it fuses the lexical and doc signals alone.
-// The doc list is always passed last so it can only add recall, never demote a
-// vector or lexical hit (see fuseRRF, constraint C5).
+// hybrid embeds the query, runs vector KNN, and fuses the vector and lexical
+// signals by RRF (falling back to lexical alone if embedding fails); the doc
+// signal is then applied as a recall appendix that cannot reorder the fused base
+// (see mergeDocRecall, constraint C5).
 func (q *Querier) hybrid(ctx context.Context, text string, k int) ([]store.ChunkHit, error) {
 	fts, err := q.searchChunksRanked(text, k)
 	if err != nil {
@@ -1013,13 +1011,13 @@ func (q *Querier) hybrid(ctx context.Context, text string, k int) ([]store.Chunk
 	docs := q.docChunks(text, k)
 	vecs, err := q.inf.Embed(ctx, []string{text})
 	if err != nil || len(vecs) == 0 {
-		return fuseRRF(k, weightedHits{fts, 1}, weightedHits{docs, docFuseWeight}), nil
+		return mergeDocRecall(fts, docs, k), nil
 	}
 	vhits, err := q.s.VectorSearch(vecs[0], k)
 	if err != nil {
-		return fuseRRF(k, weightedHits{fts, 1}, weightedHits{docs, docFuseWeight}), nil
+		return mergeDocRecall(fts, docs, k), nil
 	}
-	return fuseRRF(k, weightedHits{vhits, 1}, weightedHits{fts, 1}, weightedHits{docs, docFuseWeight}), nil
+	return mergeDocRecall(fuseRRF(k, vhits, fts), docs, k), nil
 }
 
 // SmartResult is the assist-augmented search result.

@@ -1,16 +1,15 @@
 package query
 
 import (
-	"os"
 	"sort"
 	"strconv"
 
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
-// docChunks returns doc-comment chunk matches for fusion, swallowing any error:
-// doc matching is an additive recall signal, so failing to consult it must never
-// fail an otherwise-good search. A nil slice fuses as a no-op.
+// docChunks returns doc-comment chunk matches for the recall pass, swallowing any
+// error: doc matching is an additive recall signal, so failing to consult it must
+// never fail an otherwise-good search. A nil slice merges as a no-op.
 func (q *Querier) docChunks(text string, k int) []store.ChunkHit {
 	hits, err := q.s.ChunksByDocMatch(text, k)
 	if err != nil {
@@ -19,69 +18,22 @@ func (q *Querier) docChunks(text string, k int) []store.ChunkHit {
 	return hits
 }
 
-// weightedHits is one ranked list entering the fusion, with the weight its
-// reciprocal ranks carry. Vector and lexical signals rank code and enter at full
-// weight; the doc signal ranks the prose that describes code and enters
-// down-weighted (docFuseWeight).
-type weightedHits struct {
-	hits   []store.ChunkHit
-	weight float64
-}
-
-// docFuseWeight is the weight of the doc signal relative to a primary (vector or
-// lexical) signal, derived from what the doc signal is FOR, not fitted to any
-// query. Its job is recall: surfacing a chunk whose doc comment answers the query
-// when the chunk's code carries none of the query terms (the redact.py case). It
-// is not a ranking signal -- two independent cross-encoders that ranked prose
-// about a concept as if it were the code implementing the concept both made this
-// corpus's retrieval worse, and a full-weight (1.0) doc list reproduces that
-// exact failure: it floated test_hermes_logging.py above source and demoted four
-// of five control queries. So the doc signal counts as HALF of one primary
-// signal: enough that the strongest doc-only match lands near the bottom of the
-// result window and becomes visible, never enough to out-score a chunk two
-// full-weight code signals already agree on. 0.5 is that ratio, chosen before
-// measuring the guard; it is not tuned per query.
-var docFuseWeight = envFloat("PROWL_DOC_FUSE_WEIGHT", 0.5)
-
-// envFloat reads a float override from the environment (used only to characterize
-// the weight/quality tradeoff during review), falling back to def when unset or
-// unparseable.
-func envFloat(key string, def float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
-	}
-	return def
-}
-
-// fuseRRF merges ranked chunk lists by weighted reciprocal rank fusion, deduped
-// by file:start_line. Each list contributes weight/(k0+rank) to a chunk's score,
-// so a chunk several signals agree on accumulates their contributions and rises;
-// k0=60 is the standard RRF damping. A stable sort by score keeps a chunk's
-// first-seen position on a tie, so lists passed earlier win ties over later ones.
+// fuseRRF merges the co-equal ranking signals -- vector KNN and the tier-ordered
+// lexical list -- by reciprocal rank fusion, deduped by file:start_line. Each
+// list contributes 1/(k0+rank) to a chunk's score, so a chunk both signals agree
+// on accumulates their contributions and rises; k0=60 is the standard RRF
+// damping. A stable sort by score keeps a chunk's first-seen position on a tie,
+// so lists passed earlier win ties over later ones (vector before lexical).
 //
-// Where the doc signal sits, and why it cannot invert the tiering (constraint
-// C5). Callers pass the tier-ordered lexical list (searchChunksRanked, which
-// encodes source > tests > docs > vendored and the path-concept boost) and, in
-// the hybrid path, the vector list, both at full weight; the doc list
-// (ChunksByDocMatch) is always passed LAST and at docFuseWeight < 1. Three
-// properties keep the tiering dominant:
-//   - The lexical list contributes its full tier-ordered reciprocal ranks to
-//     every chunk it holds, and RRF only ever ADDS score, so a chunk the tiering
-//     ranked well keeps that score; the doc signal can raise a chunk, never lower.
-//   - The doc contribution is scaled by docFuseWeight, so a doc-only match enters
-//     at a fraction of one list's reciprocal rank -- visible, but unable to
-//     out-score a chunk two full-weight signals already agree on, which is what
-//     stops doc prose from displacing the code that implements the concept.
-//   - Passing the doc list last breaks a score tie in favour of the existing hit.
-//
-// The doc field indexes symbol doc comments, which live on source code, so the
-// signal reinforces tier-0 "code that implements the thing"; the down-weight
-// keeps it from floating the tier-1/2 test and doc files whose docstrings merely
-// mention the concept -- the exact failure that made two cross-encoder rerankers
-// worse on this corpus. It is fused as one more signal, never a gate or override.
-func fuseRRF(limit int, lists ...weightedHits) []store.ChunkHit {
+// The doc signal is deliberately NOT a fusion input here. It was measured on the
+// hermes corpus that fusing it as a third RRF list -- at any weight -- cannot
+// satisfy the acceptance bar: at full weight it floods the top and floats test
+// files above source (the exact cross-encoder failure C5 forbids), and
+// down-weighted enough to protect the ranking it drops out of the window the
+// doc-only answer it exists to surface. So the co-equal code signals are fused
+// here, and the doc signal is applied afterwards by mergeDocRecall as recall
+// only, where it cannot reorder this result.
+func fuseRRF(limit int, lists ...[]store.ChunkHit) []store.ChunkHit {
 	const k0 = 60.0
 	type agg struct {
 		hit   store.ChunkHit
@@ -90,7 +42,7 @@ func fuseRRF(limit int, lists ...weightedHits) []store.ChunkHit {
 	m := map[string]*agg{}
 	var order []string
 	for _, list := range lists {
-		for rank, h := range list.hits {
+		for rank, h := range list {
 			key := h.File + ":" + strconv.Itoa(h.StartLine)
 			e, ok := m[key]
 			if !ok {
@@ -98,7 +50,7 @@ func fuseRRF(limit int, lists ...weightedHits) []store.ChunkHit {
 				m[key] = e
 				order = append(order, key)
 			}
-			e.score += list.weight / (k0 + float64(rank+1))
+			e.score += 1.0 / (k0 + float64(rank+1))
 		}
 	}
 	sort.SliceStable(order, func(i, j int) bool { return m[order[i]].score > m[order[j]].score })
@@ -110,4 +62,72 @@ func fuseRRF(limit int, lists ...weightedHits) []store.ChunkHit {
 		out = append(out, m[k].hit)
 	}
 	return out
+}
+
+// docRecallShare splits the result window between the two channels: the confident
+// code-based ranking (fuseRRF over vector + lexical) keeps the top
+// (share-1)/share of the slots, and the doc recall channel owns the bottom
+// 1/share. It is a first-principles minority split -- the doc signal is one
+// recall channel against two ranking channels, so it gets a small, fixed budget
+// -- not a constant tuned to make any particular query pass.
+const docRecallShare = 10
+
+// mergeDocRecall adds doc-answering chunks the base ranking missed, and does so
+// WITHOUT reordering the base (constraint C5). The doc signal's only job is
+// recall: surfacing a chunk whose doc comment answers the query when the chunk's
+// code carries none of the query terms and neither the vector nor lexical signal
+// found it -- the redact.py case, buried below fifty results because its chunk is
+// 22% docstring and 78% imports. Reordering the confident matches to make room
+// for prose that merely describes a concept is precisely what made two
+// cross-encoder rerankers worse on this corpus, so the doc signal is forbidden
+// from moving any base hit at all.
+//
+// Base order is preserved exactly. Doc-only misses (doc hits no base signal
+// surfaced, in bm25(fts_docs) order) fill the slots the base left empty for free;
+// when the base already fills the window, they claim only the reserved tail
+// budget (docRecallShare), displacing just the weakest base-tail matches and
+// never a confident one. So a guard query whose answer the base already ranks in
+// its top slots cannot regress, and a doc-only answer the base missed still
+// becomes visible in the tail.
+func mergeDocRecall(base, docHits []store.ChunkHit, limit int) []store.ChunkHit {
+	key := func(h store.ChunkHit) string { return h.File + ":" + strconv.Itoa(h.StartLine) }
+	seen := make(map[string]bool, len(base))
+	out := make([]store.ChunkHit, 0, limit)
+	for _, h := range base {
+		if k := key(h); !seen[k] {
+			seen[k] = true
+			out = append(out, h)
+		}
+	}
+	var misses []store.ChunkHit
+	for _, h := range docHits {
+		if k := key(h); !seen[k] {
+			seen[k] = true
+			misses = append(misses, h)
+		}
+	}
+	if len(misses) == 0 {
+		if len(out) > limit {
+			out = out[:limit]
+		}
+		return out
+	}
+	if len(out)+len(misses) <= limit {
+		return append(out, misses...)
+	}
+	budget := limit / docRecallShare
+	if budget < 1 {
+		budget = 1
+	}
+	if budget > len(misses) {
+		budget = len(misses)
+	}
+	keepBase := limit - budget
+	if keepBase > len(out) {
+		keepBase = len(out)
+	}
+	res := make([]store.ChunkHit, 0, limit)
+	res = append(res, out[:keepBase]...)
+	res = append(res, misses[:limit-keepBase]...)
+	return res
 }

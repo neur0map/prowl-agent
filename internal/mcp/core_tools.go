@@ -37,6 +37,8 @@ func registerCoreTools(server *sdk.Server, h *handlers) {
 	sdk.AddTool(server, &sdk.Tool{Name: "validate_knowledge", Description: "Check that stored project knowledge is well-formed: evidence anchors still resolve, links are valid, and entries are current. Use before relying on or proposing knowledge. Read-only.", Annotations: readOnlyAnnotations("Validate knowledge")}, tracked(h, h.validateKnowledge))
 	sdk.AddTool(server, &sdk.Tool{Name: "search_capabilities", Description: "List Prowl's built-in workflows and their metadata (token-lean) before fetching full details. Use to discover what Prowl offers; to search your code use search_context instead.", Annotations: readOnlyAnnotations("Search capabilities")}, tracked(h, h.searchCapabilities))
 	sdk.AddTool(server, &sdk.Tool{Name: "read_symbol", Description: "Read one symbol's source (its signature and body), cited and bounded, resolved by name or by a numeric id from a find result. Use it to read a single function, type, or component instead of the whole file. Read-only.", Annotations: readOnlyAnnotations("Read symbol")}, tracked(h, h.readSymbol))
+	sdk.AddTool(server, &sdk.Tool{Name: "span", Description: "Where a symbol currently is: its file, exact line range, and a content digest, resolved by name or by a numeric id from a find result. Use it to re-ground stale line numbers after your own edits and to detect drift before editing -- the digest hashes the symbol's current body bytes (not its position), so it stays the same when only surrounding lines move and changes when the body itself changes. When a name is ambiguous it returns every match so the choice is visible. Read-only.", Annotations: readOnlyAnnotations("Symbol span")}, tracked(h, h.span))
+	sdk.AddTool(server, &sdk.Tool{Name: "history", Description: "Commits that touched a symbol, newest first (short SHA, author, relative date, subject): the 'why is this code the way it is' lookup, resolved by name or by a numeric id from a find result, instead of running git log by hand. The range traced is the symbol's CURRENT location in the index, and because `git log -L` cannot follow renames, history stops at a rename of the file. When a name matches several symbols, every exact match is traced and each commit is tagged with its file. Read-only.", Annotations: readOnlyAnnotations("Symbol history")}, tracked(h, h.history))
 	sdk.AddTool(server, &sdk.Tool{Name: "outline", Description: "Show a file's structure: every symbol it defines with kind, signature, nesting depth, and line range, but no bodies. Use it to grasp a file from a handful of signature lines instead of reading the whole file (far cheaper on tokens), then read_symbol only the parts you need. Read-only.", Annotations: readOnlyAnnotations("Outline file")}, tracked(h, h.outline))
 	sdk.AddTool(server, &sdk.Tool{Name: "find_references", Description: "Find where a symbol is used across the repo: cited {file, line, text} call sites (and reference edges for config/resource symbols), resolved by name or by a numeric id. Use it for the callers of a function or the blast radius of changing a symbol, instead of grepping and reading files. Read-only; call sites are name-usage based, not a language call graph, so a comment or same-named symbol may slip in.", Annotations: readOnlyAnnotations("Find references")}, tracked(h, h.findReferencesByName))
 	sdk.AddTool(server, &sdk.Tool{Name: "sketch_ui", Description: "Sketch how a UI looks and behaves, from source, without a screenshot or running it. QML and React (jsx/tsx) give the element tree with each element's visual properties (layout, color, text) and behavior (handlers, animations, conditional rendering); a Go/lipgloss TUI gives the color palette and named styles; CSS/SCSS gives design tokens and rules. QML token references are resolved to their literal values. Argument is a component name (resolved through the index) or a file path. Use it to understand or replicate a UI instead of reading the whole file. Read-only.", Annotations: readOnlyAnnotations("Sketch UI")}, tracked(h, h.sketchUI))
@@ -84,6 +86,23 @@ type capabilitySearchIn struct {
 
 type readSymbolIn struct {
 	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
+}
+
+type spanIn struct {
+	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
+}
+
+type spansOut struct {
+	Spans []query.SymbolSpan `json:"spans"`
+}
+
+type historyIn struct {
+	Symbol string `json:"symbol" jsonschema:"symbol name, or a numeric id from a find result"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"max commits per matching symbol (0 = default)"`
+}
+
+type historyOut struct {
+	Commits []query.SymbolCommit `json:"commits"`
 }
 
 type outlineIn struct {
@@ -149,6 +168,22 @@ func (h *handlers) readSymbol(_ context.Context, _ *sdk.CallToolRequest, in read
 		return nil, query.Definition{}, err
 	}
 	return nil, def, nil
+}
+
+func (h *handlers) span(_ context.Context, _ *sdk.CallToolRequest, in spanIn) (*sdk.CallToolResult, spansOut, error) {
+	spans, err := h.q.Span(h.root, in.Symbol)
+	if err != nil {
+		return nil, spansOut{}, err
+	}
+	return nil, spansOut{Spans: spans}, nil
+}
+
+func (h *handlers) history(_ context.Context, _ *sdk.CallToolRequest, in historyIn) (*sdk.CallToolResult, historyOut, error) {
+	commits, err := h.q.History(h.root, in.Symbol, in.Limit)
+	if err != nil {
+		return nil, historyOut{}, err
+	}
+	return nil, historyOut{Commits: commits}, nil
 }
 
 func (h *handlers) outline(_ context.Context, _ *sdk.CallToolRequest, in outlineIn) (*sdk.CallToolResult, query.FileOutline, error) {

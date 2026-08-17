@@ -139,6 +139,33 @@ All notable changes are recorded here. The format follows
   project already distributes these models at roughly one byte per parameter;
   shipping float32 was our own overhead. `cmd/quantize-embed-model` regenerates the
   blob so the committed artifact has reproducible provenance.
+- `knowledge lint --repair` re-points anchors whose code moved. A note anchored to
+  a line range used to report `stale_anchor` the moment anything was inserted
+  above it, so ordinary refactoring decayed accurate evidence into a warning
+  nobody acted on, and retrieval cited coordinates that no longer held the
+  anchored lines. Lint now separates code that *moved* from code that *changed*:
+  a new `knowledge.moved_anchor` finding, at `info`, names the range the anchored
+  lines occupy now, retrieval and the indexed anchor rows cite that range, and
+  `--repair` writes it back to the document while preserving frontmatter prowl
+  does not own. `stale_anchor` is now reserved for the anchored lines actually
+  changing, and `--repair` refuses to touch those, so relocation can never
+  manufacture evidence for a claim the code stopped supporting. Relocation needs
+  no new stored state: it re-uses the region hash already recorded, searching
+  outward from the recorded position so the nearest match wins and a repeated
+  region resolves deterministically, under a byte budget that reports
+  `stale_anchor` rather than stalling a lint pass. A symbol anchor whose symbol
+  was renamed but whose body is untouched is recovered the same way.
+- A guard keeps prowl's agent-facing text honest against its own command tree.
+  Every `prowl-agent ...` invocation in the capability manifests, the installed
+  skills, and the injected project map is now resolved against the registered
+  cobra commands, with cited flags checked too, and every capability `tools:` name
+  against the registered MCP tools. The previous check only asserted a
+  `prowl-agent ` prefix, so a renamed command would ship while three surfaces kept
+  telling agents to run something that exits non-zero. It walks the command tree
+  in process rather than scraping `--help`, so hidden commands (`serve`, `lsp`)
+  do not register as drift, and it reads only fenced blocks and code spans, so
+  prose such as "reach for prowl-agent before grepping" is not mistaken for a
+  command.
 
 ### Changed
 - The index schema is bumped twice (v3 to v4, then v4 to v5) to store the per-file
@@ -174,8 +201,50 @@ All notable changes are recorded here. The format follows
   `.omp/RULES.md` (re-injected near every turn, unlike `AGENTS.md`, which drifts
   up a long transcript) holding the "reach for Prowl before grep" directive in
   force. All reversible with `--remove-integrations`.
+- The two weaker shipped skill descriptions now state their boundaries, because a
+  description is the only thing an agent reads when deciding whether to reach for
+  prowl at all. `prowl-change-safety` says what it does not do (it reports what
+  depends on the code you are touching; it does not run your tests, linters, or
+  build). `prowl-durable-knowledge` triggered on a self-assessed outcome
+  ("something worth remembering"), which asks the agent to judge importance before
+  it has any criteria; it now triggers on a problem state -- having just resolved
+  something that cost real effort and will recur -- and draws the line against
+  transient task state, which is `wip`'s job. Shipped skills are also checked for
+  their contract invariants: the frontmatter `name` must equal the directory name,
+  since the install path is `<client>/skills/<dir>/SKILL.md` and a mismatch
+  installs a skill under a name nothing resolves.
 
 ### Fixed
+- `overview` entrypoints name code that starts the program. The rule was "has
+  outgoing dependency edges and nothing depends on it", which also admits every
+  manifest, config table, and test harness: a `package.json` carries one edge per
+  dependency and nothing imports a test, so both outranked the real entry points,
+  and the list was sorted by path depth, which inverts on any project whose entry
+  is nested. Across six varied repositories 68% of the entries shown were manifests
+  or test files, and 100% on a docs-heavy one -- in the first answer an agent reads
+  to orient itself. Only languages that can start a program now qualify (`json`,
+  `yaml`, `toml`, and `markdown` are excluded; `ini`, `hyprlang`, and CSS stay
+  eligible, because in a dotfiles or theming repo the file that sources every other
+  config really is the entry point), test code never qualifies, and survivors rank
+  by how much each pulls in. Most importantly, an import from an excluded file no
+  longer disqualifies its target: a unit test importing `main` was hiding the
+  entry point of every project whose main module has a test.
+- `init` no longer fails outright when a destination is a symlink. A repository
+  serving several agent harnesses commonly points `AGENTS.md` at `CLAUDE.md`, and
+  prowl refuses to write through a symlink because that is how a write escapes the
+  project root -- but it took the whole setup down with it, including the
+  integrations it could write, and reported only `setup operation failed`. That
+  string was every setup failure: `safeError` collapsed permission errors, missing
+  paths, and symlinked destinations into one line with nothing to act on.
+  Unwritable destinations are now identified when the plan is built and reported as
+  skipped with a reason, the rest of the plan applies, and prowl's own
+  project-relative reasons pass through while OS errors are reduced to their
+  classification rather than erased. The symlink and its target are still never
+  written.
+- `scripts/onboarding-smoke.sh` passes again. Its plan assertion required the
+  action set to equal `{agents, cursor}`, so it broke as soon as per-skill install
+  actions joined a selected client's plan and had been failing since; no CI job ran
+  it, so nothing caught it.
 - A prowl upgrade now heals its own index before answering anything. The indexing
   logic version is the binary's revision, so a new binary already forced a full
   re-parse -- which re-chunks every file and thereby drops every vector with it.

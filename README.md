@@ -175,14 +175,19 @@ prowl-agent knowledge propose --file candidate.md --target decisions/storage.md
 prowl-agent knowledge accept <proposal-id>
 prowl-agent knowledge list
 prowl-agent knowledge lint
+prowl-agent knowledge lint --repair   # re-point anchors whose code moved
 prowl-agent knowledge export ./knowledge-export
 ```
 
-Every proposal shows a deterministic diff before acceptance. Source anchors flag
-stale evidence when the code they point at changes. Anchor to a `symbol`
-(function, class, or component) to follow it when lines move; the anchor goes
-stale only when the symbol's body changes. Unknown OKF v0.1 fields and future
-concept types round-trip without loss.
+Every proposal shows a deterministic diff before acceptance. Source anchors keep
+each claim tied to real code, and they distinguish code that *moved* from code
+that *changed*: a line inserted above an anchored region reports `moved_anchor`
+with the range those lines occupy now, and `--repair` re-points it, so notes do
+not decay into stale warnings during ordinary refactoring. `stale_anchor` is
+reserved for the anchored lines actually changing, which is the case a human
+should look at. Anchor to a `symbol` (function, class, or component) to follow it
+when lines move; a renamed symbol whose body is untouched is still recovered by
+content. Unknown OKF v0.1 fields and future concept types round-trip without loss.
 
 See [Durable knowledge and OKF](docs/KNOWLEDGE.md) for the storage contract,
 review lifecycle, lint codes, and migration safeguards.
@@ -314,6 +319,27 @@ real files, and `.prowl/` only holds the rebuildable index. Because prowl indexe
 the same files git tracks, it never points the agent at a path it was told to
 ignore.
 
+### Committed credentials are masked before they are stored
+
+Prowl indexes whatever a repository contains, credentials committed in source
+included, and every retrieval path feeds stored text into an agent's context. So
+masking happens at storage time, not on the way out: the on-disk index -- chunk
+text, the full-text index, and the vectors -- never holds a cleartext secret.
+Five sinks are masked: chunk text, symbol signatures, doc comments, resource
+values, and raw dependency-edge text. The identifier survives and only the value
+is destroyed, so `search stripe token` still finds the line while the key itself
+reads `[redacted]`. `prowl-agent doctor` reports which files had values masked, so
+a committed secret surfaces as something to rotate rather than being quietly
+swallowed.
+
+What is masked is deliberately limited to shapes that can be recognized without
+guessing: vendor-prefixed provider keys, AWS key ids, Google keys, JWTs, the
+password in a URL's userinfo, and PEM private key bodies. A homegrown secret with
+no vendor prefix -- a random-looking value assigned to a secret-named variable --
+is **not** masked, because no entropy heuristic separates it from ordinary code
+reliably, and masking is destructive. Treat this as damage control for
+credentials that should not be in the repository, not as a reason to commit them.
+
 ## Search by meaning, built in
 
 `prowl-agent search` matches on meaning, not just words. Ask "how do I refresh
@@ -326,6 +352,12 @@ project embeds its files once (a few seconds); after that answers are cached and
 fast. Embeddings live in `sqlite-vec` and are fused with full-text search, so you
 get files that mean the same thing even when they share no words (for example,
 "music spectrum" finds an `AudioVisualizer`).
+
+Doc comments are indexed as their own field, so a file whose docstring answers the
+question surfaces even when its code shares none of your words. This is added
+recall, not reordering: doc answers are appended below the existing code results
+and the top ten never move. It applies to `search` and `--smart`; the core MCP
+surface's `search_context` retrieves over chunk text only.
 
 Add `--smart` to rewrite the query and re-rank the results, which helps on vague
 questions. Plain `search` never spawns anything, so it stays fast enough for an

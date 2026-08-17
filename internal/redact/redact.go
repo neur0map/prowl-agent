@@ -6,10 +6,23 @@
 //
 // The identifier and structure around a value are preserved, so "where is the
 // stripe token set" still resolves; only the value itself is destroyed.
+//
+// Masking is destructive and happens before storage: there is no cleartext copy
+// anywhere, so a false positive permanently corrupts indexed source. Precision
+// therefore outranks recall. Text masks exactly three things, each with a shape
+// unambiguous enough to have produced zero false positives across review:
+// provider credentials (vendor-prefixed keys, AWS key ids, Google keys, JWTs),
+// the password field of a URL userinfo section, and PEM private key bodies.
+//
+// A homegrown credential with no vendor prefix -- a random-looking value assigned
+// to a secret-named variable -- is deliberately NOT masked here. A generic entropy
+// or character-class heuristic cannot separate it from ordinary code without
+// eventually masking real source, and because masking is destructive that is an
+// unacceptable trade. An unreliable signal belongs in a non-destructive warning,
+// never in destructive masking, so the recall loss is accepted on purpose.
 package redact
 
 import (
-	"math"
 	"regexp"
 	"strings"
 )
@@ -18,7 +31,7 @@ import (
 const Mask = "[redacted]"
 
 // provider matches credentials whose shape is unambiguous: a vendor prefix, an
-// AWS key id, or a JWT. These need no entropy check.
+// AWS key id, a Google key, or a JWT. These need no entropy check.
 var provider = regexp.MustCompile(
 	`(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}` +
 		`|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}` +
@@ -28,63 +41,70 @@ var provider = regexp.MustCompile(
 		`|AIza[0-9A-Za-z_-]{35}` +
 		`|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)
 
-// pemBody matches the base64 payload inside a private key block, either paired
-// (begin/end) or unpaired (begin to end of input, or start to end).
-var pemBody = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)|(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*)$|(^.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
-
 // urlCreds matches the password field of a URL userinfo section.
 var urlCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)([^\s@/]{4,})(@)`)
 
-// assigned matches a quoted string assigned to a secret-sounding name. The
-// value must pass isCredentialLike (length, not a path/URL, not a plain identifier,
-// and sufficiently random).
-var assigned = regexp.MustCompile(
-	`(?i)([A-Za-z0-9_.\-]*(?:secret|passwd|password|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential|auth)[A-Za-z0-9_.\-]*\s*[:=]\s*)` +
-		`("[^"\n]{20,}"|'[^'\n]{20,}')`)
+// PEM private keys are matched by three separate patterns applied in sequence
+// (see Text). A single alternation was the root cause of three defects: Go's
+// leftmost-match rule could prefer a start-anchored tail alternative over the
+// paired one and destroy all preceding source. Keeping the patterns distinct lets
+// each retain its markers and increment the count only when it rewrites text.
 
-// identifierShapeRe matches values that look like plain code identifiers.
-var identifierShapeRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// pemPaired matches a complete private key block: both markers with a body
+// between them. Only the body is replaced; both markers are kept.
+var pemPaired = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
-// filenameOrTLDRe matches values ending in a file extension or TLD.
-var filenameOrTLDRe = regexp.MustCompile(`\.[A-Za-z]{1,5}$`)
+// pemBegin matches the head half of a key split across chunks: a BEGIN marker
+// with a body and no END after it. Everything after the marker is masked.
+var pemBegin = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.+)$`)
 
-// dottedSelectorRe matches dotted-selector shapes like a.b.c.
-var dottedSelectorRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`)
+// pemEnd matches the tail half of a split key: a body and an END marker with no
+// BEGIN before it. Everything up to the marker is masked.
+var pemEnd = regexp.MustCompile(`(?s)^(.+?)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
 // Text masks every secret-shaped value in s, returning the result and how many
-// values were masked.
+// values were masked. The count is idempotent: running Text twice on the same
+// input masks nothing the second time.
 func Text(s string) (string, int) {
 	n := 0
 
-	out := pemBody.ReplaceAllStringFunc(s, func(m string) string {
-		// Guard against recounting already-masked content
-		if strings.Contains(m, Mask) {
-			return m
-		}
-		g := pemBody.FindStringSubmatch(m)
-		if g == nil {
-			return m
-		}
-		n++
-		// Paired begin/end
-		if len(g) > 2 && g[2] != "" {
+	// PEM keys: the paired pattern owns any input that contains a complete block.
+	// The unpaired head/tail patterns run only when no complete block was found,
+	// so they cannot interact with a paired match.
+	if pemPaired.MatchString(s) {
+		s = pemPaired.ReplaceAllStringFunc(s, func(m string) string {
+			g := pemPaired.FindStringSubmatch(m)
+			// An empty or already-masked body has nothing to rewrite.
+			if g[2] == "" || strings.Contains(g[2], Mask) {
+				return m
+			}
+			n++
 			return g[1] + "\n" + Mask + "\n" + g[3]
-		}
-		// Unpaired begin to end of input
-		if len(g) > 4 && g[4] != "" {
-			return g[4] + "\n" + Mask
-		}
-		// Unpaired end (tail of split key)
-		if len(g) > 6 && g[6] != "" {
-			return Mask
-		}
-		return m
-	})
-	out = provider.ReplaceAllStringFunc(out, func(string) string {
+		})
+	} else {
+		s = pemBegin.ReplaceAllStringFunc(s, func(m string) string {
+			g := pemBegin.FindStringSubmatch(m)
+			if strings.Contains(g[2], Mask) {
+				return m
+			}
+			n++
+			return g[1] + "\n" + Mask
+		})
+		s = pemEnd.ReplaceAllStringFunc(s, func(m string) string {
+			g := pemEnd.FindStringSubmatch(m)
+			if strings.Contains(g[1], Mask) {
+				return m
+			}
+			n++
+			return Mask + "\n" + g[2]
+		})
+	}
+
+	s = provider.ReplaceAllStringFunc(s, func(string) string {
 		n++
 		return Mask
 	})
-	out = urlCreds.ReplaceAllStringFunc(out, func(m string) string {
+	s = urlCreds.ReplaceAllStringFunc(s, func(m string) string {
 		g := urlCreds.FindStringSubmatch(m)
 		if strings.Contains(g[2], Mask) {
 			return m
@@ -92,148 +112,5 @@ func Text(s string) (string, int) {
 		n++
 		return g[1] + Mask + g[3]
 	})
-	out = assigned.ReplaceAllStringFunc(out, func(m string) string {
-		g := assigned.FindStringSubmatch(m)
-		value := strings.Trim(g[2], `"'`)
-		if !isCredentialLike(value) {
-			return m
-		}
-		n++
-		quote := ""
-		if strings.HasPrefix(g[2], `"`) {
-			quote = `"`
-		} else if strings.HasPrefix(g[2], `'`) {
-			quote = `'`
-		}
-		return g[1] + quote + Mask + quote
-	})
-	return out, n
-}
-
-// isCredentialLike reports whether a value looks like a credential. It masks when
-// ANY of these hold: 3+ character classes; 20%+ digit density; or 3.5+ entropy.
-// It rejects filenames/TLDs, dotted selectors, parentheses, and values that match
-// identifier shapes with <2 digits and high vowel ratio.
-func isCredentialLike(v string) bool {
-	runeLen := len([]rune(v))
-	if runeLen < 20 {
-		return false
-	}
-
-	// Reject filenames and TLDs, or URLs
-	if filenameOrTLDRe.MatchString(v) || strings.Contains(v, "://") {
-		return false
-	}
-
-	// Reject dotted selectors and parentheses
-	if dottedSelectorRe.MatchString(v) || strings.ContainsAny(v, "()") {
-		return false
-	}
-
-	// Reject identifier-shaped values that are plain code identifiers.
-	// A code identifier is identifier-shaped AND has <2 digits AND high vowel ratio.
-	if isPlainCodeIdentifier(v) {
-		return false
-	}
-
-	// Count character classes
-	hasLower := false
-	hasUpper := false
-	hasDigit := false
-	hasSymbol := false
-	digitCount := 0
-
-	for _, r := range v {
-		if r >= 'a' && r <= 'z' {
-			hasLower = true
-		} else if r >= 'A' && r <= 'Z' {
-			hasUpper = true
-		} else if r >= '0' && r <= '9' {
-			hasDigit = true
-			digitCount++
-		} else {
-			hasSymbol = true
-		}
-	}
-
-	classCount := 0
-	if hasLower {
-		classCount++
-	}
-	if hasUpper {
-		classCount++
-	}
-	if hasDigit {
-		classCount++
-	}
-	if hasSymbol {
-		classCount++
-	}
-
-	// Accept if 3+ classes
-	if classCount >= 3 {
-		return true
-	}
-
-	// Accept if digit density >= 20%
-	digitDensity := float64(digitCount) / float64(runeLen)
-	if digitDensity >= 0.20 {
-		return true
-	}
-
-	// Accept if entropy >= 3.5
-	freq := make(map[rune]float64)
-	for _, r := range v {
-		freq[r]++
-	}
-	total := float64(runeLen)
-	var h float64
-	for _, c := range freq {
-		p := c / total
-		h -= p * math.Log2(p)
-	}
-	if h >= 3.5 {
-		return true
-	}
-
-	return false
-}
-
-// isPlainCodeIdentifier reports whether a value is a code identifier that should
-// not be masked. It must be identifier-shaped, contain <2 digits, and have a high
-// vowel ratio (>= 0.25 of its letters), typical of English-like variable names.
-func isPlainCodeIdentifier(v string) bool {
-	if !identifierShapeRe.MatchString(v) {
-		return false
-	}
-
-	digitCount := 0
-	for _, r := range v {
-		if r >= '0' && r <= '9' {
-			digitCount++
-		}
-	}
-	if digitCount >= 2 {
-		return false
-	}
-
-	// Count vowels among letters
-	vowelCount := 0
-	letterCount := 0
-	for _, r := range v {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-			letterCount++
-			switch r {
-			case 'a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U':
-				vowelCount++
-			}
-		}
-	}
-
-	if letterCount == 0 {
-		return false
-	}
-
-	vowelRatio := float64(vowelCount) / float64(letterCount)
-	return vowelRatio >= 0.25
+	return s, n
 }

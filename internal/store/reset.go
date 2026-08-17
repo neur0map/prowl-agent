@@ -15,6 +15,7 @@ var resetDerivedStatements = []string{
 	`DELETE FROM symbols`,
 	`DELETE FROM chunks`,
 	`INSERT INTO fts_symbols(fts_symbols) VALUES('delete-all')`,
+	`INSERT INTO fts_docs(fts_docs) VALUES('delete-all')`,
 	`INSERT INTO fts_chunks(fts_chunks) VALUES('delete-all')`,
 	`DROP TABLE IF EXISTS vec_chunks`,
 	`INSERT INTO meta(key,value) VALUES('index_state','incomplete') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,

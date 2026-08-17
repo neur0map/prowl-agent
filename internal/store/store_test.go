@@ -23,8 +23,8 @@ func TestOpenMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != "4" {
-		t.Fatalf("schema_version=%q want 4", v)
+	if v != "5" {
+		t.Fatalf("schema_version=%q want 5", v)
 	}
 	if err := s.SetMeta("x", "y"); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestOpenBacksUpAndMigratesVersionOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if version, _ := s.GetMeta("schema_version"); version != "4" {
+	if version, _ := s.GetMeta("schema_version"); version != "5" {
 		t.Fatalf("version after migration = %q", version)
 	}
 	if fixture, _ := s.GetMeta("fixture"); fixture != "preserved" {

@@ -11,6 +11,7 @@ type Symbol struct {
 	StartLine, EndLine    int
 	ParentName            string
 	Complexity            int
+	Doc                   string
 }
 
 // Resource is a shared value (color/font/path/var) to insert.
@@ -47,10 +48,10 @@ func (s *Store) ReplaceFileGraph(fileID int64, syms []Symbol, res []Resource, ed
 		// per-row LastInsertId; SQLite assigns contiguous rowids in VALUES order, so
 		// the id-by-insertion-order mapping (first wins on duplicate names) holds.
 		if err := batchInsert(tx,
-			`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity) VALUES `,
-			`(?,?,?,?,?,?,?)`, 7, len(syms), func(i int) []any {
+			`INSERT INTO symbols(file_id,name,kind,signature,start_line,end_line,complexity,doc) VALUES `,
+			`(?,?,?,?,?,?,?,?)`, 8, len(syms), func(i int) []any {
 				sym := syms[i]
-				return []any{fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity}
+				return []any{fileID, sym.Name, sym.Kind, nullStr(sym.Signature), sym.StartLine, sym.EndLine, sym.Complexity, nullStr(sym.Doc)}
 			}); err != nil {
 			return err
 		}

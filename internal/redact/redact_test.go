@@ -58,42 +58,42 @@ func TestTextLeavesOrdinaryCodeAlone(t *testing.T) {
 	}
 }
 
-// Negative cases from real repo: identifiers and code that must NOT be masked.
-func TestTextRejectsIdentifiersAndCommonCode(t *testing.T) {
-	cases := []struct {
+// Canonical test cases from round-2 ruling: assigned pattern must mask high-entropy
+// secrets but reject plain code identifiers and URLs.
+func TestTextCanonicalMaskCases(t *testing.T) {
+	maskCases := []struct {
 		name, in string
 	}{
-		{"camelCase assignment", `BudgetTokens: budgetTokens,`},
-		{"dotted selector", `Author: proposal.Author,`},
-		{"URL constant", `const tokensDocURL = "github.com/neur0map/prowl-agent/blob/main/docs/TOKENS.md"`},
-		{"function call assignment", `MaxTokens: rerankMaxTokens(len(candidates))`},
+		{"high digit density", `API_KEY = "8f3kd93kfj39dk20fjs93jf"`},
+		{"aws key with slash", `AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"`},
+		{"md5-like", `password = "d41d8cd98f00b204e9800998ecf8427ef"`},
+		{"base64 token", `TOKEN = "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA"`},
+		{"mixed entropy", `api_secret = "kJ8fQ2mZ7xR4tY6uI0oP3aS5dF9gH1jK"`},
 	}
-	for _, c := range cases {
-		if got, n := Text(c.in); n != 0 {
-			t.Fatalf("false positive on %s: %q -> %q", c.name, c.in, got)
-		}
-	}
-}
-
-// Positive cases for assigned pattern: values that MUST be masked.
-func TestTextMasksAssignedValues(t *testing.T) {
-	cases := []struct {
-		name, in string
-	}{
-		{"double-quoted secret", `API_KEY = "8f3kd93kfj39dk20fjs93jf1234567890"`},
-		{"single-quoted secret", `API_KEY = '8f3kd93kfj39dk20fjs93jf1234567890'`},
-	}
-	for _, c := range cases {
+	for _, c := range maskCases {
 		got, n := Text(c.in)
 		if n != 1 {
-			t.Fatalf("%s: masked %d values, want 1 (input: %q)", c.name, n, c.in)
+			t.Fatalf("%s: masked %d values, want 1", c.name, n)
 		}
 		if !strings.Contains(got, Mask) {
 			t.Fatalf("%s: no mask marker in %q", c.name, got)
 		}
-		// Verify identifier survived
-		if !strings.Contains(got, "API_KEY") {
-			t.Fatalf("%s: identifier lost from %q", c.name, got)
+	}
+}
+
+// Canonical test cases: plain code identifiers must NOT be masked.
+func TestTextCanonicalUntouchedCases(t *testing.T) {
+	untouched := []string{
+		`BudgetTokens: budgetTokens,`,
+		`Author: proposal.Author,`,
+		`PacketTokens: pkt.Budget.EstimatedTokens`,
+		`MaxTokens:    rerankMaxTokens(len(candidates))`,
+		`const tokensDocURL = "github.com/neur0map/prowl-agent/blob/main/docs/TOKENS.md"`,
+		`sum := "d41d8cd98f00b204e9800998ecf8427e"`,
+	}
+	for _, in := range untouched {
+		if got, n := Text(in); n != 0 {
+			t.Fatalf("false positive on %q -> %q (masked %d)", in, got, n)
 		}
 	}
 }
@@ -114,17 +114,34 @@ func TestTextIdempotence(t *testing.T) {
 	}
 }
 
-// Test unpaired PEM marker (key split across chunks).
+// Test unpaired PEM markers (key split across chunks or tail-only).
 func TestTextMasksUnpairedPEM(t *testing.T) {
-	input := "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n"
-	got, n := Text(input)
-	if n != 1 {
-		t.Fatalf("unpaired PEM: masked %d values, want 1", n)
+	cases := []struct {
+		name, input string
+	}{
+		{"unpaired begin", "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n"},
+		{"unpaired end", "MIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"},
 	}
-	if strings.Contains(got, "MIIEowIBAAKCAQEA") {
-		t.Fatalf("unpaired PEM key leaked: %q", got)
+	for _, c := range cases {
+		got, n := Text(c.input)
+		if n != 1 {
+			t.Fatalf("%s: masked %d values, want 1", c.name, n)
+		}
+		if !strings.Contains(got, Mask) {
+			t.Fatalf("%s: no mask marker in %q", c.name, got)
+		}
 	}
-	if !strings.Contains(got, Mask) {
-		t.Fatalf("unpaired PEM: no mask marker in %q", got)
+}
+
+// Test PEM idempotence: re-masking should not recount.
+func TestTextPEMIdempotence(t *testing.T) {
+	input := "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234\n-----END RSA PRIVATE KEY-----"
+	masked1, n1 := Text(input)
+	if n1 != 1 {
+		t.Fatalf("expected 1 PEM masked, got %d", n1)
+	}
+	_, n2 := Text(masked1)
+	if n2 != 0 {
+		t.Fatalf("re-masking already-masked PEM counted %d new values, want 0", n2)
 	}
 }

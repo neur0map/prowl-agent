@@ -1,6 +1,6 @@
 ---
 name: prowl-durable-knowledge
-description: Use when you learn something worth remembering about a codebase, an architecture decision, a non-obvious convention, a gotcha, or a resolved question, and want it captured as reviewable project knowledge that future agents and sessions retrieve instead of rediscovering. Reach for prowl-agent knowledge to propose, review, and accept durable notes anchored to real code.
+description: Use right after you resolve something that cost real effort and will come up again: why a design is the way it is, a convention the code does not state, a trap that bit you, a question a teammate will ask twice, or an answer you had to reconstruct because a past session did not write it down. Reach for prowl-agent knowledge to propose, review, and accept durable notes anchored to real code. This is for durable understanding, not transient task state; unfinished work in the current branch belongs in prowl-agent wip, not here.
 ---
 
 # Prowl durable knowledge

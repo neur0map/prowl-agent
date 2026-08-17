@@ -3,6 +3,9 @@ package setup
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -166,7 +169,11 @@ func TestSetupRollbackPreservesFilesAfterMutationFailure(t *testing.T) {
 	}
 }
 
-func TestSetupApplyRejectsSymlinkedDestinationWithoutWrites(t *testing.T) {
+// A symlinked destination must never be written through -- that is how a setup
+// write escapes the project root. It must also not sink the whole setup: repos
+// that serve several agent harnesses routinely point AGENTS.md at CLAUDE.md, so
+// the destination is reported as blocked and the remaining integrations apply.
+func TestSetupBlocksSymlinkedDestinationWithoutWrites(t *testing.T) {
 	root := t.TempDir()
 	victim := filepath.Join(t.TempDir(), "victim.md")
 	original := []byte("do not modify\n")
@@ -180,19 +187,50 @@ func TestSetupApplyRejectsSymlinkedDestinationWithoutWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := service.Plan(context.Background(), []string{IntegrationAgents})
+	plan, err := service.Plan(context.Background(), []string{IntegrationAgents, IntegrationGeneric})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = service.Apply(context.Background(), ApplyRequest{
+	if len(plan.Blocked) != 1 || plan.Blocked[0].Path != "AGENTS.md" || plan.Blocked[0].Integration != IntegrationAgents {
+		t.Fatalf("plan.Blocked = %+v, want AGENTS.md blocked", plan.Blocked)
+	}
+	if !strings.Contains(plan.Blocked[0].Reason, "symbolic link") {
+		t.Errorf("blocked reason = %q, want it to name the symlink", plan.Blocked[0].Reason)
+	}
+	for _, action := range plan.Actions {
+		if action.Path == "AGENTS.md" {
+			t.Fatalf("blocked destination still planned: %+v", plan.Actions)
+		}
+	}
+	if _, err = service.Apply(context.Background(), ApplyRequest{
 		Integrations: plan.Integrations, PlanHash: plan.Hash,
 		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "symlink",
-	})
-	if err == nil {
-		t.Fatal("symlinked destination apply succeeded")
+	}); err != nil {
+		t.Fatalf("apply failed instead of skipping the blocked destination: %v", err)
 	}
 	if got, readErr := os.ReadFile(victim); readErr != nil || string(got) != string(original) {
 		t.Fatalf("symlink target changed: %q, %v", got, readErr)
+	}
+	// The writable integration in the same plan still landed.
+	if _, statErr := os.Stat(filepath.Join(root, ".mcp.json")); statErr != nil {
+		t.Errorf("writable integration was skipped too: %v", statErr)
+	}
+}
+
+// An unreadable destination must still be reported in terms the caller can act
+// on rather than collapsed into one opaque failure string.
+func TestSetupErrorsNameTheirCause(t *testing.T) {
+	if errors.Is(safeError(errors.New("some os detail: /abs/path")), errSymlinkDestination) {
+		t.Fatal("unknown error must not be classified as a symlink failure")
+	}
+	if got := safeError(errors.New("some os detail: /abs/path")).Error(); got != "setup operation failed" {
+		t.Errorf("unknown error = %q, want the opaque fallback", got)
+	}
+	if got := safeError(fmt.Errorf("open x: %w", fs.ErrPermission)).Error(); !strings.Contains(got, "permission denied") {
+		t.Errorf("permission error = %q, want it to name permission denial", got)
+	}
+	if got := safeError(fmt.Errorf("AGENTS.md %w", errSymlinkDestination)).Error(); !strings.Contains(got, "AGENTS.md") || !strings.Contains(got, "symbolic link") {
+		t.Errorf("symlink error = %q, want the project-relative reason", got)
 	}
 }
 

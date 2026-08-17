@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,6 +71,11 @@ var (
 	ErrApprovalRequired = errors.New("setup approval is required")
 	ErrPlanConflict     = errors.New("setup plan conflicts with current project state")
 	ErrRecoveryRequired = errors.New("an interrupted setup transaction was rolled back; review and retry")
+
+	// errSymlinkDestination and errUnsafeActionPath name their cause in
+	// project-relative terms, so they are safe to report verbatim.
+	errSymlinkDestination = errors.New("is a symbolic link; Prowl does not write through symlinks")
+	errUnsafeActionPath   = errors.New("invalid setup action path")
 )
 
 // Action identifies one safe, project-relative integration destination.
@@ -79,13 +85,23 @@ type Action struct {
 	Description string `json:"description"`
 }
 
+// BlockedAction is a destination Prowl will not write, with a project-relative
+// reason. Setup degrades one integration instead of failing outright, because a
+// single unwritable path is a normal repository shape, not a broken install.
+type BlockedAction struct {
+	Integration string `json:"integration"`
+	Path        string `json:"path"`
+	Reason      string `json:"reason"`
+}
+
 // Plan is a deterministic, reviewable setup mutation. It intentionally contains
 // no project root, configuration contents, or credential values.
 type Plan struct {
-	Integrations         []string `json:"integrations"`
-	Actions              []Action `json:"actions"`
-	ProjectConfigVersion string   `json:"project_config_version"`
-	Hash                 string   `json:"hash"`
+	Integrations         []string        `json:"integrations"`
+	Actions              []Action        `json:"actions"`
+	Blocked              []BlockedAction `json:"blocked,omitempty"`
+	ProjectConfigVersion string          `json:"project_config_version"`
+	Hash                 string          `json:"hash"`
 }
 
 // DetectResult reports the current safe setup surface.
@@ -197,23 +213,19 @@ func (service *Service) Detect(ctx context.Context) (DetectResult, error) {
 	return DetectResult{Integrations: DetectIntegrations(service.root), ProjectConfigVersion: version}, nil
 }
 
-// Plan calculates a deterministic reviewable plan without persisting state.
+// Plan calculates a deterministic reviewable plan without persisting state. The
+// preview is root-aware so a destination Prowl cannot write shows up as blocked
+// here rather than as a failure halfway through apply.
 func (service *Service) Plan(ctx context.Context, integrations []string) (Plan, error) {
 	if err := ctx.Err(); err != nil {
 		return Plan{}, err
 	}
-	integrations, err := NormalizeIntegrations(integrations)
-	if err != nil {
-		return Plan{}, err
-	}
-	version, err := service.projectConfigVersion()
+	root, err := os.OpenRoot(service.root)
 	if err != nil {
 		return Plan{}, safeError(err)
 	}
-	actions := actionsFor(integrations)
-	plan := Plan{Integrations: integrations, Actions: actions, ProjectConfigVersion: version}
-	plan.Hash = planHash(plan)
-	return plan, nil
+	defer root.Close()
+	return service.plan(root, ctx, integrations)
 }
 
 // Apply validates the supplied review state, serializes project mutations,
@@ -392,18 +404,43 @@ func (service *Service) plan(root *os.Root, ctx context.Context, integrations []
 	if err != nil {
 		return Plan{}, safeError(err)
 	}
-	actions := actionsFor(normalized)
-	plan := Plan{Integrations: normalized, Actions: actions, ProjectConfigVersion: version}
+	actions, blocked, err := partitionActions(root, actionsFor(normalized))
+	if err != nil {
+		return Plan{}, safeError(err)
+	}
+	plan := Plan{Integrations: normalized, Actions: actions, Blocked: blocked, ProjectConfigVersion: version}
 	plan.Hash = planHash(plan)
 	return plan, nil
 }
 
+// partitionActions splits planned destinations into the ones Prowl can write and
+// the ones it refuses to. A symlinked destination is the common case -- repos
+// that support several agent harnesses routinely point AGENTS.md at CLAUDE.md --
+// and writing through it could escape the project root, so the integration is
+// dropped with a reason instead of taking the whole setup down with it.
+func partitionActions(root *os.Root, actions []Action) ([]Action, []BlockedAction, error) {
+	writable := make([]Action, 0, len(actions))
+	var blocked []BlockedAction
+	for _, action := range actions {
+		switch _, err := validateRootPath(root, action.Path); {
+		case err == nil:
+			writable = append(writable, action)
+		case errors.Is(err, errSymlinkDestination):
+			blocked = append(blocked, BlockedAction{Integration: action.Integration, Path: action.Path, Reason: err.Error()})
+		default:
+			return nil, nil, err
+		}
+	}
+	return writable, blocked, nil
+}
+
 func planHash(plan Plan) string {
 	canonical := struct {
-		Integrations         []string `json:"integrations"`
-		Actions              []Action `json:"actions"`
-		ProjectConfigVersion string   `json:"project_config_version"`
-	}{plan.Integrations, plan.Actions, plan.ProjectConfigVersion}
+		Integrations         []string        `json:"integrations"`
+		Actions              []Action        `json:"actions"`
+		Blocked              []BlockedAction `json:"blocked"`
+		ProjectConfigVersion string          `json:"project_config_version"`
+	}{plan.Integrations, plan.Actions, plan.Blocked, plan.ProjectConfigVersion}
 	data, _ := json.Marshal(canonical)
 	return digest(data)
 }
@@ -867,7 +904,7 @@ func (service *Service) lock(ctx context.Context, root *os.Root) (func(), error)
 
 func validateRootPath(root *os.Root, rel string) (string, error) {
 	if !safeRelativePath(rel) {
-		return "", errors.New("invalid setup action path")
+		return "", errUnsafeActionPath
 	}
 	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
 	current := ""
@@ -888,7 +925,7 @@ func validateRootPath(root *os.Root, rel string) (string, error) {
 			return "", err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return "", errors.New("setup destination must not be a symbolic link")
+			return "", fmt.Errorf("%s %w", current, errSymlinkDestination)
 		}
 	}
 	return clean, nil
@@ -1421,9 +1458,27 @@ func injectHelix(root *os.Root, rel string) error {
 func safeRelativePath(value string) bool {
 	return value != "" && filepath.IsLocal(filepath.FromSlash(value)) && !filepath.IsAbs(value) && !strings.Contains(value, "\\")
 }
+
+// safeError keeps a setup failure diagnosable without leaking the project root,
+// file contents, or OS internals. Prowl's own reasons are already
+// project-relative, so they pass through; anything else is reduced to its
+// classification, which is the part a caller can actually act on. Collapsing
+// every failure to one opaque string, as this once did, left `init` reporting
+// nothing a user or agent could use.
 func safeError(err error) error {
-	if err == nil {
+	switch {
+	case err == nil:
 		return nil
+	case errors.Is(err, errSymlinkDestination), errors.Is(err, errUnsafeActionPath):
+		return err
+	case errors.Is(err, fs.ErrPermission):
+		return errors.New("setup operation failed: permission denied")
+	case errors.Is(err, fs.ErrExist):
+		return errors.New("setup operation failed: destination already exists")
+	case errors.Is(err, fs.ErrNotExist):
+		return errors.New("setup operation failed: a required path is missing")
+	case errors.Is(err, fs.ErrInvalid):
+		return errors.New("setup operation failed: invalid path")
 	}
 	return errors.New("setup operation failed")
 }

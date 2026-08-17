@@ -333,13 +333,26 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 		o.Docs = o.Docs[:limits.Docs]
 	}
 
-	// Entrypoints: files that depend on others but nothing depends on them.
+	// Entrypoints: code files that depend on others but no other code depends on
+	// them.
 	dep, err := q.s.FileDepEdgesContext(ctx)
 	if err != nil {
 		return o, err
 	}
+	langOf := make(map[string]string, len(files))
+	for _, file := range files {
+		langOf[file.RelPath] = file.Lang
+	}
+	// "Nothing imports it" on its own admits every manifest, config table, and
+	// test file: a package.json carries one dependency edge per dependency and
+	// nothing imports a test, so both outrank the program's real entry points.
+	// Only a language that can start a program qualifies, and test code never
+	// does.
+	eligible := func(path string) bool {
+		return executableLang(langOf[path]) && !isTestPath(path)
+	}
 	hasIncoming := map[string]bool{}
-	hasOutgoing := map[string]bool{}
+	outDegree := map[string]int{}
 	for _, e := range dep {
 		if err := validateOverviewPath(e.SrcFile, limits.StringBytes); err != nil {
 			return o, err
@@ -350,21 +363,31 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 		if err := validateOverviewStrings(limits.StringBytes, e.Kind); err != nil {
 			return o, err
 		}
-		hasOutgoing[e.SrcFile] = true
-		hasIncoming[e.DstFile] = true
-	}
-	for f := range hasOutgoing {
-		if !hasIncoming[f] {
-			o.Entrypoints = append(o.Entrypoints, f)
+		outDegree[e.SrcFile]++
+		// Only an import from eligible code counts as a dependant. A test
+		// importing main.go does not stop main.go being where the program starts,
+		// and a manifest listing it does not either -- counting those hid the
+		// entry point of every project whose main module has a unit test.
+		if eligible(e.SrcFile) {
+			hasIncoming[e.DstFile] = true
 		}
 	}
+	for path := range outDegree {
+		if hasIncoming[path] || !eligible(path) {
+			continue
+		}
+		o.Entrypoints = append(o.Entrypoints, path)
+	}
 	o.EntrypointCount = len(o.Entrypoints)
-	// Show a shallow-first sample, not the whole list: on a large codebase
-	// "files nothing imports" runs into the thousands (CLI mains, providers,
-	// tests, leaves) and would balloon this first-call answer. Shallow paths
-	// surface the real entry points (main.go, cmd/, config/) first.
+	// Rank by how much each entry pulls in, which is what makes an entry point
+	// worth reading first. PageRank centrality cannot order these: an entrypoint
+	// has no incoming edges by construction, so every candidate would score the
+	// same base value.
 	sort.Slice(o.Entrypoints, func(i, j int) bool {
 		a, b := o.Entrypoints[i], o.Entrypoints[j]
+		if outDegree[a] != outDegree[b] {
+			return outDegree[a] > outDegree[b]
+		}
 		if da, db := strings.Count(a, "/"), strings.Count(b, "/"); da != db {
 			return da < db
 		}
@@ -379,10 +402,8 @@ func (q *Querier) OverviewContext(ctx context.Context, limits OverviewLimits) (O
 		return o, err
 	}
 	uf := newUnionFind()
-	langOf := make(map[string]string, len(files))
 	for _, file := range files {
 		uf.add(file.RelPath)
-		langOf[file.RelPath] = file.Lang
 	}
 	for _, edge := range dep {
 		uf.union(edge.SrcFile, edge.DstFile)
@@ -579,3 +600,20 @@ func (u *unionFind) groups() map[string][]string {
 	}
 	return g
 }
+
+// dataLangs are the indexed languages that only ever describe or configure a
+// program, never start one. They carry dependency edges -- a manifest names its
+// packages, a doc links its siblings -- and nothing imports them back, so
+// without this they dominate the entrypoint list.
+//
+// Deliberately narrow: config dialects such as ini, hyprlang, and CSS stay
+// eligible, because in a dotfiles or theming repo the file that sources every
+// other config really is that project's entry point.
+var dataLangs = map[string]bool{
+	"json": true, "yaml": true, "toml": true, "markdown": true,
+}
+
+// executableLang reports whether a file's language can be a program entry point.
+// An unknown or empty language stays eligible: guessing wrong should keep a real
+// entry point rather than silently drop it.
+func executableLang(lang string) bool { return !dataLangs[lang] }

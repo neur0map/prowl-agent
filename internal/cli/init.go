@@ -20,6 +20,7 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/parse"
+	"github.com/prowl-agent/prowl-agent/internal/setup"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 	"github.com/prowl-agent/prowl-agent/internal/workspace"
 )
@@ -48,6 +49,10 @@ type InitOptions struct {
 	// build on a large repo is thousands of model round trips; without a signal it
 	// is indistinguishable from a hang.
 	EmbedProgress func(embedded, remaining int)
+	// OnBlocked, when set, receives the destinations setup refused to write, such
+	// as an AGENTS.md symlinked to CLAUDE.md. Those integrations are skipped
+	// rather than failing init, so the caller still has to report the skip.
+	OnBlocked func([]setup.BlockedAction)
 }
 
 // RunInit creates the workspace, writes config/rules, runs the first index,
@@ -162,6 +167,9 @@ func RunInit(opt InitOptions) (index.Summary, error) {
 	plan, err := BuildSetupPlan(root, integrations)
 	if err != nil {
 		return sum, err
+	}
+	if opt.OnBlocked != nil && len(plan.Blocked) > 0 {
+		opt.OnBlocked(plan.Blocked)
 	}
 	if err := ApplySetupPlan(plan); err != nil {
 		return sum, err
@@ -425,7 +433,9 @@ func newInitCmd() *cobra.Command {
 					}
 				}
 			}
-			sum, err := RunInit(InitOptions{Root: root, Tier: tier, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet, EmbedProgress: embedProgress})
+			var blockedDestinations []setup.BlockedAction
+			sum, err := RunInit(InitOptions{Root: root, Tier: tier, AssistModel: assistModel, Provider: provider, AgentCommand: agentCommand, Integrations: integrations, IntegrationsSet: true, Languages: langs, LanguagesSet: langsSet, EmbedProgress: embedProgress,
+				OnBlocked: func(blocked []setup.BlockedAction) { blockedDestinations = blocked }})
 			if err != nil {
 				return err
 			}
@@ -468,6 +478,9 @@ func newInitCmd() *cobra.Command {
 			}
 			if healed {
 				fmt.Fprintln(out, "Notice: .prowl/config.toml indexed only a minority of this repo, so indexing was reset to all detected languages (languages = auto). Run 'prowl-agent init --languages <list>' to keep a narrow set.")
+			}
+			for _, blocked := range blockedDestinations {
+				fmt.Fprintf(out, "Warning: %s integration skipped -- %s. Point it at a real file, or re-run with --integrations without %s.\n", blocked.Integration, blocked.Reason, blocked.Integration)
 			}
 			for _, w := range unindexedLanguageWarnings(root) {
 				fmt.Fprintf(out, "Warning: %s\n", w)
@@ -535,6 +548,9 @@ func printSetupPlan(out io.Writer, plan SetupPlan, asJSON, dryRun bool) error {
 	}
 	if len(plan.Actions) == 0 {
 		fmt.Fprintln(out, "  • no client or editor integrations selected")
+	}
+	for _, blocked := range plan.Blocked {
+		fmt.Fprintf(out, "  ! %-12s skipped: %s\n", blocked.Integration, blocked.Reason)
 	}
 	if dryRun {
 		fmt.Fprintln(out, "Dry run: no files were changed.")

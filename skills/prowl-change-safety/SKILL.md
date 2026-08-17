@@ -1,6 +1,6 @@
 ---
 name: prowl-change-safety
-description: Use when about to edit, refactor, rename, or delete code, or before committing or opening a pull request, or when resuming a task and needing to see what was left unfinished. Reach for prowl-agent impact before a change to see its blast radius, prowl-agent changed and doctor after, and prowl-agent wip to recover in-progress work.
+description: Use when about to edit, refactor, rename, or delete code, or before committing or opening a pull request, or when resuming a task and needing to see what was left unfinished. Reach for prowl-agent impact before a change to see its blast radius, prowl-agent changed and doctor after, and prowl-agent wip to recover in-progress work. This answers what depends on the code you are touching; it does not run your tests, linters, or build, so keep using those for correctness.
 ---
 
 # Prowl change safety

@@ -12,6 +12,18 @@ func TestTextMasksProviderCredentials(t *testing.T) {
 		{"github", `token: ghp_` + `1234567890abcdefghijklmnopqrstuvwx`, "ghp_" + "1234567890abcdef"},
 		{"aws id", `AWS_ACCESS_KEY_ID=AKIA` + `IOSFODNN7EXAMPLE`, "AKIA" + "IOSFODNN7EXAMPLE"},
 		{"url creds", `DATABASE_URL=postgres://admin:sup3rs3cr3tpw@db.internal:5432/prod`, "sup3rs3cr3tpw"},
+		// R27: one positive fixture per alternation branch not otherwise covered,
+		// so a typo in any pre-filter trigger fails a case instead of silently
+		// disabling masking for that credential class.
+		{"stripe pk", `pk_live_ABCDEFGHIJ0123456789xyz`, "pk_live_ABCDEFGHIJ"},
+		{"stripe rk", `rk_test_ABCDEFGHIJ0123456789xyz`, "rk_test_ABCDEFGHIJ"},
+		{"github oauth", `gho_` + `ABCDEFGHIJ0123456789abcdefghij`, "gho_" + "ABCDEFGHIJ"},
+		{"github user", `ghu_ABCDEFGHIJ0123456789abcdefghij`, "ghu_ABCDEFGHIJ"},
+		{"github server", `ghs_ABCDEFGHIJ0123456789abcdefghij`, "ghs_ABCDEFGHIJ"},
+		{"github refresh", `ghr_ABCDEFGHIJ0123456789abcdefghij`, "ghr_ABCDEFGHIJ"},
+		{"slack", `SLACK_TOKEN=xoxb-` + `1234567890-ABCDEFabcdef0123`, "xoxb-" + "1234567890"},
+		{"google", `GOOGLE_API_KEY=AIza` + `SyD1234567890abcdefghijklmnopqrstuv`, "AIza" + "SyD1234567890"},
+		{"jwt", `Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c`, "eyJhbGciOiJIUzI1NiJ9"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

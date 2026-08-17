@@ -490,12 +490,16 @@ func indexVersion() string {
 // mapResult converts an extract.Result into store rows, masking every
 // secret-shaped value before it becomes a row. Masking runs at every sink --
 // chunk text, symbol signatures, symbol doc comments, resource values, and edge
-// targets -- so no raw-source field reaches the store (C4). The returned count,
-// however, is the chunk pass alone: chunkStructured tiles every non-blank line,
-// so a credential (necessarily non-blank) appears in exactly one chunk, while
-// signatures, doc comments, resource values and edge targets are derived views
-// of that same text. Counting the derived sinks too would report one credential
-// as two or three.
+// targets -- so no raw-source field reaches the store (C4). Chunk text is masked
+// through redact.Chunks, not per-chunk redact.Text, so a private-key body that
+// tiles across more than one chunk -- whose middle chunk carries no PEM marker
+// for a per-chunk scan to trigger on -- is still masked rather than stored as raw
+// key material (C4). The returned count is the chunk pass alone: chunkStructured
+// tiles every non-blank line, so a single-line credential appears in exactly one
+// chunk, while signatures, doc comments, resource values and edge targets are
+// derived views of that same text -- counting them too would report one
+// credential as two or three. A key spanning several chunks counts once per
+// masked chunk fragment.
 func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawEdge, []store.Chunk, int) {
 	syms := make([]store.Symbol, len(r.Symbols))
 	for i, s := range r.Symbols {
@@ -513,12 +517,14 @@ func mapResult(r extract.Result) ([]store.Symbol, []store.Resource, []store.RawE
 		raw, _ := redact.Text(e.Raw)
 		edges[i] = store.RawEdge{SrcName: e.SrcName, Kind: e.Kind, Raw: raw, Line: e.Line}
 	}
-	redacted := 0
+	texts := make([]string, len(r.Chunks))
+	for i, c := range r.Chunks {
+		texts[i] = c.Text
+	}
+	maskedTexts, redacted := redact.Chunks(texts)
 	chunks := make([]store.Chunk, len(r.Chunks))
 	for i, c := range r.Chunks {
-		text, n := redact.Text(c.Text)
-		redacted += n
-		chunks[i] = store.Chunk{StartLine: c.StartLine, EndLine: c.EndLine, Text: text}
+		chunks[i] = store.Chunk{StartLine: c.StartLine, EndLine: c.EndLine, Text: maskedTexts[i]}
 	}
 	return syms, ress, edges, chunks, redacted
 }

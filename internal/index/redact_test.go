@@ -183,3 +183,28 @@ func TestFilesRedactedCountsCredentialsOncePerFile(t *testing.T) {
 		t.Fatalf("after removing credentials: files.redacted = %d, want 0", got)
 	}
 }
+
+// C4 at rest: a private-key body longer than one chunk window tiles into a
+// middle chunk that carries no BEGIN/END marker. Per-chunk redact.Text scans for
+// a marker and skips such a chunk, so it would be stored as raw key material.
+// mapResult routes chunk text through redact.Chunks, which masks a marker-free
+// chunk seen while a key opened by an earlier BEGIN has not been closed -- this
+// pins that mapResult uses that path, so a revert to per-chunk Text fails here.
+func TestMapResultMasksMarkerFreeMiddleChunk(t *testing.T) {
+	body := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj"
+	r := extract.Result{Chunks: []extract.Chunk{
+		{StartLine: 1, EndLine: 3, Text: "-----BEGIN RSA PRIVATE KEY-----\n" + body + "\n" + body},
+		{StartLine: 4, EndLine: 5, Text: body + "\n" + body}, // marker-free middle: raw key body
+		{StartLine: 6, EndLine: 7, Text: body + "\n-----END RSA PRIVATE KEY-----"},
+	}}
+	_, _, _, chunks, n := mapResult(r)
+	if strings.Contains(chunks[1].Text, body) {
+		t.Fatalf("marker-free middle chunk stored raw key body at rest (C4): %q", chunks[1].Text)
+	}
+	if chunks[1].Text != redact.Mask {
+		t.Fatalf("middle chunk not masked wholesale: %q", chunks[1].Text)
+	}
+	if n < 3 {
+		t.Fatalf("count = %d, want >= 3 (head, middle, tail each masked)", n)
+	}
+}

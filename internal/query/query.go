@@ -801,7 +801,15 @@ func (q *Querier) SimilarCode(ctx context.Context, text string) ([]store.ChunkHi
 	}
 	defer release()
 	if q.inf == nil || !q.s.VectorsReady() {
-		return q.searchChunksRanked(text, DefaultLimit)
+		fts, err := q.searchChunksRanked(text, DefaultLimit)
+		if err != nil {
+			return nil, err
+		}
+		// Doc matching is lexical, not model-driven, so it must reach this
+		// no-inferencer tier too. The tier-ordered lexical list leads; the doc
+		// list is additive and passed last, so it adds recall without demoting a
+		// lexical hit (see fuseRRF, constraint C5).
+		return fuseRRF(DefaultLimit, fts, q.docChunks(text, DefaultLimit)), nil
 	}
 	return q.hybrid(ctx, text, DefaultLimit)
 }
@@ -993,56 +1001,25 @@ func isDocOrLocalePath(p string) bool {
 	return false
 }
 
-// hybrid embeds the query, runs vector KNN and FTS, and fuses by RRF, falling
-// back to FTS alone if embedding fails.
+// hybrid embeds the query, runs vector KNN, and fuses vector + lexical + doc
+// signals by RRF. If embedding fails it fuses the lexical and doc signals alone.
+// The doc list is always passed last so it can only add recall, never demote a
+// vector or lexical hit (see fuseRRF, constraint C5).
 func (q *Querier) hybrid(ctx context.Context, text string, k int) ([]store.ChunkHit, error) {
 	fts, err := q.searchChunksRanked(text, k)
 	if err != nil {
 		return nil, err
 	}
+	docs := q.docChunks(text, k)
 	vecs, err := q.inf.Embed(ctx, []string{text})
 	if err != nil || len(vecs) == 0 {
-		return fts, nil
+		return fuseRRF(k, fts, docs), nil
 	}
 	vhits, err := q.s.VectorSearch(vecs[0], k)
 	if err != nil {
-		return fts, nil
+		return fuseRRF(k, fts, docs), nil
 	}
-	return fuseRRF(vhits, fts, k), nil
-}
-
-// fuseRRF merges two ranked lists by reciprocal rank fusion, deduped by file:line.
-func fuseRRF(a, b []store.ChunkHit, limit int) []store.ChunkHit {
-	const k0 = 60.0
-	type agg struct {
-		hit   store.ChunkHit
-		score float64
-	}
-	m := map[string]*agg{}
-	var order []string
-	add := func(list []store.ChunkHit) {
-		for rank, h := range list {
-			key := h.File + ":" + strconv.Itoa(h.StartLine)
-			e, ok := m[key]
-			if !ok {
-				e = &agg{hit: h}
-				m[key] = e
-				order = append(order, key)
-			}
-			e.score += 1.0 / (k0 + float64(rank+1))
-		}
-	}
-	add(a)
-	add(b)
-	sort.SliceStable(order, func(i, j int) bool { return m[order[i]].score > m[order[j]].score })
-	out := make([]store.ChunkHit, 0, limit)
-	for _, k := range order {
-		if len(out) >= limit {
-			break
-		}
-		out = append(out, m[k].hit)
-	}
-	return out
+	return fuseRRF(k, vhits, fts, docs), nil
 }
 
 // SmartResult is the assist-augmented search result.

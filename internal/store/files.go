@@ -18,6 +18,7 @@ type File struct {
 	Hash      string
 	MTime     int64
 	IndexedAt int64
+	Redacted  int64 // count of secret values masked in this file at index time
 }
 
 // ModuleImportLang reports whether a language's import targets are module
@@ -39,12 +40,13 @@ func (s *Store) UpsertFile(f File) (int64, error) {
 		f.IndexedAt = time.Now().Unix()
 	}
 	_, err := s.sql().Exec(`
-		INSERT INTO files(rel_path,lang,role,size,hash,mtime,indexed_at)
-		VALUES(?,?,?,?,?,?,?)
+		INSERT INTO files(rel_path,lang,role,size,hash,mtime,indexed_at,redacted)
+		VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(rel_path) DO UPDATE SET
 			lang=excluded.lang, role=excluded.role, size=excluded.size,
-			hash=excluded.hash, mtime=excluded.mtime, indexed_at=excluded.indexed_at`,
-		f.RelPath, f.Lang, nullStr(f.Role), f.Size, f.Hash, f.MTime, f.IndexedAt)
+			hash=excluded.hash, mtime=excluded.mtime, indexed_at=excluded.indexed_at,
+			redacted=excluded.redacted`,
+		f.RelPath, f.Lang, nullStr(f.Role), f.Size, f.Hash, f.MTime, f.IndexedAt, f.Redacted)
 	if err != nil {
 		return 0, err
 	}

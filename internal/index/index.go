@@ -187,16 +187,16 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 		if !fp.hasExt {
 			continue
 		}
+		syms, ress, edges, chunks, redacted := mapResult(fp.res)
+		sum.Redacted += redacted
 		fid, err := s.UpsertFile(store.File{
 			RelPath: fp.rel, Lang: fp.lang, Role: graph.InferRole(fp.rel, fp.lang),
-			Size: fp.size, Hash: fp.hash, MTime: fp.mtime,
+			Size: fp.size, Hash: fp.hash, MTime: fp.mtime, Redacted: int64(redacted),
 		})
 		if err != nil {
 			drain()
 			return sum, err
 		}
-		syms, ress, edges, chunks, redacted := mapResult(fp.res)
-		sum.Redacted += redacted
 		if err := s.ReplaceFileGraph(fid, syms, ress, edges, chunks); err != nil {
 			drain()
 			return sum, err

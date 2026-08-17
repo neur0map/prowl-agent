@@ -21,7 +21,7 @@ import (
 var schemaSQL string
 
 // SchemaVersion is bumped whenever Open must migrate an existing cache.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // ErrGenerationIncomplete indicates that a failed refresh deliberately withheld
 // publication and readers must wait for a successful repair.
@@ -156,6 +156,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate symbols complexity: %w", err)
 	}
+	if _, err := tx.Exec(`ALTER TABLE files ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		_ = tx.Rollback()
+		db.Close()
+		return nil, fmt.Errorf("migrate files redacted: %w", err)
+	}
 	if _, err := tx.Exec(`INSERT INTO meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion); err != nil {
 		_ = tx.Rollback()
 		db.Close()
@@ -218,6 +223,9 @@ func OpenContext(ctx context.Context, path string) (*Store, error) {
 	}
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE symbols ADD COLUMN complexity INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return rollback(fmt.Errorf("migrate symbols complexity: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE files ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return rollback(fmt.Errorf("migrate files redacted: %w", err))
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion); err != nil {
 		return rollback(fmt.Errorf("set schema_version: %w", err))

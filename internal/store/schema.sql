@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS files (
   size       INTEGER NOT NULL,
   hash       TEXT NOT NULL,
   mtime      INTEGER NOT NULL,
-  indexed_at INTEGER NOT NULL
+  indexed_at INTEGER NOT NULL,
+  redacted   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS symbols (

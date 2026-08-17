@@ -164,3 +164,31 @@ func (s *Store) MostComplex(limit int) ([]FuncSpan, error) {
 	}
 	return out, rows.Err()
 }
+
+// RedactedFileCount pairs a file with how many secret values were masked in it.
+type RedactedFileCount struct {
+	File  string
+	Count int
+}
+
+// FilesWithRedactions returns files that had at least one value masked at index
+// time, with the per-file count, ordered by path. The count is persisted in
+// files.redacted by the indexer, so it is durable evidence a secret was removed
+// -- independent of any chunk text, which is why doctor does not scan for the
+// mask marker (the source that defines the marker would falsely match).
+func (s *Store) FilesWithRedactions() ([]RedactedFileCount, error) {
+	rows, err := s.sql().Query(`SELECT rel_path, redacted FROM files WHERE redacted > 0 ORDER BY rel_path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RedactedFileCount
+	for rows.Next() {
+		var r RedactedFileCount
+		if err := rows.Scan(&r.File, &r.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

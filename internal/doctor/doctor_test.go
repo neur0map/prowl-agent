@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/prowl-agent/prowl-agent/internal/config"
@@ -152,34 +153,66 @@ func TestCheckUnindexedLanguages(t *testing.T) {
 }
 
 // Masking protects the index; reporting is what lets a human fix the repository.
-// The finding keys off the mask marker stored in a chunk -- the durable record
-// that a value was removed at index time -- not off a transient index-run
-// counter, so a doctor run over an already-built index still reports it.
+// The finding keys off the per-file redaction count the indexer persists
+// (files.redacted) -- the durable record that a value was removed at index time
+// -- so a doctor run over an already-built index still reports it, with the count
+// and a warning severity.
 func TestDoctorReportsHardcodedSecrets(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	fid, err := s.UpsertFile(store.File{RelPath: "config.py", Lang: "python", Role: "source", Hash: "h", Size: 1, MTime: 1})
+	if _, err := s.UpsertFile(store.File{RelPath: "config.py", Lang: "python", Role: "source", Hash: "h", Size: 1, MTime: 1, Redacted: 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Run(s, config.Rules{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *Finding
+	for i := range rep.Findings {
+		if rep.Findings[i].Check == "hardcoded_secret" && rep.Findings[i].File == "config.py" {
+			found = &rep.Findings[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no hardcoded_secret finding in %+v", rep.Findings)
+	}
+	if found.Severity != SevWarn {
+		t.Errorf("severity = %q, want %q", found.Severity, SevWarn)
+	}
+	if !strings.Contains(found.Detail, "2") {
+		t.Errorf("detail %q should report the count 2", found.Detail)
+	}
+}
+
+// A file whose source legitimately contains the mask string -- redact.go itself
+// defines const Mask = "[redacted]" -- but had nothing masked (files.redacted 0)
+// must not be reported. This is the defect R25 fixed: keying off chunk text made
+// prowl flag the file that defines the marker.
+func TestDoctorIgnoresMaskStringInSource(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	fid, err := s.UpsertFile(store.File{RelPath: "redact.go", Lang: "go", Role: "source", Hash: "h", Size: 1, MTime: 1, Redacted: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	must(t, s.ReplaceFileGraph(fid, nil, nil, nil, []store.Chunk{
-		{StartLine: 1, EndLine: 1, Text: `STRIPE_TOKEN = "` + redact.Mask + `"`},
+		{StartLine: 1, EndLine: 1, Text: `const Mask = "` + redact.Mask + `"`},
 	}))
 
 	rep, err := Run(s, config.Rules{}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found bool
 	for _, f := range rep.Findings {
-		if f.Check == "hardcoded_secret" && f.File == "config.py" {
-			found = true
+		if f.Check == "hardcoded_secret" {
+			t.Fatalf("mask string in source was falsely flagged: %+v", f)
 		}
-	}
-	if !found {
-		t.Fatalf("no hardcoded_secret finding in %+v", rep.Findings)
 	}
 }

@@ -16,7 +16,6 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/parse"
-	"github.com/prowl-agent/prowl-agent/internal/redact"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
@@ -386,13 +385,16 @@ func checkDangling(s *store.Store, _ Options) ([]Finding, error) {
 	return out, nil
 }
 
-// hardcodedSecrets reports files where a credential was masked at index time. The
-// mask marker is the durable evidence: the value itself was never stored, so the
-// check keys off the marker in chunks rather than a transient index-run counter.
-// It is a warning, not an error: the secret is already neutralised in the index,
-// so this is a repository-hygiene signal (doctor --fail-on gates CI when needed).
+// hardcodedSecrets reports files where a credential was masked at index time,
+// reading the per-file count the indexer persisted in files.redacted. That
+// persisted count is the durable evidence: it records that a value was removed
+// while the value itself was never stored. The check must not scan chunk text
+// for the mask marker -- the source that defines the marker (redact.go's
+// const Mask) would then be falsely reported as holding a credential. It is a
+// warning, not an error: the secret is already neutralised in the index, so this
+// is a repository-hygiene signal (doctor --fail-on gates CI when needed).
 func hardcodedSecrets(s *store.Store, _ Options) ([]Finding, error) {
-	rows, err := s.ChunksContainingMarker(redact.Mask)
+	rows, err := s.FilesWithRedactions()
 	if err != nil {
 		return nil, err
 	}

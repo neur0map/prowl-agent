@@ -17,7 +17,7 @@ func TestDocFieldIsSearchableIndependentlyOfChunkText(t *testing.T) {
 	}}, nil, nil, []Chunk{{StartLine: 10, EndLine: 20, Text: "def redact_text(s):\n    return _PATTERNS.sub(_mask, s)"}}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.SearchDocs("secret logs", 10)
+	hits, err := s.SearchDocComments("secret logs", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,22 +47,22 @@ func TestDocFTSFollowsReplaceAndDelete(t *testing.T) {
 		}
 	}
 	put("alphaunique brings the listener online")
-	if hits, _ := s.SearchDocs("alphaunique", 10); len(hits) != 1 {
-		t.Fatalf("SearchDocs(alphaunique) = %+v, want 1", hits)
+	if hits, _ := s.SearchDocComments("alphaunique", 10); len(hits) != 1 {
+		t.Fatalf("SearchDocComments(alphaunique) = %+v, want 1", hits)
 	}
 
 	put("betaunique takes the listener offline")
-	if hits, _ := s.SearchDocs("alphaunique", 10); len(hits) != 0 {
+	if hits, _ := s.SearchDocComments("alphaunique", 10); len(hits) != 0 {
 		t.Fatalf("stale doc still indexed after replace: %+v", hits)
 	}
-	if hits, _ := s.SearchDocs("betaunique", 10); len(hits) != 1 {
+	if hits, _ := s.SearchDocComments("betaunique", 10); len(hits) != 1 {
 		t.Fatalf("replaced doc not indexed: %+v", hits)
 	}
 
 	if err := s.DeleteFileByPath("svc.go"); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.SearchDocs("betaunique", 10); len(hits) != 0 {
+	if hits, _ := s.SearchDocComments("betaunique", 10); len(hits) != 0 {
 		t.Fatalf("fts_docs not cleaned after delete: %+v", hits)
 	}
 }

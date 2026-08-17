@@ -2,17 +2,18 @@ package store
 
 import "strings"
 
-// SearchDocs matches a query against symbol doc comments only. Doc prose is
-// high-signal and short; scoring it inside its enclosing chunk lets thirty lines
-// of imports outweigh eight lines of English, so the doc comment gets its own
-// FTS field, ranked here by bm25 over that field alone.
+// SearchDocComments matches a query against symbol doc comments only (distinct
+// from the external-docs `search_docs` surface). Doc prose is high-signal and
+// short; scoring it inside its enclosing chunk lets thirty lines of imports
+// outweigh eight lines of English, so the doc comment gets its own FTS field,
+// ranked here by bm25 over that field alone.
 //
 // The terms are ANDed rather than treated as one adjacent phrase: a doc that
 // answers "keep secrets out of the log file" reads "secret redaction for logs",
 // where the query words are present but not contiguous. Each term is quoted via
 // ftsTerms so punctuation cannot trigger an FTS5 syntax error; a query that is
 // all stopwords or too-short tokens falls back to the quoted phrase.
-func (s *Store) SearchDocs(query string, limit int) ([]SymbolHit, error) {
+func (s *Store) SearchDocComments(query string, limit int) ([]SymbolHit, error) {
 	match := strings.Join(ftsTerms(query), " AND ")
 	if match == "" {
 		match = ftsQuote(query)

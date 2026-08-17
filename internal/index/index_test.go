@@ -759,18 +759,18 @@ func TestReindexUpdatesStoredDoc(t *testing.T) {
 	if _, err := Index(s, root, nil); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.SearchDocs("alphaunique", 10); len(hits) != 1 {
-		t.Fatalf("SearchDocs(alphaunique) after first index = %+v, want 1", hits)
+	if hits, _ := s.SearchDocComments("alphaunique", 10); len(hits) != 1 {
+		t.Fatalf("SearchDocComments(alphaunique) after first index = %+v, want 1", hits)
 	}
 
 	write("betaunique takes the listener offline")
 	if _, err := Index(s, root, nil); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.SearchDocs("alphaunique", 10); len(hits) != 0 {
+	if hits, _ := s.SearchDocComments("alphaunique", 10); len(hits) != 0 {
 		t.Fatalf("stale doc still searchable after reindex: %+v", hits)
 	}
-	if hits, _ := s.SearchDocs("betaunique", 10); len(hits) != 1 {
+	if hits, _ := s.SearchDocComments("betaunique", 10); len(hits) != 1 {
 		t.Fatalf("updated doc not searchable after reindex: %+v", hits)
 	}
 }

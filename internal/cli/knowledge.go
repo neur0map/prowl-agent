@@ -169,7 +169,7 @@ func newKnowledgeShowCmd() *cobra.Command {
 }
 
 func newKnowledgeLintCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, repair bool
 	command := &cobra.Command{
 		Use: "lint", Short: "Check links, IDs, temporal ranges, evidence, and anchor freshness",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -177,15 +177,29 @@ func newKnowledgeLintCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var repairs []knowledge.AnchorRepair
+			if repair {
+				if repairs, err = repo.RepairAnchors(ws.Root, extract.SymbolRange); err != nil {
+					return err
+				}
+			}
 			findings, err := repo.Lint(ws.Root, extract.SymbolRange)
 			if err != nil {
 				return err
 			}
 			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(findings)
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+					Repairs  []knowledge.AnchorRepair `json:"repairs,omitempty"`
+					Findings []knowledge.Finding      `json:"findings"`
+				}{Repairs: repairs, Findings: findings})
+			}
+			for _, item := range repairs {
+				fmt.Fprintf(cmd.OutOrStdout(), "[REPAIR ] %-36s %s\n            moved to lines %d-%d\n", "knowledge.moved_anchor", item.Document, item.ToStart, item.ToEnd)
 			}
 			if len(findings) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "Knowledge health: no findings.")
+				if len(repairs) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "Knowledge health: no findings.")
+				}
 				return nil
 			}
 			for _, finding := range findings {
@@ -195,6 +209,7 @@ func newKnowledgeLintCmd() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	command.Flags().BoolVar(&repair, "repair", false, "rewrite the line range of anchors whose content moved, then report what remains")
 	return command
 }
 

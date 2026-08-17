@@ -46,10 +46,14 @@ func (r *Repository) SyncStore(target *store.Store, sourceRoot string, now time.
 		for index, anchor := range doc.Prowl.Anchors {
 			check := CheckAnchor(sourceRoot, anchor)
 			anchorMetadata, _ := json.Marshal(anchor)
+			// A moved anchor is indexed at the lines its content occupies now, so
+			// retrieval cites a location that resolves; the document keeps its
+			// authored range until a repair rewrites it.
+			lineStart, lineEnd := check.Region()
 			anchors = append(anchors, store.SourceAnchor{
 				ID:          stableID("anchor", conceptID, strconv.Itoa(index), anchor.Path, anchor.ContentHash),
 				KnowledgeID: knowledgeID, URI: "file://" + filepath.ToSlash(anchor.Path),
-				LineStart: anchor.LineStart, LineEnd: anchor.LineEnd,
+				LineStart: lineStart, LineEnd: lineEnd,
 				ContentHash: anchor.ContentHash, RegionHash: check.Actual,
 				Status: string(check.Status), CheckedAt: now.UTC().Format(time.RFC3339),
 				MetadataJSON: string(anchorMetadata),

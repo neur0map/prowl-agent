@@ -38,7 +38,10 @@ func knowledgeCandidates(repo *knowledge.Repository, sourceRoot, query string) (
 				if check.Status != knowledge.AnchorCurrent {
 					freshness = string(check.Status)
 				}
-				citations = append(citations, Citation{URI: sourceResourceURI(anchor.Path), Path: filepath.ToSlash(anchor.Path), LineStart: anchor.LineStart, LineEnd: anchor.LineEnd, ContentHash: anchor.ContentHash})
+				// A moved anchor's evidence is intact, so cite where the lines are
+				// now instead of sending the agent to coordinates that shifted.
+				lineStart, lineEnd := check.Region()
+				citations = append(citations, Citation{URI: sourceResourceURI(anchor.Path), Path: filepath.ToSlash(anchor.Path), LineStart: lineStart, LineEnd: lineEnd, ContentHash: anchor.ContentHash})
 			}
 		}
 		id := doc.Prowl.ID

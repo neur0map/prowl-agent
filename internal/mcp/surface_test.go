@@ -47,7 +47,7 @@ func TestCoreSurfaceIsSmallerAndLegacyStaysNineteen(t *testing.T) {
 	if len(legacyTools) != 20 {
 		t.Fatalf("legacy tool count = %d, want 20", len(legacyTools))
 	}
-	want := []string{"analyze_change", "find", "find_references", "get_context", "outline", "propose_knowledge_change", "read_symbol", "search_capabilities", "search_context", "search_docs", "sketch_ui", "validate_knowledge"}
+	want := []string{"analyze_change", "find", "find_references", "get_context", "history", "outline", "propose_knowledge_change", "read_symbol", "search_capabilities", "search_context", "search_docs", "sketch_ui", "span", "validate_knowledge"}
 	got := make([]string, len(coreTools))
 	for index, tool := range coreTools {
 		got[index] = tool.Name

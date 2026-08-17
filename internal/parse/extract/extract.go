@@ -18,6 +18,7 @@ type Symbol struct {
 	Name, Kind, Signature, Parent string
 	StartLine, EndLine            int
 	Complexity                    int
+	Doc                           string
 }
 
 // Resource is a shared value (color/font/path/var) declared or used in a file.

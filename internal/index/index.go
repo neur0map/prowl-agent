@@ -346,6 +346,13 @@ func parseFile(root, rel string, opt Options, force bool, known map[string]strin
 			Name: b[:len(b)-len(filepath.Ext(b))], Kind: "component", StartLine: 1, EndLine: 1,
 		})
 	}
+	// Attach each symbol's leading doc comment. The file is split into lines once
+	// here and reused across every symbol: doc extraction is per symbol on a
+	// 64k-symbol repository, so re-splitting per symbol would land on the
+	// cold-index hot path (C2). Skipped when the file yields no symbols.
+	if len(res.Symbols) > 0 {
+		extract.PopulateDocs(strings.Split(string(data), "\n"), res.Symbols)
+	}
 	if info, err := os.Stat(full); err == nil {
 		fp.mtime = info.ModTime().Unix()
 	}

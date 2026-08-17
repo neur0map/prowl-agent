@@ -40,7 +40,11 @@ All notable changes are recorded here. The format follows
   appended below the existing code results and never reorder them. Measured
   example: `search "keep secrets out of the log file"` returned `agent/redact.py`
   nowhere in 50 results before, and now returns it at rank 11 -- immediately below
-  an unchanged, byte-identical top ten of code matches. This recall applies to the
+  an unchanged, byte-identical top ten of code matches. Up to three doc answers are
+  inserted starting at rank 11, which shifts the results below them down by up to
+  three slots, so on a full page (`--limit 50`) a weak match near the very bottom
+  can be traded off the page for a doc answer surfaced at rank 11; the top ten and
+  the read window above the insertion never move. This recall applies to the
   CLI `search` and `--smart` commands and to the legacy MCP tools `similar_code`
   and `smart_search`. It does NOT apply to the core MCP surface's `search_context`
   tool, which retrieves over chunk text only, so an agent on `--mcp-surface core`

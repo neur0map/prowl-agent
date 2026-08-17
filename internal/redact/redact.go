@@ -44,6 +44,30 @@ var provider = regexp.MustCompile(
 // urlCreds matches the password field of a URL userinfo section.
 var urlCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)([^\s@/]{4,})(@)`)
 
+// placeholderPassword reports whether the userinfo password p is a documentation
+// placeholder rather than a real credential, so URL examples in prose --
+// "scheme://user:pass@host" -- survive byte-identical. urlCreds accepts a
+// four-character password, too short to separate a common placeholder from a
+// weak credential, so the ambiguous set is enumerated here. Raising the length
+// floor instead would miss real weak passwords, so the skip is by value.
+func placeholderPassword(p string) bool {
+	switch strings.ToLower(p) {
+	case "pass", "password", "passwd", "secret", "token", "user", "username",
+		"changeme", "example", "test", "xxx", "redacted", "yourpassword", "hunter2":
+		return true
+	}
+	if p != "" && strings.Trim(p, "*") == "" {
+		return true // wholly asterisks
+	}
+	if strings.HasPrefix(p, "<") && strings.HasSuffix(p, ">") {
+		return true // <angle-bracket placeholder>
+	}
+	if strings.HasPrefix(p, "${") && strings.HasSuffix(p, "}") {
+		return true // ${ENV_VAR} interpolation
+	}
+	return false
+}
+
 // PEM private keys are matched by three separate patterns applied in sequence
 // and unconditionally (see Text). A single alternation was the root cause of
 // three defects: Go's leftmost-match rule could prefer a start-anchored tail
@@ -125,7 +149,7 @@ func Text(s string) (string, int) {
 	})
 	s = urlCreds.ReplaceAllStringFunc(s, func(m string) string {
 		g := urlCreds.FindStringSubmatch(m)
-		if strings.Contains(g[2], Mask) {
+		if placeholderPassword(g[2]) || strings.Contains(g[2], Mask) {
 			return m
 		}
 		n++

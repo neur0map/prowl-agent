@@ -295,3 +295,26 @@ func TestTextMasksHeadChunkCutInMarkerDashes(t *testing.T) {
 		t.Fatalf("not idempotent: n=%d %q != %q", n2, got2, got)
 	}
 }
+
+// R23: URL userinfo in documentation uses placeholder passwords that the
+// four-character password floor cannot tell from real credentials. A documented
+// placeholder set is skipped so prose survives byte-identical, while a real weak
+// password is still masked.
+func TestTextSkipsPlaceholderURLPasswords(t *testing.T) {
+	identical := []string{
+		`# URLs containing userinfo -- scheme://user:pass@host`,
+		`# Match userinfo in both absolute (scheme://user:pass@host)`,
+		`conn := "scheme://user:<password>@host"`,
+		`db = "postgres://user:${DB_PASSWORD}@host:5432/db"`,
+	}
+	for _, in := range identical {
+		if got, n := Text(in); got != in || n != 0 {
+			t.Errorf("Text(%q) = %q, %d; want unchanged, 0", in, got, n)
+		}
+	}
+	real := `postgres://admin:sup3rs3cr3tpw@db:5432/prod`
+	got, n := Text(real)
+	if n != 1 || strings.Contains(got, "sup3rs3cr3tpw") || !strings.Contains(got, Mask) {
+		t.Errorf("Text(%q) = %q, %d; want the password masked", real, got, n)
+	}
+}

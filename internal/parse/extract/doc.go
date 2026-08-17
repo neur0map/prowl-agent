@@ -74,9 +74,14 @@ func DocSentence(doc string) string {
 // directly above it -- its leading doc comment. lines is the file split once by
 // the caller and shared across every symbol: doc extraction runs per symbol on
 // a large repository, so re-splitting the file for each symbol would put an
-// avoidable allocation on the cold-index hot path.
+// avoidable allocation on the cold-index hot path. A Doc already set by the
+// extractor (a Python docstring, which sits inside the body, not above it) is
+// left untouched, since that captured contract is the better summary.
 func PopulateDocs(lines []string, symbols []Symbol) {
 	for i := range symbols {
+		if symbols[i].Doc != "" {
+			continue
+		}
 		start := symbols[i].StartLine
 		// Nothing can sit above line 1, and a start past the file end is not a
 		// real position to walk up from; both cases carry no doc.

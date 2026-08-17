@@ -36,3 +36,34 @@ func TestDocCommentStartWalksContiguousComments(t *testing.T) {
 		t.Fatalf("DocCommentStart = %d, want 3 (blank line breaks the block)", got)
 	}
 }
+
+// A Python contract lives in the docstring that opens a def/class body, not in a
+// leading comment, so the upward comment walk never sees it. The extractor must
+// capture it into Symbol.Doc so this high-signal prose can be scored on its own.
+func TestPythonDocstringCaptured(t *testing.T) {
+	src := "class Redactor:\n" +
+		"    \"\"\"Log formatter that redacts secrets from all log messages.\"\"\"\n" +
+		"    def mask(self, s):\n" +
+		"        \"\"\"Mask any secret before it reaches the log file.\"\"\"\n" +
+		"        return s\n" +
+		"def plain():\n" +
+		"    return 1\n"
+	r := mustExtract(t, "python", src)
+	docOf := func(name string) string {
+		for _, s := range r.Symbols {
+			if s.Name == name {
+				return s.Doc
+			}
+		}
+		return "<no symbol>"
+	}
+	if got := docOf("Redactor"); got != "Log formatter that redacts secrets from all log messages." {
+		t.Errorf("class doc = %q", got)
+	}
+	if got := docOf("mask"); got != "Mask any secret before it reaches the log file." {
+		t.Errorf("method doc = %q", got)
+	}
+	if got := docOf("plain"); got != "" {
+		t.Errorf("function without a docstring should have empty Doc, got %q", got)
+	}
+}

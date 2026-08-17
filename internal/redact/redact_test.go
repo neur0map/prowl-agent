@@ -267,3 +267,31 @@ func TestTextMasksMultipleKeysInChunk(t *testing.T) {
 		})
 	}
 }
+
+// R17: a head chunk cut inside a marker's opening dash run leaves a trailing dash
+// run with no content after it. The trailing `-*` in pemBegin lets that body be
+// masked rather than leaking the key material. (A cut that runs past the opening
+// dashes into the END keyword, e.g. "...\n-----END RSA PRIVATE", shares the same
+// five-dash prefix the anchored bound must reject to stay safe against a live
+// marker, so it cannot be recovered without risking the P0 regression; it is
+// unreachable in practice given line-aligned chunking. See the R18 note.)
+func TestTextMasksHeadChunkCutInMarkerDashes(t *testing.T) {
+	in := "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234\n-----"
+	got, n := Text(in)
+	if n != 1 {
+		t.Fatalf("masked %d values, want 1: %q", n, got)
+	}
+	if strings.Contains(got, "MIIEowIBAAKCAQEA1234") {
+		t.Fatalf("key body survived: %q", got)
+	}
+	if !strings.Contains(got, "-----BEGIN RSA PRIVATE KEY-----") {
+		t.Fatalf("BEGIN marker lost: %q", got)
+	}
+	if !strings.Contains(got, Mask) {
+		t.Fatalf("no mask marker in %q", got)
+	}
+	got2, n2 := Text(got)
+	if n2 != 0 || got2 != got {
+		t.Fatalf("not idempotent: n=%d %q != %q", n2, got2, got)
+	}
+}

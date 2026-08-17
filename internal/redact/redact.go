@@ -52,12 +52,20 @@ var urlCreds = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)([^\s@/
 // what lets all three run unconditionally without one key's split half leaking
 // past another key that shares the chunk.
 //
-// The bound is expressed by pemBodyTemper below. Go's regexp is RE2 and has no
-// lookahead, so the body cannot be written as a tempered `-(?!----END)` token.
-// Instead the body admits runs of at most four dashes: the only five-dash runs in
-// a PEM stream are the BEGIN/END markers themselves (base64 payloads and headers
-// such as `DEK-Info` never contain five consecutive dashes), so refusing a
-// five-dash run makes the body stop exactly at the next marker.
+// The bound is expressed by pemBodyTemper below. Go's regexp is RE2, which has
+// no lookahead, so the body cannot be written as a tempered `-(?!----END)` token.
+// Instead the body admits runs of at most four dashes. The premise that makes
+// this sound: the only five-dash runs in a PEM stream are the BEGIN/END markers
+// themselves -- base64 payloads and headers such as `DEK-Info` never contain five
+// consecutive dashes. Both unpaired consumers are anchored (`$` for pemBegin, `^`
+// for pemEnd), so a five-dash run does NOT truncate the body; it makes the whole
+// match FAIL, because no bounded body can consume across the run to reach its
+// anchor. For a live marker of the opposite kind that failure is the intended
+// outcome -- the body stops before the marker and the marker survives. For a
+// marker truncated by a chunk cut it instead costs recall (the split half is left
+// unmasked), which is unreachable today because prowl chunks on line boundaries
+// (internal/parse/extract/extract.go splits on "\n"), so a five-dash marker always
+// sits wholly within one line and no chunk cut can truncate it.
 const pemBodyTemper = `(?:[^-]|-{1,4}[^-])*-{0,4}`
 
 // pemPaired matches a complete private key block: both markers with a body
@@ -65,9 +73,11 @@ const pemBodyTemper = `(?:[^-]|-{1,4}[^-])*-{0,4}`
 var pemPaired = regexp.MustCompile(`(?s)(-----BEGIN [A-Z ]*PRIVATE KEY-----)(.*?)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
 // pemBegin matches the head half of a key split across chunks: a BEGIN marker
-// whose body runs to end of input without crossing an END marker. The body is
-// masked; the marker is kept.
-var pemBegin = regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemBodyTemper + `)$`)
+// whose bounded body runs to end of input. The trailing `-*` lets the body absorb
+// a dash run left at a chunk boundary (a cut inside a marker's opening dashes),
+// which stays safe because a live END marker's five dashes are followed by `END `,
+// so `-*` before `$` cannot consume across one. The body is masked; marker kept.
+var pemBegin = regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemBodyTemper + `-*)$`)
 
 // pemEnd matches the tail half of a split key: a body from start of input that
 // reaches an END marker without crossing a BEGIN marker. The body is masked; the

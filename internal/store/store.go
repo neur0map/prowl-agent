@@ -143,6 +143,18 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Migrating an older index: drop the pre-fts_docs symbol triggers so the
+	// CREATE TRIGGER IF NOT EXISTS in the schema recreates them docs-aware. IF
+	// NOT EXISTS alone would keep a stale, docs-unaware trigger and leave
+	// fts_docs permanently empty. Gated on the same condition as the backup so a
+	// steady-state open performs no schema write.
+	if existed && current < SchemaVersion {
+		if _, err := tx.Exec(`DROP TRIGGER IF EXISTS symbols_ai; DROP TRIGGER IF EXISTS symbols_ad`); err != nil {
+			_ = tx.Rollback()
+			db.Close()
+			return nil, fmt.Errorf("drop legacy symbol triggers: %w", err)
+		}
+	}
 	if _, err := tx.Exec(schemaSQL); err != nil {
 		_ = tx.Rollback()
 		db.Close()
@@ -222,6 +234,14 @@ func OpenContext(ctx context.Context, path string) (*Store, error) {
 	}
 	rollback := func(err error) (*Store, error) {
 		return nil, errors.Join(boundedStoreOpenError(ctx, err), tx.Rollback(), db.Close())
+	}
+	// See Open: drop the pre-fts_docs symbol triggers only when migrating so the
+	// schema's CREATE TRIGGER IF NOT EXISTS recreates them docs-aware, while a
+	// steady-state open stays free of schema writes.
+	if existed && current < SchemaVersion {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS symbols_ai; DROP TRIGGER IF EXISTS symbols_ad`); err != nil {
+			return rollback(fmt.Errorf("drop legacy symbol triggers: %w", err))
+		}
 	}
 	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return rollback(fmt.Errorf("apply schema: %w", err))

@@ -7,6 +7,58 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Secrets are masked before they are stored, not filtered on the way out. prowl
+  indexes whatever a repository contains, credentials committed in source
+  included, and every retrieval path emits stored text into an agent's context,
+  so masking at storage time is the only way the on-disk index -- chunk text, the
+  FTS index, and the vectors -- never holds a cleartext secret. Five sinks are
+  masked: chunk text, symbol signatures, doc comments, resource values, and raw
+  dependency-edge text. This rewrites content on the next index of an existing
+  repository: a matched value becomes `[redacted]` in place, and because masking
+  is destructive and happens before storage there is no cleartext copy left to
+  recover -- the only way to restore a value is to remove the credential from
+  source and reindex. Masking is deliberately precise, covering only shapes
+  unambiguous enough to carry no false positives: provider-prefixed API keys (AWS,
+  GitHub, Slack, Google, Stripe, OpenAI/Anthropic), JWTs, the password field of a
+  URL userinfo section (including the username-less `redis://:pass@host` form),
+  and PEM private-key bodies. A homegrown credential with no vendor prefix -- a
+  random-looking value assigned to a secret-named variable, `API_KEY = "8f3k..."`
+  -- is deliberately NOT masked: a generic entropy/character-class heuristic was
+  measured masking ordinary camelCase identifiers at six real sites in this
+  repository, and destructive masking cannot afford a false positive, so it was
+  removed. Unreliable detection belongs in a non-destructive warning, never in
+  destructive masking.
+- `doctor` reports a `hardcoded_secret` finding, at `warn`, for each file that had
+  a value masked. The count comes from the per-file `files.redacted` column
+  written at index time -- durable evidence a secret was removed, independent of
+  the (now masked) chunk text -- so a repository that reported clean before will
+  show new `warn` findings once it is reindexed with this release, one per file
+  that contained a matched credential.
+- Doc comments are extracted, masked, and indexed as their own field, so a file
+  whose docstring answers a query surfaces even when its code shares none of the
+  query terms. This is a recall fix, not a reranking: doc-answer matches are
+  appended below the existing code results and never reorder them. Measured
+  example: `search "keep secrets out of the log file"` returned `agent/redact.py`
+  nowhere in 50 results before, and now returns it at rank 11 -- immediately below
+  an unchanged, byte-identical top ten of code matches. This recall applies to the
+  CLI `search` and `--smart` commands and to the legacy MCP tools `similar_code`
+  and `smart_search`. It does NOT apply to the core MCP surface's `search_context`
+  tool, which retrieves over chunk text only, so an agent on `--mcp-surface core`
+  does not get doc-comment recall.
+- `outline` (and the `outline` MCP tool) now states each symbol's purpose in one
+  sentence drawn from its doc comment, so a file's shape reads as intent and not
+  signatures alone; struct field comments no longer leak into the struct's own
+  signature.
+- `span <symbol>` (CLI and the `span` MCP tool) returns a symbol's current file
+  and line range plus a content digest, so an agent can tell whether the body it
+  planned to edit has drifted before editing against a stale range. The digest
+  hashes the symbol's current body bytes, not its position, so a symbol that moves
+  without changing keeps the same digest.
+- `history <symbol>` (CLI and the `history` MCP tool) returns the commits that
+  touched a symbol, newest first, from `git log -L` over the symbol's current line
+  range. Because `git log -L` cannot be combined with `--follow`, a symbol whose
+  file was renamed has its history truncated at the rename -- commits from before
+  the file's current path are not reached.
 - A documented versioning standard with two release channels
   (`docs/VERSIONING.md`). `var version` in `cmd/prowl-agent/main.go` is the one
   source of truth: every push to `unstable` advances the patch, and the tenth bump
@@ -80,6 +132,12 @@ All notable changes are recorded here. The format follows
   blob so the committed artifact has reproducible provenance.
 
 ### Changed
+- The index schema is bumped twice (v3 to v4, then v4 to v5) to store the per-file
+  redaction count and the masked doc-comment field. Opening an older index with
+  this release migrates it in place, backing up the old database first; the new
+  fields populate on the full reindex that upgrading to a new binary already
+  triggers, so an existing user's index is rebuilt once on the first command
+  after the upgrade.
 - `status` and `overview` no longer lump external module imports with broken
   references under one scary "dangling" count. Edges are now reported as
   resolved (point to a repo file), external (module/package deps, expected), and

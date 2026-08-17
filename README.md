@@ -123,6 +123,7 @@ prowl-agent overview            # project map: docs to read, roles, entrypoints,
 prowl-agent brief <path>        # cited orientation for a subsystem: size, languages, guides, key files (warm-start a subagent)
 prowl-agent find <name>         # locate a symbol (function, setting, keybind, component)
 prowl-agent def <name>          # read one symbol's source (signature + body), cited and bounded, not the whole file
+prowl-agent span <name>         # a symbol's current file+range plus a content digest, to spot drift before editing a stale range
 prowl-agent outline <path>      # a file's structure: symbols, signatures, line ranges (no bodies) -- grasp a file without reading it
 prowl-agent sketch <name|path>  # how a UI looks and behaves without a screenshot: QML, React (jsx/tsx), Go/lipgloss, or CSS
 prowl-agent search <text>       # search by meaning or text; --smart rewrites+reranks, --compact lists files only
@@ -132,6 +133,7 @@ prowl-agent impact <path>       # blast radius: count, subsystems, direct import
 prowl-agent relations <path>    # a file's symbols and include neighbors
 prowl-agent entrypoints <path>  # root files from which this file is reachable
 prowl-agent references <name>   # where a symbol is used: cited call sites (by name, or an id from find)
+prowl-agent history <name>      # commits that touched a symbol (git log -L), newest first -- why the code is the way it is
 prowl-agent clusters [name]     # subsystems (summaries); with a name, that subsystem's files
 prowl-agent hotspots            # files ranked by graph centrality, plus largest and most complex
 prowl-agent violations          # dangling refs, orphan scripts, hardcoded colors

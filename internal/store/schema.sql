@@ -70,19 +70,22 @@ END;
 CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
   INSERT INTO fts_chunks(fts_chunks, rowid, text) VALUES ('delete', old.id, old.text);
 END;
--- The symbol triggers maintain two FTS indexes and are recreated (DROP + CREATE,
--- not CREATE IF NOT EXISTS) on every schema apply, so an index built before
--- fts_docs existed does not keep its old, docs-unaware trigger and leave fts_docs
--- permanently empty. They reference symbols.doc, which is added by the ALTER in
--- Open/OpenContext; that ALTER runs after this schema, but the triggers only fire
--- on a later INSERT/DELETE (during indexing), by which point the column exists.
-DROP TRIGGER IF EXISTS symbols_ai;
-CREATE TRIGGER symbols_ai AFTER INSERT ON symbols BEGIN
+-- The symbol triggers maintain two FTS indexes. They are created IF NOT EXISTS
+-- so a steady-state Open is a no-op that never rewrites the schema -- an
+-- unconditional DROP + CREATE bumped SQLite's schema cookie on every open and
+-- invalidated other live connections' prepared statements. An index built
+-- before fts_docs existed carries an older, docs-unaware symbols_ai; IF NOT
+-- EXISTS alone would keep it and leave fts_docs permanently empty, so
+-- Open/OpenContext DROP both triggers only in the migration branch
+-- (current < SchemaVersion) before applying this schema, letting these recreate
+-- them docs-aware. They reference symbols.doc, added by the ALTER in
+-- Open/OpenContext after this schema; that is safe because a trigger resolves
+-- new.doc when it fires (during indexing), not when it is created.
+CREATE TRIGGER IF NOT EXISTS symbols_ai AFTER INSERT ON symbols BEGIN
   INSERT INTO fts_symbols(rowid, name, signature) VALUES (new.id, new.name, new.signature);
   INSERT INTO fts_docs(rowid, doc) VALUES (new.id, new.doc);
 END;
-DROP TRIGGER IF EXISTS symbols_ad;
-CREATE TRIGGER symbols_ad AFTER DELETE ON symbols BEGIN
+CREATE TRIGGER IF NOT EXISTS symbols_ad AFTER DELETE ON symbols BEGIN
   INSERT INTO fts_symbols(fts_symbols, rowid, name, signature) VALUES ('delete', old.id, old.name, old.signature);
   INSERT INTO fts_docs(fts_docs, rowid, doc) VALUES ('delete', old.id, old.doc);
 END;

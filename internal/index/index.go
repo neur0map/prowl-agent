@@ -34,10 +34,6 @@ type Summary struct {
 	Deleted int // files removed from the index
 	Symbols int // symbols in the index (total)
 	Edges   int // edges in the index (total)
-	// Redacted is the number of secret values masked this run, counted from the
-	// chunk pass so each masked value is counted once (masking still runs at all
-	// sinks for C4). doctor reports secrets per file from the files.redacted column.
-	Redacted int
 }
 
 // Options controls which files and detected languages enter the structural
@@ -191,7 +187,6 @@ func indexWithOptions(ctx context.Context, s *store.Store, root string, opt Opti
 			continue
 		}
 		syms, ress, edges, chunks, redacted := mapResult(fp.res)
-		sum.Redacted += redacted
 		fid, err := s.UpsertFile(store.File{
 			RelPath: fp.rel, Lang: fp.lang, Role: graph.InferRole(fp.rel, fp.lang),
 			Size: fp.size, Hash: fp.hash, MTime: fp.mtime, Redacted: int64(redacted),

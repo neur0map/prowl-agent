@@ -31,12 +31,16 @@ func TestIndexNeverStoresSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	summary, err := Index(s, root, nil)
-	if err != nil {
+	if _, err := Index(s, root, nil); err != nil {
 		t.Fatal(err)
 	}
-	if summary.Redacted == 0 {
-		t.Fatal("summary reported no redactions")
+	// files.redacted is the durable record that a value was masked -- the same
+	// per-file count doctor reports. Assert through it rather than a summary
+	// field kept alive only by this line.
+	if rows, err := s.FilesWithRedactions(); err != nil {
+		t.Fatal(err)
+	} else if len(rows) == 0 {
+		t.Fatal("no file recorded a redaction")
 	}
 
 	rows, err := s.SearchChunks("credentials", 50)

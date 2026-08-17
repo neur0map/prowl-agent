@@ -108,10 +108,33 @@ var pemBegin = regexp.MustCompile(`(-----BEGIN [A-Z ]*PRIVATE KEY-----)(` + pemB
 // marker is kept.
 var pemEnd = regexp.MustCompile(`^(` + pemBodyTemper + `)(-----END [A-Z ]*PRIVATE KEY-----)`)
 
+// triggers are the literal substrings the patterns require: the provider
+// prefixes, the URL "://", the PEM "-----", and the quote characters that wrap
+// quoted values. A string containing none of them cannot match any pattern, so
+// Text returns it untouched without running a regex. The list is derived from
+// the patterns' own literals so the fast path cannot drift from what they match;
+// a new pattern with a new literal must add it here.
+var triggers = []string{`"`, `'`, "://", "-----", "sk_", "sk-", "pk_", "rk_", "gh", "xox", "AKIA", "AIza", "eyJ"}
+
+func hasTrigger(s string) bool {
+	for _, t := range triggers {
+		if strings.Contains(s, t) {
+			return true
+		}
+	}
+	return false
+}
+
 // Text masks every secret-shaped value in s, returning the result and how many
 // values were masked. The count is idempotent: running Text twice on the same
 // input masks nothing the second time.
 func Text(s string) (string, int) {
+	// Fast path: a string carrying no pattern literal cannot match, so skip the
+	// regex passes entirely. Most chunks, signatures, and edge targets have no
+	// credential shape at all, and this is lossless by construction (see triggers).
+	if !hasTrigger(s) {
+		return s, 0
+	}
 	n := 0
 
 	// PEM keys: all three patterns run unconditionally. The unpaired bodies are

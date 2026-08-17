@@ -6,17 +6,23 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/prowl-agent/prowl-agent/internal/parse/extract"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
 
 // OutlineSymbol is one entry in a file's structural skeleton: a symbol's kind,
-// name, signature, and line range, with Depth giving its nesting under enclosing
-// symbols (a method inside a class has depth 1). No body is included.
+// name, signature, one-sentence purpose, and line range, with Depth giving its
+// nesting under enclosing symbols (a method inside a class has depth 1). No body
+// is included. Doc is the first sentence of the symbol's leading doc comment, so
+// an outline answers "should I care about this file" with why, not only shape;
+// like Signature it is always emitted (no omitempty) so a file's symbols stay a
+// uniform TOON table rather than degrading to the verbose per-item form.
 type OutlineSymbol struct {
 	Depth     int    `json:"depth"`
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Signature string `json:"signature"`
+	Doc       string `json:"doc"`
 	LineStart int    `json:"line_start"`
 	LineEnd   int    `json:"line_end"`
 }
@@ -53,6 +59,12 @@ func (q *Querier) Outline(path string) (FileOutline, error) {
 	if err != nil {
 		return FileOutline{}, err
 	}
+	// Doc comments are fetched once for the whole file and joined by symbol id,
+	// so an outline states each symbol's purpose without a per-symbol query.
+	docs, err := q.s.SymbolDocsInFile(fileID)
+	if err != nil {
+		return FileOutline{}, err
+	}
 	out := FileOutline{File: rel, Symbols: make([]OutlineSymbol, 0, len(syms))}
 	var stack []store.SymbolHit
 	for _, s := range syms {
@@ -68,6 +80,7 @@ func (q *Querier) Outline(path string) (FileOutline, error) {
 			Kind:      s.Kind,
 			Name:      s.Name,
 			Signature: s.Signature,
+			Doc:       extract.DocSentence(docs[s.ID]),
 			LineStart: s.Line,
 			LineEnd:   s.EndLine,
 		})

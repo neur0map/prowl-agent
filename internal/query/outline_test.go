@@ -3,11 +3,96 @@ package query
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/prowl-agent/prowl-agent/internal/index"
 	"github.com/prowl-agent/prowl-agent/internal/store"
 )
+
+// outlineDocFixture is a Go file with a documented function and a struct whose
+// fields carry inline comments. It exercises both halves of task 7: the doc
+// comment must reach OutlineSymbol.Doc, and the inline field comments must never
+// leak into a struct's signature. It is written to a temp dir so the test does
+// not track edits to any real repository source file.
+func outlineDocFixture(t *testing.T) *Querier {
+	t.Helper()
+	dir := t.TempDir()
+	src := "package sample\n\n" +
+		"// Project holds the derived state for one indexed repository. It is the\n" +
+		"// unit of freshness the querier reasons about.\n" +
+		"type Project struct {\n" +
+		"\tName               string    // Name is the repo's short name.\n" +
+		"\tInferencerProvider Provider  // VectorProgress, when set, receives progress updates.\n" +
+		"\tcount              int\n" +
+		"}\n\n" +
+		"// ensureFresh brings the derived index up to date before any query is\n" +
+		"// served. A stale structural index is reindexed.\n" +
+		"func ensureFresh(p *Project) error {\n" +
+		"\treturn nil\n" +
+		"}\n\n" +
+		"func bare() int { return 0 }\n"
+	if err := os.WriteFile(filepath.Join(dir, "project.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	if _, err := index.Index(s, dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	return New(s)
+}
+
+// outline is the "should I care about this file" call. Returning shape without
+// purpose forces a second call (def or read) for almost every symbol.
+func TestOutlineCarriesPurpose(t *testing.T) {
+	out, err := outlineDocFixture(t).Outline("project.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, s := range out.Symbols {
+		if s.Name == "ensureFresh" {
+			found = true
+			if s.Doc == "" {
+				t.Fatal("ensureFresh has a doc comment but outline reported none")
+			}
+			if strings.Contains(s.Doc, "//") {
+				t.Fatalf("comment markers leaked into doc: %q", s.Doc)
+			}
+			// One sentence, not the whole comment: an outline that pastes a
+			// paragraph per symbol stops being an outline.
+			if strings.Contains(s.Doc, "reindexed") {
+				t.Fatalf("doc carried more than the first sentence: %q", s.Doc)
+			}
+		}
+		// A symbol with no doc comment must degrade to an empty Doc, never a
+		// placeholder like ABSENT.
+		if s.Name == "bare" && s.Doc != "" {
+			t.Fatalf("bare() has no doc comment but outline reported %q", s.Doc)
+		}
+	}
+	if !found {
+		t.Fatal("ensureFresh not found in outline")
+	}
+}
+
+// Struct field comments used to leak into the signature, truncated and with
+// markers inline, which wastes tokens and reads as garbage.
+func TestOutlineSignatureHasNoCommentText(t *testing.T) {
+	out, err := outlineDocFixture(t).Outline("project.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range out.Symbols {
+		if strings.Contains(s.Signature, "//") || strings.Contains(s.Signature, "/*") {
+			t.Fatalf("%s signature contains comment text: %q", s.Name, s.Signature)
+		}
+	}
+}
 
 func TestOutlineNestsSymbols(t *testing.T) {
 	dir := t.TempDir()

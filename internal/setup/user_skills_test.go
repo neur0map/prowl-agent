@@ -1000,57 +1000,58 @@ func TestUserIntegrationRollbackRemovesNewlyCreatedStateLeaf(t *testing.T) {
 	}
 }
 
-// TestUserIntegrationSerializesConcurrentApplies proves ApplyUserSkills takes
-// the shared user-state lock: while the lock is externally held the apply
-// provably cannot proceed (it would complete immediately if Apply were
-// unlocked), and once released the disjoint-client install merges rather than
-// dropping the leader's ownership records. All channel waits are bounded.
-// (Findings 1 + 3)
-func TestUserIntegrationSerializesConcurrentApplies(t *testing.T) {
+// TestUserIntegrationConcurrentApplyRejectedWhileLocked proves apply takes the
+// shared user-state lock with deterministic, bounded real contention: while the
+// lock is held, a synchronous apply given a short lock timeout fails fast with
+// the concrete already-in-progress error and writes nothing; once released the
+// same apply succeeds. No goroutine, no sleep. If apply did not take the lock,
+// it would install immediately and the error assertion would fail. (Finding 3)
+func TestUserIntegrationConcurrentApplyRejectedWhileLocked(t *testing.T) {
+	opts := newUserOpts(t)
+	plan := mustPlan(t, opts)
+
+	unlock, err := acquireUserStateLock(opts, setupLockTimeout)
+	if err != nil {
+		t.Fatalf("acquire state lock: %v", err)
+	}
+
+	before := treeState(t, opts.Home)
+	_, lockedErr := applyUserSkillsLocked(opts, plan, true, writeAtomicInRoot, 50*time.Millisecond)
+	after := treeState(t, opts.Home)
+	unlock()
+
+	if lockedErr == nil {
+		t.Fatal("apply proceeded while the state lock was held")
+	}
+	if !strings.Contains(lockedErr.Error(), "already in progress") {
+		t.Fatalf("expected the already-in-progress lock error, got: %v", lockedErr)
+	}
+	if after != before {
+		t.Fatalf("locked-out apply wrote assets")
+	}
+
+	// After release the same apply succeeds and installs.
+	if _, err := applyUserSkillsLocked(opts, plan, true, writeAtomicInRoot, setupLockTimeout); err != nil {
+		t.Fatalf("apply after lock release failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.Home, ".claude", "skills", "prowl", ".claude-plugin", "plugin.json")); err != nil {
+		t.Fatalf("apply after release did not install: %v", err)
+	}
+}
+
+// TestUserIntegrationDisjointClientInstallsRetainOwnership proves the merge is
+// based on the on-disk manifest read at apply time: installing a second,
+// disjoint client retains the first client's ownership records instead of
+// dropping them. (Findings 1 + 3, ownership-merge)
+func TestUserIntegrationDisjointClientInstallsRetainOwnership(t *testing.T) {
 	home := t.TempDir()
 	stateDir := t.TempDir()
 	claudeOpts := UserInstallOptions{Home: home, StateDir: stateDir, Version: "1.0.0", Clients: []string{"claude"}}
 	ompOpts := UserInstallOptions{Home: home, StateDir: stateDir, Version: "1.0.0", Clients: []string{"omp"}}
 
-	// Leader installs claude and records its ownership.
 	mustApply(t, claudeOpts)
-	ompPlan := mustPlan(t, ompOpts)
+	mustApply(t, ompOpts)
 
-	// Hold the shared user-state lock directly, standing in for a concurrent
-	// Prowl apply holding it.
-	unlock, err := acquireUserStateLock(claudeOpts)
-	if err != nil {
-		t.Fatalf("acquire state lock: %v", err)
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		_, e := ApplyUserSkills(ompOpts, ompPlan, true)
-		done <- e
-	}()
-
-	// While the lock is held, the omp apply must not proceed. An unlocked Apply
-	// would finish in milliseconds and this branch would fire, failing the test.
-	select {
-	case e := <-done:
-		unlock()
-		t.Fatalf("omp apply completed while the state lock was held (Apply is not locking): %v", e)
-	case <-time.After(500 * time.Millisecond):
-	}
-
-	unlock()
-
-	select {
-	case e := <-done:
-		if e != nil {
-			t.Fatalf("omp apply failed after the lock was released: %v", e)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("omp apply did not proceed after the lock was released")
-	}
-
-	// Disjoint-client installs both retain ownership: the waiter merged onto the
-	// leader's committed manifest instead of overwriting it.
 	m, err := loadUserManifest(claudeOpts)
 	if err != nil {
 		t.Fatal(err)
@@ -1065,7 +1066,7 @@ func TestUserIntegrationSerializesConcurrentApplies(t *testing.T) {
 		}
 	}
 	if !haveClaude || !haveOMP {
-		t.Fatalf("concurrent applies dropped ownership: claude=%v omp=%v", haveClaude, haveOMP)
+		t.Fatalf("second install dropped the first client's ownership: claude=%v omp=%v", haveClaude, haveOMP)
 	}
 }
 
@@ -1158,17 +1159,14 @@ func TestUserIntegrationRollbackReportsDirRemovalFailure(t *testing.T) {
 }
 
 // TestUserIntegrationAbortsOnManifestChangedBeforeCommit proves that if the
-// ownership manifest changes between the pre-apply snapshot and the commit --
-// as an external or older installer might do -- apply aborts and rolls back to
-// the prior manifest instead of overwriting it with new ownership state.
-// (Round-3 finding 1)
+// ownership manifest changes after the single locked read but before the
+// commit -- as an external or older installer might do -- apply aborts and
+// rolls back its asset mutations while leaving the external manifest change
+// untouched (the snapshot is enlisted only immediately before the manifest
+// write). (Round-4 findings 1 + 2)
 func TestUserIntegrationAbortsOnManifestChangedBeforeCommit(t *testing.T) {
 	opts := newUserOpts(t)
 	mustApply(t, opts)
-	priorState, err := os.ReadFile(manifestPath(opts))
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Delete plugin.json so the re-apply has one install write (triggering the seam).
 	pluginPath := filepath.Join(opts.Home, ".claude", "skills", "prowl", ".claude-plugin", "plugin.json")
 	if err := os.Remove(pluginPath); err != nil {
@@ -1176,12 +1174,13 @@ func TestUserIntegrationAbortsOnManifestChangedBeforeCommit(t *testing.T) {
 	}
 	plan := mustPlan(t, opts)
 
+	const foreign = `{"schema":1,"package_version":"x","assets":[]}` + "\n"
 	once := false
 	seam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
 		if !strings.HasSuffix(rel, "agent-assets.json") && !once {
 			once = true
 			// An external/older installer rewrites the ownership manifest mid-apply.
-			if err := os.WriteFile(manifestPath(opts), []byte(`{"schema":1,"package_version":"x","assets":[]}`+"\n"), 0o644); err != nil {
+			if err := os.WriteFile(manifestPath(opts), []byte(foreign), 0o644); err != nil {
 				return err
 			}
 		}
@@ -1191,13 +1190,14 @@ func TestUserIntegrationAbortsOnManifestChangedBeforeCommit(t *testing.T) {
 	if _, err := applyUserSkills(opts, plan, true, seam); err == nil {
 		t.Fatal("apply committed despite the manifest changing since the snapshot")
 	}
-	// Rolled back to the prior manifest -- not our new one, not the foreign one.
+	// The external manifest change survives: rollback does not restore the
+	// snapshot because it was never enlisted before the pre-commit abort.
 	got, err := os.ReadFile(manifestPath(opts))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(priorState) {
-		t.Fatalf("manifest not rolled back to the prior snapshot after abort")
+	if string(got) != foreign {
+		t.Fatalf("apply overwrote/rolled back the external manifest change; got:\n%s", got)
 	}
 	if _, err := os.Stat(pluginPath); !os.IsNotExist(err) {
 		t.Fatalf("reinstalled asset not rolled back after manifest-change abort")

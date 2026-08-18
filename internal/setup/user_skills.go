@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/prowl-agent/prowl-agent/skills"
 )
@@ -290,7 +291,7 @@ func stateManifestLocation(opts UserInstallOptions) (anchor string, rel string, 
 // directory without deleting the inode queued waiters may hold. Its containing
 // directory is created persistently (never rolled back) and symlink-checked;
 // the lock file itself is never removed. Lock and open errors are surfaced.
-func acquireUserStateLock(opts UserInstallOptions) (func(), error) {
+func acquireUserStateLock(opts UserInstallOptions, timeout time.Duration) (func(), error) {
 	base := userStateBase(opts)
 	anchor, err := deepestExistingDir(base)
 	if err != nil {
@@ -322,7 +323,7 @@ func acquireUserStateLock(opts UserInstallOptions) (func(), error) {
 		root.Close()
 		return nil, err
 	}
-	unlock, err := lockSetupFile(context.Background(), file, setupLockTimeout)
+	unlock, err := lockSetupFile(context.Background(), file, timeout)
 	if err != nil {
 		root.Close()
 		return nil, err
@@ -496,7 +497,17 @@ func PlanUserSkills(opts UserInstallOptions) (UserPlan, error) {
 	if err != nil {
 		return UserPlan{}, err
 	}
-	records := recordIndex(stored)
+	return planFromRecords(opts, recordIndex(stored))
+}
+
+// planFromRecords classifies every candidate against the filesystem using the
+// supplied ownership records. Apply uses this with records parsed from the same
+// single, locked manifest read that feeds the merge and the snapshot, so the
+// plan, the merge base, and the pre-commit snapshot can never disagree.
+func planFromRecords(opts UserInstallOptions, records map[string]userManifestEntry) (UserPlan, error) {
+	if opts.Home == "" {
+		return UserPlan{}, errUserHomeRequired
+	}
 	root, err := os.OpenRoot(opts.Home)
 	if err != nil {
 		return UserPlan{}, err
@@ -539,17 +550,27 @@ func ApplyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool) (Use
 	return applyUserSkills(opts, plan, approved, writeAtomicInRoot)
 }
 
-// applyUserSkills is the transactional core. It requires explicit approval, a
-// plan whose digest matches its own content, and a plan digest that still
-// matches the filesystem. It snapshots every touched file (including the
-// ownership manifest) and every directory it creates (including the state
-// directory) for in-memory rollback, rechecks each action's reviewed
-// precondition at the mutation point, applies the safe actions, and writes the
-// manifest last with an atomic replacement. Any failure restores every earlier
-// file and the prior manifest; a rollback failure is combined with the
-// initiating error. The write seam is a private argument so tests can force a
-// failure without a production fault-injection interface.
+// applyUserSkills is the production entry with the normal lock timeout.
 func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, write userWriter) (UserApplyResult, error) {
+	return applyUserSkillsLocked(opts, plan, approved, write, setupLockTimeout)
+}
+
+// applyUserSkillsLocked is the transactional core. It requires explicit
+// approval, a plan whose digest matches its own content, and a plan digest that
+// still matches the filesystem. Under the state lock it reads the manifest
+// exactly once and derives the merge base, the ownership records, and the
+// pre-commit snapshot from those identical bytes. It rechecks each action's
+// reviewed precondition at the mutation point, finalizes all unchanged assets in
+// one pass immediately before commit, revalidates the manifest against the
+// snapshot, and writes the manifest last with an atomic replacement.
+//
+// The manifest snapshot is enlisted in the transaction only immediately before
+// the manifest write: a pre-commit abort therefore rolls back this
+// transaction's asset mutations but leaves an external manifest change
+// untouched. The write seam and lock timeout are private arguments so tests can
+// force a mid-apply failure or a bounded lock contention without any production
+// fault-injection interface.
+func applyUserSkillsLocked(opts UserInstallOptions, plan UserPlan, approved bool, write userWriter, lockTimeout time.Duration) (UserApplyResult, error) {
 	if !approved {
 		return UserApplyResult{}, ErrApprovalRequired
 	}
@@ -558,22 +579,13 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	}
 
 	// Serialize concurrent Prowl applies on a persistent user-state lock, held
-	// from before fresh planning and manifest load through the per-action
-	// rechecks, the manifest commit, and any rollback. Disjoint client installs
-	// therefore cannot last-writer-win and drop each other's ownership records.
-	unlock, err := acquireUserStateLock(opts)
+	// from before the manifest read through the per-action rechecks, the
+	// pre-commit checks, the commit, and any rollback.
+	unlock, err := acquireUserStateLock(opts, lockTimeout)
 	if err != nil {
 		return UserApplyResult{}, err
 	}
 	defer unlock()
-
-	fresh, err := PlanUserSkills(opts)
-	if err != nil {
-		return UserApplyResult{}, err
-	}
-	if fresh.Digest != plan.Digest {
-		return UserApplyResult{}, ErrUserPlanStale
-	}
 
 	anchor, manifestRel, err := stateManifestLocation(opts)
 	if err != nil {
@@ -590,11 +602,22 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	}
 	defer stateRoot.Close()
 
-	prior, err := loadUserManifest(opts)
+	// One safely rooted manifest read feeds the merge base (prior), the
+	// ownership records, and the pre-commit snapshot -- so a later reread can
+	// never bless bytes different from the prior used for the merge.
+	manifestSnapshot, prior, err := loadUserStateUnderLock(stateRoot, manifestRel)
 	if err != nil {
 		return UserApplyResult{}, err
 	}
 	records := recordIndex(prior)
+
+	fresh, err := planFromRecords(opts, records)
+	if err != nil {
+		return UserApplyResult{}, err
+	}
+	if fresh.Digest != plan.Digest {
+		return UserApplyResult{}, ErrUserPlanStale
+	}
 
 	byID := make(map[string]userCandidate)
 	for _, candidate := range buildUserCandidates(opts) {
@@ -607,13 +630,6 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	if err := ensureUserDirs(stateRoot, manifestRel, txn); err != nil {
 		return rollbackUser(txn, err)
 	}
-	// Snapshot the manifest first so rollback restores the prior ownership even
-	// when the last write -- the manifest -- fails.
-	manifestSnapshot, err := snapshotUserFile(stateRoot, manifestRel)
-	if err != nil {
-		return rollbackUser(txn, err)
-	}
-	txn.files = append(txn.files, manifestSnapshot)
 
 	for _, action := range fresh.Actions {
 		candidate := byID[action.AssetID]
@@ -668,13 +684,18 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	// Manifest snapshot validation: reread the safely rooted manifest and
 	// confirm it still matches the snapshot exactly. If an external or older
 	// installer created, removed, replaced, symlinked, or changed it since the
-	// snapshot, abort and roll back rather than overwriting stale ownership.
+	// snapshot, abort and roll back. The snapshot is not yet enlisted, so this
+	// rollback leaves the external manifest change untouched.
 	if unchanged, err := manifestMatchesSnapshot(stateRoot, manifestRel, manifestSnapshot); err != nil {
 		return rollbackUser(txn, err)
 	} else if !unchanged {
 		return rollbackUser(txn, errUserManifestChanged)
 	}
 
+	// Enlist the manifest snapshot only now, immediately before the write, so a
+	// failed manifest write -- the only remaining step that can change it -- is
+	// rolled back to the prior bytes.
+	txn.files = append(txn.files, manifestSnapshot)
 	data, err := marshalUserManifest(mergeUserManifest(prior, opts, fresh))
 	if err != nil {
 		return rollbackUser(txn, err)
@@ -757,7 +778,8 @@ func marshalUserManifest(m userManifest) ([]byte, error) {
 
 // loadUserManifest reads the ownership manifest, returning an empty manifest
 // when the state directory or file does not yet exist, and rejecting a
-// symlinked state path.
+// symlinked state path. It is a read-only wrapper over loadUserStateUnderLock
+// for the preview and health paths.
 func loadUserManifest(opts UserInstallOptions) (userManifest, error) {
 	anchor, rel, err := stateManifestLocation(opts)
 	if err != nil {
@@ -768,18 +790,43 @@ func loadUserManifest(opts UserInstallOptions) (userManifest, error) {
 		return userManifest{}, err
 	}
 	defer root.Close()
-	data, err := readRootFile(root, rel)
+	_, prior, err := loadUserStateUnderLock(root, rel)
+	return prior, err
+}
+
+// loadUserStateUnderLock reads the ownership manifest exactly once through the
+// safely rooted state directory, returning both a byte snapshot for the
+// pre-commit comparison and the manifest parsed from those identical bytes, so
+// the merge base and the snapshot can never disagree. A missing manifest yields
+// an empty snapshot and manifest; a symlinked or non-regular manifest path is
+// rejected as a change.
+func loadUserStateUnderLock(stateRoot *os.Root, rel string) (userFileSnapshot, userManifest, error) {
+	clean, err := validateRootPath(stateRoot, rel)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return userManifest{}, nil
+		if errors.Is(err, errSymlinkDestination) {
+			return userFileSnapshot{}, userManifest{}, errUserManifestChanged
 		}
-		return userManifest{}, err
+		return userFileSnapshot{}, userManifest{}, err
 	}
-	var m userManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return userManifest{}, err
+	info, err := stateRoot.Lstat(clean)
+	if os.IsNotExist(err) {
+		return userFileSnapshot{root: stateRoot, rel: clean}, userManifest{}, nil
 	}
-	return m, nil
+	if err != nil {
+		return userFileSnapshot{}, userManifest{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return userFileSnapshot{}, userManifest{}, errUserManifestChanged
+	}
+	data, err := stateRoot.ReadFile(clean)
+	if err != nil {
+		return userFileSnapshot{}, userManifest{}, err
+	}
+	var prior userManifest
+	if err := json.Unmarshal(data, &prior); err != nil {
+		return userFileSnapshot{}, userManifest{}, err
+	}
+	return userFileSnapshot{root: stateRoot, rel: clean, existed: true, data: data, mode: info.Mode().Perm()}, prior, nil
 }
 
 // VerifyUserSkills reports per-asset integration health from the same plan the

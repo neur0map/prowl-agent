@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,4 +277,171 @@ func TestSearchAdvisoryNeverEchoesInput(t *testing.T) {
 			t.Errorf("advisory echoed caller input:\n%s", out.String())
 		}
 	}
+}
+
+// TestStreamsInteractive proves interactivity is judged from the exact streams
+// runSkills is handed, not process-global stdio: buffers and pipes are never
+// interactive even on a host that owns a TTY, while a real character device
+// (here /dev/null) still reads as a terminal so live behavior is preserved.
+func TestStreamsInteractive(t *testing.T) {
+	if streamsInteractive(&bytes.Buffer{}, &bytes.Buffer{}) {
+		t.Error("byte buffers classified as an interactive terminal")
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	if streamsInteractive(r, w) {
+		t.Error("an os.Pipe (a *os.File that is not a char device) classified as interactive")
+	}
+
+	reg, err := os.CreateTemp(t.TempDir(), "regular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+	if streamsInteractive(reg, reg) {
+		t.Error("a regular file classified as interactive")
+	}
+
+	dev, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dev.Close()
+	if !streamsInteractive(dev, dev) {
+		t.Error("a character device was not classified as interactive")
+	}
+}
+
+// TestSkillsPropagatesVerifyError proves a post-apply verification failure is a
+// hard error: runSkills returns it and prints no success/restart output, rather
+// than inventing a verified-and-done state after an unverifiable apply.
+func TestSkillsPropagatesVerifyError(t *testing.T) {
+	opts := skillsOpts(t)
+	verify := func(setup.UserInstallOptions) (setup.UserHealth, error) {
+		return setup.UserHealth{}, errors.New("verify boom")
+	}
+
+	var out bytes.Buffer
+	err := runSkillsWithVerifier(opts, strings.NewReader("y\n"), &out, true, verify)
+	if err == nil {
+		t.Fatal("runSkills swallowed a verification failure")
+	}
+	if !strings.Contains(err.Error(), "verify boom") {
+		t.Errorf("error did not propagate verify failure: %v", err)
+	}
+	if strings.Contains(strings.ToLower(out.String()), "restart") || strings.Contains(strings.ToLower(out.String()), "reload") {
+		t.Errorf("printed restart guidance after an unverifiable apply:\n%s", out.String())
+	}
+}
+
+// TestSkillsPreviewRendersUnchanged proves the preview lists every planned action,
+// including unchanged destinations, not only the mutating ones -- so a re-run
+// shows the full owned set rather than an empty plan.
+func TestSkillsPreviewRendersUnchanged(t *testing.T) {
+	opts := skillsOpts(t)
+	if _, err := setup.ApplyUserSkills(opts, mustPlanForSkills(t, opts), true); err != nil {
+		t.Fatalf("seed apply: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runSkills(opts, strings.NewReader(""), &out, false); err != nil {
+		t.Fatalf("runSkills: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, string(setup.UserActionUnchanged)) {
+		t.Errorf("preview omitted unchanged destinations:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "commands/search.md") {
+		t.Errorf("preview omitted an owned destination:\n%s", rendered)
+	}
+}
+
+func mustPlanForSkills(t *testing.T, opts setup.UserInstallOptions) setup.UserPlan {
+	t.Helper()
+	plan, err := setup.PlanUserSkills(opts)
+	if err != nil {
+		t.Fatalf("PlanUserSkills: %v", err)
+	}
+	return plan
+}
+
+// TestSearchAdvisoryConservativeShellClassification pins the quote-aware,
+// bounds-checked shell classifier: quoted separators are inert, a file- or
+// directory-bounded search is silent, only the command word (never the search
+// text) is treated as prowl-agent, and a broad search is not suppressed by an
+// adjacent Prowl invocation.
+func TestSearchAdvisoryConservativeShellClassification(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		advise  bool
+	}{
+		{"quoted separator is inert", "printf 'x | grep TODO'", false},
+		{"file-bounded grep", "grep TODO internal/cli/skills.go", false},
+		{"dir-bounded find", "find internal/cli", false},
+		{"prowl-agent as search text still advises", "rg prowl-agent .", true},
+		{"broad search after prowl-agent invocation", "prowl-agent status && grep -r TODO .", true},
+		{"prowl-agent invocation alone stays silent", "prowl-agent search TODO", false},
+		{"repo-wide grep still advises", "grep -rn TODO .", true},
+		{"pipeline grep still advises", "cat notes | grep TODO", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := `{"tool_name":"Bash","tool_input":{"command":` + mustJSON(t, tc.command) + `}}`
+			var out bytes.Buffer
+			if err := runSearchAdvisory(strings.NewReader(payload), &out); err != nil {
+				t.Fatalf("runSearchAdvisory: %v", err)
+			}
+			emitted := strings.TrimSpace(out.String()) != ""
+			if emitted != tc.advise {
+				t.Errorf("advise=%v, want %v (output=%q)", emitted, tc.advise, out.String())
+			}
+		})
+	}
+}
+
+// TestSearchAdvisoryShellEdgeCases pins two conservative refinements: a command
+// with unmatched quotes or a dangling escape is unparseable and stays silent
+// (fail closed), and a search whose pattern is attached to a flag is still
+// recognized as file/dir-bounded (no false-positive advisory).
+func TestSearchAdvisoryShellEdgeCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		advise  bool
+	}{
+		{"unmatched single quote fails closed", "rg 'TODO", false},
+		{"unmatched double quote fails closed", "grep -r \"TODO .", false},
+		{"dangling escape fails closed", "rg TODO \\", false},
+		{"attached short pattern is bounded", "grep -eTODO internal/cli/skills.go", false},
+		{"attached long pattern is bounded", "rg --regexp=TODO internal/cli/skills.go", false},
+		{"attached pattern repo-wide still advises", "grep -eTODO .", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := `{"tool_name":"Bash","tool_input":{"command":` + mustJSON(t, tc.command) + `}}`
+			var out bytes.Buffer
+			if err := runSearchAdvisory(strings.NewReader(payload), &out); err != nil {
+				t.Fatalf("runSearchAdvisory: %v", err)
+			}
+			emitted := strings.TrimSpace(out.String()) != ""
+			if emitted != tc.advise {
+				t.Errorf("advise=%v, want %v (output=%q)", emitted, tc.advise, out.String())
+			}
+		})
+	}
+}
+
+func mustJSON(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

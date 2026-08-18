@@ -58,16 +58,29 @@ func newSkillsCmd(version string) *cobra.Command {
 				Version: version,
 				Clients: setup.DetectInstalledHarnesses(),
 			}
-			return runSkills(opts, cmd.InOrStdin(), cmd.OutOrStdout(), interactiveTerminal())
+			in, out := cmd.InOrStdin(), cmd.OutOrStdout()
+			return runSkills(opts, in, out, streamsInteractive(in, out))
 		},
 	}
 }
 
+// userVerifier is the post-apply verification dependency. Production is
+// setup.VerifyUserSkills; a test injects a failing one to prove the error is
+// surfaced -- no shared mutable package state, no race.
+type userVerifier func(setup.UserInstallOptions) (setup.UserHealth, error)
+
 // runSkills is the presenter seam: injected input, output, and interactivity make
 // the preview, TTY gate, prompt, single apply, and restart guidance observable in
 // a unit test without a real terminal. It plans, renders, and -- only when
-// interactive and explicitly approved -- applies exactly once.
+// interactive and explicitly approved -- applies exactly once, verifying with the
+// production verifier.
 func runSkills(opts setup.UserInstallOptions, in io.Reader, out io.Writer, interactive bool) error {
+	return runSkillsWithVerifier(opts, in, out, interactive, setup.VerifyUserSkills)
+}
+
+// runSkillsWithVerifier is the injectable core; runSkills wires the production
+// verifier and tests wire a failing one.
+func runSkillsWithVerifier(opts setup.UserInstallOptions, in io.Reader, out io.Writer, interactive bool, verify userVerifier) error {
 	if len(opts.Clients) == 0 {
 		fmt.Fprintln(out, "No supported agent detected (looked for Claude and OMP); nothing to install.")
 		return nil
@@ -98,26 +111,31 @@ func runSkills(opts setup.UserInstallOptions, in io.Reader, out io.Writer, inter
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nInstalled %d change(s) for version %s.\n", countWrites(result.Actions), result.Version)
-	if health, err := setup.VerifyUserSkills(opts); err == nil {
-		fmt.Fprintf(out, "Verified %d asset(s) as current.\n", countCurrent(health))
+	// Verify before announcing success: an apply we cannot read back is an error,
+	// not a done state, so restart guidance is never printed over a broken install.
+	health, err := verify(opts)
+	if err != nil {
+		return err
 	}
+	fmt.Fprintf(out, "\nInstalled %d change(s) for version %s.\n", countWrites(result.Actions), result.Version)
+	fmt.Fprintf(out, "Verified %d asset(s) as current.\n", countCurrent(health))
 	renderRestart(out, opts.Clients)
 	return nil
 }
 
-// renderSkillsPlan prints the reviewable plan: every write it would make and
-// every destination it refuses to touch, with the reason. It carries no file
-// bodies and no absolute paths -- the plan is already home-relative.
+// renderSkillsPlan prints the reviewable plan in full: every planned action --
+// install, update, remove, and unchanged alike -- and every destination Prowl
+// refuses to touch, with the reason. It carries no file bodies and no absolute
+// paths; the plan is already home-relative. Write filtering lives only in the
+// apply/no-op/count decisions, never in what the user is shown.
 func renderSkillsPlan(out io.Writer, plan setup.UserPlan) {
 	fmt.Fprintf(out, "Prowl agent-skills install plan (version %s)\n", plan.Version)
 
-	writes := writeActions(plan)
-	if len(writes) == 0 {
-		fmt.Fprintln(out, "  (no changes)")
+	if len(plan.Actions) == 0 {
+		fmt.Fprintln(out, "  (no actions)")
 	} else {
-		fmt.Fprintln(out, "\nChanges:")
-		for _, action := range writes {
+		fmt.Fprintln(out, "\nActions:")
+		for _, action := range plan.Actions {
 			fmt.Fprintf(out, "  %-9s %-6s %s\n", action.Kind, action.Client, action.Destination)
 		}
 	}
@@ -194,14 +212,24 @@ func confirmYes(in io.Reader) bool {
 	}
 }
 
-// interactiveTerminal reports whether both stdin and stdout are terminals. A
-// write happens only when a human can actually review the prompt on the same
-// terminal that will read the answer, so a pipe on either side stays a preview.
-func interactiveTerminal() bool {
-	return isCharDevice(os.Stdin) && isCharDevice(os.Stdout)
+// streamsInteractive reports whether both of the exact streams the command was
+// handed are terminals. Judging the real streams -- not process-global stdio --
+// means an embedded command driven by buffers or pipes is a preview even on a
+// host that owns a TTY, while the default os.Stdin/os.Stdout still gate a live
+// prompt. A write happens only when a human can review it on the same terminal
+// that reads the answer.
+func streamsInteractive(in io.Reader, out io.Writer) bool {
+	return fileIsTerminal(in) && fileIsTerminal(out)
 }
 
-func isCharDevice(f *os.File) bool {
+// fileIsTerminal reports whether a stream is a character device. A non-*os.File
+// stream (a bytes.Buffer, a net pipe) is never a terminal, and an *os.File that
+// is a regular file or an anonymous pipe (FIFO) is not a character device.
+func fileIsTerminal(stream any) bool {
+	f, ok := stream.(*os.File)
+	if !ok {
+		return false
+	}
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
@@ -314,9 +342,13 @@ func grepGlobIsRepoWide(raw json.RawMessage) bool {
 	}
 }
 
-// bashRunsBroadSearch reports whether a Bash command runs rg/grep/find as a
-// command. A command that invokes prowl-agent is exactly the behavior the hook
-// wants, so it is never flagged.
+// bashRunsBroadSearch reports whether a Bash command runs a repository-wide
+// rg/grep/find. It tokenizes the command with a small quote-aware scanner (so a
+// separator or search word inside quotes is inert) and inspects each pipeline
+// segment: a segment is flagged only when its command word is a search binary
+// and its operands do not bound the search to a named file or subdirectory. A
+// segment whose command word is prowl-agent is never flagged -- but only that
+// segment, and only when prowl-agent is the command, never the search text.
 func bashRunsBroadSearch(raw json.RawMessage) bool {
 	var in struct {
 		Command string `json:"command"`
@@ -324,44 +356,197 @@ func bashRunsBroadSearch(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return false
 	}
-	command := in.Command
-	if command == "" || strings.Contains(command, "prowl-agent") {
-		return false
-	}
-	for _, segment := range shellSegments.Split(command, -1) {
-		if isSearchBinary(firstCommandToken(segment)) {
+	for _, segment := range shellSegments(in.Command) {
+		if segmentIsBroadSearch(segment) {
 			return true
 		}
 	}
 	return false
 }
 
-// shellSegments splits a command at pipeline and sequence separators so grep at
-// the head of any stage (`cat x | grep y`) is caught, without inspecting mere
-// arguments.
-var shellSegments = regexp.MustCompile(`\|\||&&|[|;\n]`)
+// segmentIsBroadSearch classifies one pipeline segment by its command word,
+// skipping leading VAR=value assignments. Only rg/grep/find with unbounded
+// operands is a broad search; every other command word -- prowl-agent included
+// -- is not.
+func segmentIsBroadSearch(tokens []string) bool {
+	i := 0
+	for i < len(tokens) && envAssignment.MatchString(tokens[i]) {
+		i++
+	}
+	if i >= len(tokens) {
+		return false
+	}
+	args := tokens[i+1:]
+	switch path.Base(tokens[i]) {
+	case "find":
+		return findIsRepoWide(args)
+	case "rg", "grep", "egrep", "fgrep":
+		return grepIsRepoWide(args)
+	default:
+		return false
+	}
+}
+
+// grepIsRepoWide reports whether a grep-family invocation is unbounded. Normally
+// the first non-flag operand is the pattern and any following operand is a file
+// or directory that bounds the search. When the pattern is attached to a flag
+// (-eTODO, -fFILE, --regexp=, --file=) there is no positional pattern, so every
+// operand is a path. A bare pattern (or a pipeline stage reading stdin) and a
+// repository-root operand (".", "./", "/") are repo-wide.
+func grepIsRepoWide(args []string) bool {
+	paths := nonFlagOperands(args)
+	if !patternAttachedToFlag(args) && len(paths) > 0 {
+		// The first positional operand is the pattern; the rest are paths.
+		paths = paths[1:]
+	}
+	if len(paths) == 0 {
+		return true
+	}
+	return pathsRepoWide(paths)
+}
+
+// patternAttachedToFlag reports whether a grep-family pattern is supplied through
+// a flag rather than a positional operand: --regexp=/--file= (long) or a short
+// cluster whose -e/-f option carries its value in the same token (-eTODO,
+// -neTODO, -fpatterns). A bare -e/-f (separate-form value) is not attached: its
+// value sits as the first positional operand and the default parsing already
+// treats it as the pattern.
+func patternAttachedToFlag(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--regexp=") || strings.HasPrefix(arg, "--file=") {
+			return true
+		}
+		if attachedShortPattern.MatchString(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+// attachedShortPattern matches a short-option cluster whose -e or -f carries an
+// attached value (at least one trailing char), e.g. -eTODO or -neTODO. A bare
+// -e/-f (no trailing value) does not match.
+var attachedShortPattern = regexp.MustCompile(`^-[A-Za-z]*[ef].+`)
+
+// findIsRepoWide reports whether a find invocation scans the whole repository:
+// its leading operands (before the first -expression, `(`, or `!`) are the start
+// paths. No start path (find defaults to the working directory) or a
+// repository-root path is repo-wide; a named subdirectory bounds it.
+func findIsRepoWide(args []string) bool {
+	var paths []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") || arg == "(" || arg == "!" {
+			break
+		}
+		paths = append(paths, arg)
+	}
+	if len(paths) == 0 {
+		return true
+	}
+	return pathsRepoWide(paths)
+}
+
+func nonFlagOperands(args []string) []string {
+	var operands []string
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			operands = append(operands, arg)
+		}
+	}
+	return operands
+}
+
+func pathsRepoWide(paths []string) bool {
+	for _, p := range paths {
+		switch strings.TrimSpace(p) {
+		case ".", "./", "/":
+			return true
+		}
+	}
+	return false
+}
 
 // envAssignment matches a leading VAR=value prefix a segment may carry before its
 // actual command word.
 var envAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
-// firstCommandToken returns the basename of a segment's command word, skipping
-// leading environment assignments.
-func firstCommandToken(segment string) string {
-	for _, field := range strings.Fields(segment) {
-		if envAssignment.MatchString(field) {
+// shellSegments tokenizes a shell command into pipeline/sequence segments, each a
+// slice of tokens, with a small quote-aware scanner. It honors single and double
+// quotes and backslash escapes so a separator or command name inside quotes is
+// inert, and it splits only on unquoted |, ||, &, &&, ;, and newline. It does
+// not expand variables, command substitutions, or redirections. Unbalanced input
+// -- an unmatched quote or a dangling backslash -- is unparseable, so it returns
+// nil (no segments) and the classifier stays silent. Anything else it cannot
+// resolve simply fails to look like a bare search command, which keeps the
+// classifier erring toward staying silent (a false negative, never a false
+// positive).
+func shellSegments(command string) [][]string {
+	var (
+		segments [][]string
+		tokens   []string
+		buf      strings.Builder
+		quote    rune
+		started  bool
+	)
+	flushToken := func() {
+		if started {
+			tokens = append(tokens, buf.String())
+			buf.Reset()
+			started = false
+		}
+	}
+	flushSegment := func() {
+		flushToken()
+		if len(tokens) > 0 {
+			segments = append(segments, tokens)
+			tokens = nil
+		}
+	}
+	runes := []rune(command)
+	for i := 0; i < len(runes); i++ {
+		c := runes[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			} else {
+				buf.WriteRune(c)
+				started = true
+			}
 			continue
 		}
-		return path.Base(field)
+		switch c {
+		case '\'', '"':
+			quote = c
+			started = true
+		case ' ', '\t', '\r':
+			flushToken()
+		case ';', '\n':
+			flushSegment()
+		case '|':
+			if i+1 < len(runes) && runes[i+1] == '|' {
+				i++
+			}
+			flushSegment()
+		case '&':
+			if i+1 < len(runes) && runes[i+1] == '&' {
+				i++
+			}
+			flushSegment()
+		case '\\':
+			if i+1 >= len(runes) {
+				return nil // dangling escape: unparseable -> fail closed (silent)
+			}
+			i++
+			buf.WriteRune(runes[i])
+			started = true
+		default:
+			buf.WriteRune(c)
+			started = true
+		}
 	}
-	return ""
-}
-
-func isSearchBinary(name string) bool {
-	switch name {
-	case "rg", "grep", "egrep", "fgrep", "find":
-		return true
-	default:
-		return false
+	if quote != 0 {
+		return nil // unmatched quote: unparseable -> fail closed (silent)
 	}
+	flushSegment()
+	return segments
 }

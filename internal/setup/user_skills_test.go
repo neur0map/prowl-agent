@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/prowl-agent/prowl-agent/skills"
 )
@@ -961,13 +963,13 @@ func TestUserIntegrationSurfacesRollbackFailure(t *testing.T) {
 	}
 }
 
-// TestUserIntegrationRollbackRemovesNewlyCreatedStateDir proves state-directory
-// creation is part of the transaction: a failed apply removes the newly created
-// state base and its prowl-agent leaf, preserving pre-existing directories.
-// (Finding 7)
-func TestUserIntegrationRollbackRemovesNewlyCreatedStateDir(t *testing.T) {
+// TestUserIntegrationRollbackRemovesNewlyCreatedStateLeaf proves the
+// transaction-owned prowl-agent leaf is rolled back on failure, while the
+// persistent state base holding the lock inode is preserved. (Finding 7 +
+// round-2 lock lifecycle)
+func TestUserIntegrationRollbackRemovesNewlyCreatedStateLeaf(t *testing.T) {
 	opts := newUserOpts(t)
-	// A nested, not-yet-existent state base the apply must create.
+	// A nested, not-yet-existent state base the apply must create for the lock.
 	opts.StateDir = filepath.Join(t.TempDir(), "xdg-state")
 	plan := mustPlan(t, opts)
 
@@ -986,10 +988,173 @@ func TestUserIntegrationRollbackRemovesNewlyCreatedStateDir(t *testing.T) {
 	if _, err := applyUserSkills(opts, plan, true, seam); err == nil {
 		t.Fatal("apply succeeded despite injected failure")
 	}
-	if _, err := os.Stat(opts.StateDir); !os.IsNotExist(err) {
-		t.Fatalf("rolled-back apply left the newly created state base: %v", err)
-	}
+	// The transaction-owned prowl-agent leaf is removed.
 	if _, err := os.Stat(filepath.Join(opts.StateDir, "prowl-agent")); !os.IsNotExist(err) {
 		t.Fatalf("rolled-back apply left the prowl-agent state dir")
+	}
+	// The base persists because it holds the persistent lock inode.
+	if _, err := os.Stat(opts.StateDir); err != nil {
+		t.Fatalf("rollback removed the persistent lock base: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.StateDir, "prowl-agent.lock")); err != nil {
+		t.Fatalf("persistent lock file missing after rollback: %v", err)
+	}
+}
+
+// TestUserIntegrationSerializesConcurrentApplies proves the user-state lock
+// serializes concurrent Prowl applies: while one holds the lock the other
+// cannot proceed, and disjoint-client installs both retain their ownership
+// records instead of last-writer-win dropping one. (Findings 1 + 3)
+func TestUserIntegrationSerializesConcurrentApplies(t *testing.T) {
+	home := t.TempDir()
+	stateDir := t.TempDir()
+	claudeOpts := UserInstallOptions{Home: home, StateDir: stateDir, Version: "1.0.0", Clients: []string{"claude"}}
+	ompOpts := UserInstallOptions{Home: home, StateDir: stateDir, Version: "1.0.0", Clients: []string{"omp"}}
+	claudePlan := mustPlan(t, claudeOpts)
+	ompPlan := mustPlan(t, ompOpts)
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	holdSeam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+		if !strings.HasSuffix(rel, "agent-assets.json") {
+			once.Do(func() {
+				close(holding)
+				<-release
+			})
+		}
+		return writeAtomicInRoot(root, rel, data, mode)
+	}
+
+	claudeErr := make(chan error, 1)
+	ompErr := make(chan error, 1)
+	go func() {
+		_, err := applyUserSkills(claudeOpts, claudePlan, true, holdSeam)
+		claudeErr <- err
+	}()
+	<-holding // claude apply holds the lock, paused mid-write
+
+	go func() {
+		_, err := ApplyUserSkills(ompOpts, ompPlan, true)
+		ompErr <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the omp apply reach and block on the lock
+	select {
+	case err := <-ompErr:
+		t.Fatalf("omp apply completed while claude held the state lock: %v", err)
+	default:
+	}
+	close(release)
+
+	if err := <-claudeErr; err != nil {
+		t.Fatalf("claude apply failed: %v", err)
+	}
+	if err := <-ompErr; err != nil {
+		t.Fatalf("omp apply failed: %v", err)
+	}
+
+	m, err := loadUserManifest(claudeOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var haveClaude, haveOMP bool
+	for _, entry := range m.Assets {
+		switch entry.Client {
+		case "claude":
+			haveClaude = true
+		case "omp":
+			haveOMP = true
+		}
+	}
+	if !haveClaude || !haveOMP {
+		t.Fatalf("concurrent applies dropped ownership: claude=%v omp=%v", haveClaude, haveOMP)
+	}
+}
+
+// TestUserIntegrationRechecksUnchangedBeforeCommit proves an unchanged asset
+// deleted after the fresh plan but before the manifest commit aborts the apply
+// and rolls back, rather than committing a manifest that claims ownership of a
+// now-absent file. (Finding 2)
+func TestUserIntegrationRechecksUnchangedBeforeCommit(t *testing.T) {
+	opts := newUserOpts(t)
+	mustApply(t, opts)
+
+	priorState, err := os.ReadFile(manifestPath(opts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Delete the first asset so it re-installs (a write that triggers the seam),
+	// which sorts before the omp skill we will delete mid-apply.
+	pluginPath := filepath.Join(opts.Home, ".claude", "skills", "prowl", ".claude-plugin", "plugin.json")
+	if err := os.Remove(pluginPath); err != nil {
+		t.Fatal(err)
+	}
+	plan := mustPlan(t, opts) // plugin.json => install; everything else unchanged
+
+	victim := filepath.Join(opts.Home, ".omp", "agent", "skills", "code-search", "SKILL.md")
+	once := false
+	seam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+		if !strings.HasSuffix(rel, "agent-assets.json") && !once {
+			once = true
+			// External deletion of a file the plan marked unchanged.
+			if err := os.Remove(victim); err != nil {
+				return err
+			}
+		}
+		return writeAtomicInRoot(root, rel, data, mode)
+	}
+
+	if _, err := applyUserSkills(opts, plan, true, seam); err == nil {
+		t.Fatal("apply committed despite an unchanged asset deleted mid-apply")
+	}
+	// Manifest not committed: still the prior bytes.
+	gotState, err := os.ReadFile(manifestPath(opts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotState) != string(priorState) {
+		t.Fatalf("manifest committed despite unchanged-asset recheck abort")
+	}
+	// The reinstalled plugin.json was rolled back to absent.
+	if _, err := os.Stat(pluginPath); !os.IsNotExist(err) {
+		t.Fatalf("reinstalled asset not rolled back after unchanged-recheck abort")
+	}
+}
+
+// TestUserIntegrationRollbackReportsDirRemovalFailure proves rollback collects a
+// non-ENOENT directory-removal failure (foreign content left a created dir
+// non-empty) into its returned error while preserving that foreign content.
+// (Finding 4 / round-2 point 4)
+func TestUserIntegrationRollbackReportsDirRemovalFailure(t *testing.T) {
+	opts := newUserOpts(t)
+	plan := mustPlan(t, opts)
+	firstDir := filepath.Dir(filepath.Join(opts.Home, filepath.FromSlash(plan.Actions[0].Destination)))
+	foreign := filepath.Join(firstDir, "user-notes.txt")
+
+	calls := 0
+	seam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+		if strings.HasSuffix(rel, "agent-assets.json") {
+			return writeAtomicInRoot(root, rel, data, mode)
+		}
+		calls++
+		if calls == 1 {
+			return writeAtomicInRoot(root, rel, data, mode) // first asset written; its dir created
+		}
+		// Plant foreign content in the created dir, then fail so rollback runs.
+		if err := os.WriteFile(foreign, []byte("keep me\n"), 0o644); err != nil {
+			return err
+		}
+		return errors.New("injected asset write failure")
+	}
+
+	_, err := applyUserSkills(opts, plan, true, seam)
+	if err == nil {
+		t.Fatal("apply succeeded despite injected failure")
+	}
+	if !strings.Contains(err.Error(), "rollback") {
+		t.Errorf("incomplete directory rollback not surfaced: %v", err)
+	}
+	if got, _ := os.ReadFile(foreign); string(got) != "keep me\n" {
+		t.Errorf("rollback destroyed foreign content instead of preserving it")
 	}
 }

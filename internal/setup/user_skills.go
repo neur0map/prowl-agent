@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 const (
 	userStateFile      = "agent-assets.json"
 	userStateLeaf      = "prowl-agent"
+	userStateLock      = "prowl-agent.lock"
 	userManifestSchema = 1
 	// userVersionToken is stamped with the package version wherever it appears
 	// in an asset body (only the Claude plugin manifest carries it).
@@ -280,6 +282,56 @@ func stateManifestLocation(opts UserInstallOptions) (anchor string, rel string, 
 	return anchor, filepath.ToSlash(filepath.Join(relDir, userStateFile)), nil
 }
 
+// acquireUserStateLock takes the persistent user-state lock that serializes
+// concurrent applies. The lock file sits in the state base -- outside the
+// transaction-owned prowl-agent leaf and matching the project setup-lock
+// pattern -- so a failed apply can roll back a newly created prowl-agent
+// directory without deleting the inode queued waiters may hold. Its containing
+// directory is created persistently (never rolled back) and symlink-checked;
+// the lock file itself is never removed. Lock and open errors are surfaced.
+func acquireUserStateLock(opts UserInstallOptions) (func(), error) {
+	base := userStateBase(opts)
+	anchor, err := deepestExistingDir(base)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(anchor)
+	if err != nil {
+		return nil, err
+	}
+	relBase, err := filepath.Rel(anchor, base)
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	lockRel := filepath.ToSlash(filepath.Join(relBase, userStateLock))
+	// Create the base directory chain persistently (a throwaway transaction is
+	// discarded, so these directories are never rolled back), symlink-safe.
+	if err := ensureUserDirs(root, lockRel, &userTxn{}); err != nil {
+		root.Close()
+		return nil, err
+	}
+	clean, err := validateRootPath(root, lockRel)
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	file, err := root.OpenFile(clean, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	unlock, err := lockSetupFile(context.Background(), file, setupLockTimeout)
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	return func() {
+		unlock()
+		root.Close()
+	}, nil
+}
+
 // buildUserCandidates enumerates every desired destination for the detected
 // clients -- native assets (version-stamped), canonical skills, and retired
 // skill removals -- sorted by destination so previews and plans are stable.
@@ -503,6 +555,17 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	if plan.Digest == "" || plan.Digest != userPlanDigest(plan) {
 		return UserApplyResult{}, ErrUserPlanStale
 	}
+
+	// Serialize concurrent Prowl applies on a persistent user-state lock, held
+	// from before fresh planning and manifest load through the per-action
+	// rechecks, the manifest commit, and any rollback. Disjoint client installs
+	// therefore cannot last-writer-win and drop each other's ownership records.
+	unlock, err := acquireUserStateLock(opts)
+	if err != nil {
+		return UserApplyResult{}, err
+	}
+	defer unlock()
+
 	fresh, err := PlanUserSkills(opts)
 	if err != nil {
 		return UserApplyResult{}, err
@@ -582,7 +645,12 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 				return rollbackUser(txn, err)
 			}
 		case UserActionUnchanged:
-			// Already current; recorded in the manifest, never rewritten.
+			// Recheck before commit: an unchanged asset deleted or edited since
+			// the fresh plan must abort and roll back, never be committed as
+			// owned. It is not rewritten.
+			if err := recheckAction(root, candidate, records, action); err != nil {
+				return rollbackUser(txn, err)
+			}
 		}
 	}
 
@@ -728,11 +796,11 @@ type userTxn struct {
 }
 
 // rollback restores every snapshotted file (rewriting prior bytes or removing a
-// newly created file) and removes the directories the apply created. File
-// restoration and removal failures are collected and returned so the caller can
-// surface that recovery is needed; directory removal is best-effort, because a
-// directory left non-empty by foreign or shared content is not a rollback
-// failure.
+// newly created file) and removes the directories the apply created. File and
+// directory failures are collected and returned so the caller can surface that
+// recovery is incomplete. A directory left non-empty by foreign or shared
+// content is preserved -- rollback never force-deletes it -- but the resulting
+// non-ENOENT removal error is still reported.
 func (txn *userTxn) rollback() error {
 	var errs []error
 	for i := len(txn.files) - 1; i >= 0; i-- {
@@ -748,7 +816,11 @@ func (txn *userTxn) rollback() error {
 		}
 	}
 	for i := len(txn.dirs) - 1; i >= 0; i-- {
-		_ = txn.dirs[i].root.Remove(txn.dirs[i].rel)
+		// Preserve foreign/shared content: only attempt the plain removal, and
+		// report a non-ENOENT failure (e.g. a directory left non-empty).
+		if err := txn.dirs[i].root.Remove(txn.dirs[i].rel); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("remove dir %s: %w", txn.dirs[i].rel, err))
+		}
 	}
 	return errors.Join(errs...)
 }

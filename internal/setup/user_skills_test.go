@@ -1249,3 +1249,80 @@ func TestUserIntegrationFinalUnchangedPassCatchesEarlyDrift(t *testing.T) {
 		t.Fatalf("manifest committed despite the final unchanged-pass abort")
 	}
 }
+
+func TestUserIntegrationHealthStates(t *testing.T) {
+	probe := func(version string, found bool) userCLIProbe {
+		return func() (string, bool) { return version, found }
+	}
+
+	absentOpts := newUserOpts(t)
+	absentOpts.Clients = nil
+	absent, err := verifyUserIntegrations(absentOpts, probe(absentOpts.Version, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.Clients[0].Status != UserIntegrationAbsent || absent.Clients[1].Status != UserIntegrationAbsent {
+		t.Fatalf("absent clients: %+v", absent.Clients)
+	}
+
+	opts := newUserOpts(t)
+	missing, err := verifyUserIntegrations(opts, probe(opts.Version, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.Clients[0].Status != UserIntegrationMissing || missing.CLI.Status != UserCLIStatusCurrent {
+		t.Fatalf("missing health: %+v", missing)
+	}
+	if _, err := os.Stat(filepath.Join(opts.StateDir, "prowl-agent")); !os.IsNotExist(err) {
+		t.Fatalf("health created state: %v", err)
+	}
+
+	mustApply(t, opts)
+	current, err := verifyUserIntegrations(opts, probe(opts.Version, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Clients[0].Status != UserIntegrationCurrent || current.Clients[0].Activation != UserActivationRestartRequired {
+		t.Fatalf("claude current health: %+v", current.Clients[0])
+	}
+	if current.Clients[1].Status != UserIntegrationCurrent || current.Clients[1].Activation != UserActivationReloadRequired {
+		t.Fatalf("omp current health: %+v", current.Clients[1])
+	}
+
+	bumped := opts
+	bumped.Version = "v10.0.0"
+	stale, err := verifyUserIntegrations(bumped, probe(bumped.Version, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Clients[0].Status != UserIntegrationStale || stale.Clients[1].Status != UserIntegrationStale {
+		t.Fatalf("stale package: %+v", stale.Clients)
+	}
+
+	edited := filepath.Join(opts.Home, ".claude", "skills", "prowl", "commands", "search.md")
+	if err := os.WriteFile(edited, []byte("locally edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conflicted, err := verifyUserIntegrations(opts, probe(opts.Version, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conflicted.Clients[0].Status != UserIntegrationConflict {
+		t.Fatalf("conflict health: %+v", conflicted.Clients[0])
+	}
+
+	missingCLI, err := verifyUserIntegrations(opts, probe("", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missingCLI.CLI.Status != UserCLIStatusMissing {
+		t.Fatalf("missing CLI: %+v", missingCLI.CLI)
+	}
+	mismatch, err := verifyUserIntegrations(opts, probe("v0.0.1", true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mismatch.CLI.Status != UserCLIStatusMismatch {
+		t.Fatalf("mismatched CLI: %+v", mismatch.CLI)
+	}
+}

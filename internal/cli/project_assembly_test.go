@@ -203,7 +203,7 @@ func TestDoctorRejectsMalformedRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	cmd := newDoctorCmd()
+	cmd := newDoctorCmd("test")
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	if err := cmd.Execute(); err == nil {

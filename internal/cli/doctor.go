@@ -14,19 +14,52 @@ import (
 	"github.com/prowl-agent/prowl-agent/internal/application"
 	"github.com/prowl-agent/prowl-agent/internal/config"
 	"github.com/prowl-agent/prowl-agent/internal/doctor"
+	"github.com/prowl-agent/prowl-agent/internal/setup"
 )
 
 // cRedHex is the error accent (Catppuccin red); the shared palette in
 // statuscard.go covers the rest.
 const cRedHex = "#f38ba8"
 
-func newDoctorCmd() *cobra.Command {
-	var asJSON, includeExcluded bool
+func newDoctorCmd(version string) *cobra.Command {
+	var asJSON, includeExcluded, integrations bool
 	var profile, format, baseline, failOn string
 	c := &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose repository health (use --profile rice for desktop/dotfile checks)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if integrations {
+				for _, flag := range []string{"profile", "baseline", "fail-on", "include-excluded"} {
+					if cmd.Flags().Changed(flag) {
+						return fmt.Errorf("doctor --integrations cannot be combined with repository-only --%s", flag)
+					}
+				}
+				if format == "sarif" || format == "shields" {
+					return fmt.Errorf("doctor --integrations supports only human or json output, not %s", format)
+				}
+				resolved := format
+				if asJSON {
+					resolved = "json"
+				}
+				if resolved != "" && resolved != "human" && resolved != "json" {
+					return fmt.Errorf("unknown doctor integrations format %q (choose human or json)", resolved)
+				}
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				report, err := setup.VerifyUserIntegrations(setup.UserInstallOptions{
+					Home: home, Version: version, Clients: setup.DetectInstalledHarnesses(),
+				})
+				if err != nil {
+					return err
+				}
+				if resolved == "json" {
+					return json.NewEncoder(cmd.OutOrStdout()).Encode(report)
+				}
+				fmt.Fprint(cmd.OutOrStdout(), renderDoctorIntegrations(report))
+				return nil
+			}
 			if profile != doctor.ProfileGeneral && profile != doctor.ProfileRice {
 				return fmt.Errorf("unknown doctor profile %q (choose general or rice)", profile)
 			}
@@ -112,7 +145,32 @@ func newDoctorCmd() *cobra.Command {
 	c.Flags().StringVar(&failOn, "fail-on", "none", "exit non-zero when findings reach this severity: none, warn, or error")
 	c.Flags().StringVar(&profile, "profile", doctor.ProfileGeneral, "diagnostic profile: general or rice")
 	c.Flags().BoolVar(&includeExcluded, "include-excluded", false, "report findings under excluded lifecycle paths (tests/, vendor/, ...) instead of filtering them, including every file with a masked credential")
+	c.Flags().BoolVar(&integrations, "integrations", false, "report user-level Claude, OMP, and PATH CLI integration health")
 	return c
+}
+
+func renderDoctorIntegrations(report setup.UserIntegrationHealth) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Agent integration health (package %s)\n", report.PackageVersion)
+	if report.InstalledPackageVersion != "" {
+		fmt.Fprintf(&b, "Installed package: %s\n", report.InstalledPackageVersion)
+	}
+	fmt.Fprintf(&b, "CLI: %s", report.CLI.Status)
+	if report.CLI.Version != "" {
+		fmt.Fprintf(&b, " (%s)", report.CLI.Version)
+	}
+	b.WriteByte('\n')
+	for _, client := range report.Clients {
+		fmt.Fprintf(&b, "%s: %s", client.Client, client.Status)
+		switch client.Activation {
+		case setup.UserActivationRestartRequired:
+			b.WriteString(" (restart required after install)")
+		case setup.UserActivationReloadRequired:
+			b.WriteString(" (reload required after install)")
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // severityCounts tallies findings by severity.

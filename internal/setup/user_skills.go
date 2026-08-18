@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -154,6 +155,54 @@ type UserHealth struct {
 	Version string            `json:"version"`
 	Assets  []UserAssetHealth `json:"assets"`
 }
+
+type UserIntegrationStatus string
+
+const (
+	UserIntegrationAbsent   UserIntegrationStatus = "absent"
+	UserIntegrationMissing  UserIntegrationStatus = "missing"
+	UserIntegrationCurrent  UserIntegrationStatus = "current"
+	UserIntegrationStale    UserIntegrationStatus = "stale"
+	UserIntegrationConflict UserIntegrationStatus = "conflict"
+)
+
+type UserCLIStatus string
+
+const (
+	UserCLIStatusMissing  UserCLIStatus = "missing"
+	UserCLIStatusCurrent  UserCLIStatus = "current"
+	UserCLIStatusMismatch UserCLIStatus = "mismatch"
+)
+
+type UserActivation string
+
+const (
+	UserActivationRestartRequired UserActivation = "restart_required"
+	UserActivationReloadRequired  UserActivation = "reload_required"
+)
+
+type UserCLIHealth struct {
+	Status  UserCLIStatus `json:"status"`
+	Version string        `json:"version,omitempty"`
+}
+
+type UserClientHealth struct {
+	Client     string                `json:"client"`
+	Status     UserIntegrationStatus `json:"status"`
+	Activation UserActivation        `json:"activation,omitempty"`
+}
+
+// UserIntegrationHealth is the read-only support view rendered by
+// `doctor --integrations`.
+type UserIntegrationHealth struct {
+	PackageVersion          string             `json:"package_version"`
+	InstalledPackageVersion string             `json:"installed_package_version,omitempty"`
+	CLI                     UserCLIHealth      `json:"cli"`
+	Clients                 []UserClientHealth `json:"clients"`
+	Assets                  []UserAssetHealth  `json:"assets"`
+}
+
+type userCLIProbe func() (version string, found bool)
 
 // userWriter is the file-writing seam. Production is writeAtomicInRoot; tests
 // pass an injected function to force a mid-apply failure and exercise rollback,
@@ -830,13 +879,17 @@ func loadUserStateUnderLock(stateRoot *os.Root, rel string) (userFileSnapshot, u
 }
 
 // VerifyUserSkills reports per-asset integration health from the same plan the
-// installer uses, so Task 6's doctor reads one ownership model, not a second.
+// installer uses.
 func VerifyUserSkills(opts UserInstallOptions) (UserHealth, error) {
 	plan, err := PlanUserSkills(opts)
 	if err != nil {
 		return UserHealth{}, err
 	}
-	var assets []UserAssetHealth
+	return UserHealth{Version: opts.Version, Assets: userHealthAssets(plan)}, nil
+}
+
+func userHealthAssets(plan UserPlan) []UserAssetHealth {
+	assets := make([]UserAssetHealth, 0, len(plan.Actions)+len(plan.Conflicts))
 	for _, action := range plan.Actions {
 		var state UserAssetState
 		switch action.Kind {
@@ -847,7 +900,6 @@ func VerifyUserSkills(opts UserInstallOptions) (UserHealth, error) {
 		case UserActionUnchanged:
 			state = UserAssetCurrent
 		case UserActionRemove:
-			// A retired-skill removal is migration, not a health signal.
 			continue
 		}
 		assets = append(assets, UserAssetHealth{Client: action.Client, AssetID: action.AssetID, Destination: action.Destination, State: state})
@@ -856,7 +908,132 @@ func VerifyUserSkills(opts UserInstallOptions) (UserHealth, error) {
 		assets = append(assets, UserAssetHealth{Client: conflict.Client, AssetID: conflict.AssetID, Destination: conflict.Destination, State: UserAssetConflict})
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].Destination < assets[j].Destination })
-	return UserHealth{Version: opts.Version, Assets: assets}, nil
+	return assets
+}
+
+// VerifyUserIntegrations reports user-level client, asset, and PATH CLI health
+// without creating state or changing installed files.
+func VerifyUserIntegrations(opts UserInstallOptions) (UserIntegrationHealth, error) {
+	return verifyUserIntegrations(opts, probeUserCLI)
+}
+
+func verifyUserIntegrations(opts UserInstallOptions, probe userCLIProbe) (UserIntegrationHealth, error) {
+	stored, err := loadUserManifest(opts)
+	if err != nil {
+		return UserIntegrationHealth{}, err
+	}
+	plan, err := planFromRecords(opts, recordIndex(stored))
+	if err != nil {
+		return UserIntegrationHealth{}, err
+	}
+	report := UserIntegrationHealth{
+		PackageVersion:          opts.Version,
+		InstalledPackageVersion: stored.PackageVersion,
+		Assets:                  userHealthAssets(plan),
+	}
+	if version, found := probe(); !found {
+		report.CLI.Status = UserCLIStatusMissing
+	} else {
+		report.CLI.Version = version
+		if version == opts.Version {
+			report.CLI.Status = UserCLIStatusCurrent
+		} else {
+			report.CLI.Status = UserCLIStatusMismatch
+		}
+	}
+
+	detected := make(map[string]bool, len(opts.Clients))
+	for _, client := range opts.Clients {
+		detected[client] = true
+	}
+	recorded := make(map[string]bool)
+	for _, entry := range stored.Assets {
+		recorded[entry.Client] = true
+	}
+	type clientFlags struct{ missing, stale, conflict bool }
+	flags := make(map[string]clientFlags)
+	for _, asset := range report.Assets {
+		f := flags[asset.Client]
+		switch asset.State {
+		case UserAssetMissing:
+			f.missing = true
+		case UserAssetStale:
+			f.stale = true
+		case UserAssetConflict:
+			f.conflict = true
+		}
+		flags[asset.Client] = f
+	}
+	for _, client := range []string{IntegrationClaude, IntegrationOMP} {
+		health := UserClientHealth{Client: client}
+		if !detected[client] {
+			health.Status = UserIntegrationAbsent
+		} else {
+			f := flags[client]
+			switch {
+			case f.conflict:
+				health.Status = UserIntegrationConflict
+			case f.missing:
+				health.Status = UserIntegrationMissing
+			case f.stale || recorded[client] && stored.PackageVersion != "" && stored.PackageVersion != opts.Version:
+				health.Status = UserIntegrationStale
+			default:
+				health.Status = UserIntegrationCurrent
+				if client == IntegrationClaude {
+					health.Activation = UserActivationRestartRequired
+				} else {
+					health.Activation = UserActivationReloadRequired
+				}
+			}
+		}
+		report.Clients = append(report.Clients, health)
+	}
+	return report, nil
+}
+
+const (
+	userCLIProbeTimeout = 2 * time.Second
+	userCLIOutputLimit  = 4096
+)
+
+type userCLIOutput struct {
+	data     []byte
+	overflow bool
+}
+
+func (out *userCLIOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := userCLIOutputLimit - len(out.data)
+	if remaining <= 0 {
+		out.overflow = true
+		return n, nil
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+		out.overflow = true
+	}
+	out.data = append(out.data, p...)
+	return n, nil
+}
+
+func probeUserCLI() (string, bool) {
+	path, err := exec.LookPath("prowl-agent")
+	if err != nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), userCLIProbeTimeout)
+	defer cancel()
+	var output userCLIOutput
+	command := exec.CommandContext(ctx, path, "--version")
+	command.Stdout = &output
+	if err := command.Run(); err != nil || output.overflow {
+		return "", false
+	}
+	fields := strings.Fields(string(output.data))
+	if len(fields) != 3 || fields[0] != "prowl-agent" || fields[1] != "version" {
+		return "", false
+	}
+	return fields[2], true
 }
 
 // userFileSnapshot is one file's pre-apply state for in-memory rollback.

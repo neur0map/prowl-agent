@@ -3,6 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +31,7 @@ import (
 
 const (
 	userStateFile      = "agent-assets.json"
+	userStateLeaf      = "prowl-agent"
 	userManifestSchema = 1
 	// userVersionToken is stamped with the package version wherever it appears
 	// in an asset body (only the Claude plugin manifest carries it).
@@ -37,8 +39,9 @@ const (
 )
 
 var (
-	// ErrUserPlanStale reports that a destination changed between planning and
-	// applying, so the reviewed plan no longer describes the filesystem.
+	// ErrUserPlanStale reports that the reviewed plan no longer matches reality:
+	// its own digest is inconsistent, or a destination changed between planning
+	// and applying.
 	ErrUserPlanStale = errors.New("user install plan is stale; re-plan against current state")
 
 	errUserHomeRequired   = errors.New("user install requires a home directory")
@@ -49,6 +52,8 @@ var (
 // explicit so tests use temporary directories and production supplies the real
 // user directories; Version stamps version-templated assets; Clients are the
 // detected harnesses (DetectInstalledHarnesses in production, explicit in tests).
+// StateDir is the XDG state base override: the manifest lives beneath its
+// prowl-agent/ leaf.
 type UserInstallOptions struct {
 	Home     string
 	StateDir string
@@ -88,8 +93,8 @@ type UserConflict struct {
 }
 
 // UserPlan is a deterministic, reviewable user-install preview. It carries no
-// file bodies and no absolute paths. Digest binds the reviewed plan to the
-// filesystem state it was computed against.
+// file bodies and no absolute paths. Digest binds the reviewed plan to both its
+// own content and the filesystem state it was computed against.
 type UserPlan struct {
 	Version   string         `json:"version"`
 	Actions   []UserAction   `json:"actions"`
@@ -170,6 +175,14 @@ func (candidate userCandidate) conflict(reason string) UserConflict {
 	return UserConflict{Client: candidate.client, AssetID: candidate.assetID, Destination: candidate.dest, Reason: reason}
 }
 
+// userDecision is the classification of one candidate against the filesystem:
+// an actionable kind, a conflict, or neither (a missing retired skill).
+type userDecision struct {
+	kind     UserActionKind
+	checksum string
+	conflict *UserConflict
+}
+
 // destKind is the observed shape of a destination on disk.
 type destKind int
 
@@ -210,18 +223,61 @@ func userClientRoot(client string) string {
 	return ""
 }
 
-// userStateDir resolves the platform user-state directory holding the ownership
-// manifest. StateDir is the XDG state base override; otherwise $XDG_STATE_HOME,
-// otherwise ~/.local/state. The manifest always lives under a prowl-agent/ leaf.
+// userStateBase resolves the XDG state base: the explicit StateDir override,
+// then $XDG_STATE_HOME, then ~/.local/state.
+func userStateBase(opts UserInstallOptions) string {
+	if opts.StateDir != "" {
+		return opts.StateDir
+	}
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+		return xdg
+	}
+	return filepath.Join(opts.Home, ".local", "state")
+}
+
+// userStateDir is the directory holding the ownership manifest.
 func userStateDir(opts UserInstallOptions) string {
-	base := opts.StateDir
-	if base == "" {
-		base = os.Getenv("XDG_STATE_HOME")
+	return filepath.Join(userStateBase(opts), userStateLeaf)
+}
+
+// deepestExistingDir returns the deepest existing ancestor of path, rejecting a
+// component that exists but is a symlink or not a directory. Non-existent
+// components are created later, symlink-checked, inside an os.Root.
+func deepestExistingDir(path string) (string, error) {
+	for {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return "", fmt.Errorf("state path %s is not a directory", filepath.Base(path))
+			}
+			return path, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path, nil
+		}
+		path = parent
 	}
-	if base == "" {
-		base = filepath.Join(opts.Home, ".local", "state")
+}
+
+// stateManifestLocation anchors the manifest at the deepest existing ancestor of
+// the state directory and returns the manifest's path relative to that anchor.
+// Rooting at the anchor and confining the generated components means Prowl never
+// reads or writes through a symlinked state directory.
+func stateManifestLocation(opts UserInstallOptions) (anchor string, rel string, err error) {
+	stateDir := userStateDir(opts)
+	anchor, err = deepestExistingDir(stateDir)
+	if err != nil {
+		return "", "", err
 	}
-	return filepath.Join(base, "prowl-agent")
+	relDir, err := filepath.Rel(anchor, stateDir)
+	if err != nil {
+		return "", "", err
+	}
+	return anchor, filepath.ToSlash(filepath.Join(relDir, userStateFile)), nil
 }
 
 // buildUserCandidates enumerates every desired destination for the detected
@@ -300,12 +356,85 @@ func readUserDest(root *os.Root, dest string) ([]byte, destKind, error) {
 	return data, destRegular, nil
 }
 
-// PlanUserSkills computes a deterministic, filesystem-only preview. The only
-// writable conditions are: a missing destination (install); a present file
-// whose bytes match the checksum Prowl previously recorded for that asset
-// (update); and an exact embedded legacy body (removal). Every other condition
-// -- a missing ownership record, a checksum mismatch, an unexpected file type,
-// or a symlink -- is a conflict, never a write.
+// lookupRecord returns the ownership record that authorizes a candidate only
+// when AssetID, Client, and Destination all match. A record present under the
+// same AssetID but with a different client or destination does not authorize a
+// write -- it is a corrupt or foreign entry.
+func lookupRecord(records map[string]userManifestEntry, candidate userCandidate) (userManifestEntry, bool) {
+	record, ok := records[candidate.assetID]
+	if !ok || record.Client != candidate.client || record.Destination != candidate.dest {
+		return userManifestEntry{}, false
+	}
+	return record, true
+}
+
+// classifyUserDest is the single ownership-safety decision, shared by planning
+// and the per-action recheck at mutation time. The only writable conditions
+// are: a missing destination (install); a present file whose bytes match the
+// checksum Prowl recorded for that exact asset (update); and an exact embedded
+// legacy body (removal). Every other condition -- a missing or mismatched
+// ownership record, a checksum mismatch, an unexpected file type, a symlink, or
+// a byte-identical file Prowl never recorded -- is a conflict, never a write.
+func classifyUserDest(root *os.Root, candidate userCandidate, records map[string]userManifestEntry) (userDecision, error) {
+	data, kind, err := readUserDest(root, candidate.dest)
+	if err != nil {
+		return userDecision{}, err
+	}
+	if candidate.legacy {
+		switch kind {
+		case destMissing:
+			return userDecision{}, nil
+		case destSymlink:
+			conflict := candidate.conflict("retired skill path is a symbolic link; left in place")
+			return userDecision{conflict: &conflict}, nil
+		case destIrregular:
+			conflict := candidate.conflict("retired skill path is not a regular file; left in place")
+			return userDecision{conflict: &conflict}, nil
+		default:
+			if string(data) == candidate.content {
+				return userDecision{kind: UserActionRemove}, nil
+			}
+			conflict := candidate.conflict("retired skill modified locally; left in place")
+			return userDecision{conflict: &conflict}, nil
+		}
+	}
+	switch kind {
+	case destMissing:
+		return userDecision{kind: UserActionInstall, checksum: candidate.checksum}, nil
+	case destSymlink:
+		conflict := candidate.conflict("destination is a symbolic link; Prowl does not write through symlinks")
+		return userDecision{conflict: &conflict}, nil
+	case destIrregular:
+		conflict := candidate.conflict("destination is not a regular file")
+		return userDecision{conflict: &conflict}, nil
+	default:
+		current := digest(data)
+		record, owned := lookupRecord(records, candidate)
+		if !owned {
+			conflict := candidate.conflict("pre-existing file without a Prowl ownership record")
+			return userDecision{conflict: &conflict}, nil
+		}
+		switch {
+		case current == candidate.checksum:
+			return userDecision{kind: UserActionUnchanged, checksum: candidate.checksum}, nil
+		case current == record.Checksum:
+			return userDecision{kind: UserActionUpdate, checksum: candidate.checksum}, nil
+		default:
+			conflict := candidate.conflict("locally modified since Prowl installed it")
+			return userDecision{conflict: &conflict}, nil
+		}
+	}
+}
+
+func recordIndex(m userManifest) map[string]userManifestEntry {
+	records := make(map[string]userManifestEntry, len(m.Assets))
+	for _, entry := range m.Assets {
+		records[entry.AssetID] = entry
+	}
+	return records
+}
+
+// PlanUserSkills computes a deterministic, filesystem-only preview.
 func PlanUserSkills(opts UserInstallOptions) (UserPlan, error) {
 	if opts.Home == "" {
 		return UserPlan{}, errUserHomeRequired
@@ -314,10 +443,7 @@ func PlanUserSkills(opts UserInstallOptions) (UserPlan, error) {
 	if err != nil {
 		return UserPlan{}, err
 	}
-	records := make(map[string]userManifestEntry, len(stored.Assets))
-	for _, entry := range stored.Assets {
-		records[entry.AssetID] = entry
-	}
+	records := recordIndex(stored)
 	root, err := os.OpenRoot(opts.Home)
 	if err != nil {
 		return UserPlan{}, err
@@ -327,50 +453,15 @@ func PlanUserSkills(opts UserInstallOptions) (UserPlan, error) {
 	var actions []UserAction
 	var conflicts []UserConflict
 	for _, candidate := range buildUserCandidates(opts) {
-		data, kind, err := readUserDest(root, candidate.dest)
+		decision, err := classifyUserDest(root, candidate, records)
 		if err != nil {
 			return UserPlan{}, err
 		}
-		if candidate.legacy {
-			switch kind {
-			case destMissing:
-				// Nothing to migrate off the install path.
-			case destSymlink:
-				conflicts = append(conflicts, candidate.conflict("retired skill path is a symbolic link; left in place"))
-			case destIrregular:
-				conflicts = append(conflicts, candidate.conflict("retired skill path is not a regular file; left in place"))
-			case destRegular:
-				if string(data) == candidate.content {
-					actions = append(actions, candidate.action(UserActionRemove, ""))
-				} else {
-					conflicts = append(conflicts, candidate.conflict("retired skill modified locally; left in place"))
-				}
-			}
-			continue
-		}
-		switch kind {
-		case destMissing:
-			actions = append(actions, candidate.action(UserActionInstall, candidate.checksum))
-		case destSymlink:
-			conflicts = append(conflicts, candidate.conflict("destination is a symbolic link; Prowl does not write through symlinks"))
-		case destIrregular:
-			conflicts = append(conflicts, candidate.conflict("destination is not a regular file"))
-		case destRegular:
-			current := digest(data)
-			switch {
-			case current == candidate.checksum:
-				actions = append(actions, candidate.action(UserActionUnchanged, candidate.checksum))
-			default:
-				record, owned := records[candidate.assetID]
-				switch {
-				case !owned:
-					conflicts = append(conflicts, candidate.conflict("pre-existing file without a Prowl ownership record"))
-				case current == record.Checksum:
-					actions = append(actions, candidate.action(UserActionUpdate, candidate.checksum))
-				default:
-					conflicts = append(conflicts, candidate.conflict("locally modified since Prowl installed it"))
-				}
-			}
+		switch {
+		case decision.conflict != nil:
+			conflicts = append(conflicts, *decision.conflict)
+		case decision.kind != "":
+			actions = append(actions, candidate.action(decision.kind, decision.checksum))
 		}
 	}
 	plan := UserPlan{Version: opts.Version, Actions: actions, Conflicts: conflicts}
@@ -379,7 +470,7 @@ func PlanUserSkills(opts UserInstallOptions) (UserPlan, error) {
 }
 
 // userPlanDigest fingerprints the reviewable content of a plan so apply can
-// detect a stale plan and enforce a matching reviewed digest.
+// verify the plan is internally consistent and detect a stale plan.
 func userPlanDigest(plan UserPlan) string {
 	canonical := struct {
 		Version   string         `json:"version"`
@@ -395,16 +486,22 @@ func ApplyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool) (Use
 	return applyUserSkills(opts, plan, approved, writeAtomicInRoot)
 }
 
-// applyUserSkills is the transactional core. It requires explicit approval and a
-// plan digest that still matches the filesystem, snapshots every touched file
-// (including the ownership manifest) for in-memory rollback, applies the safe
-// actions, and writes the manifest last with an atomic replacement. Any write
-// failure restores every earlier file and the prior manifest. The write seam is
-// a private argument so tests can force a failure without a production
-// fault-injection interface.
+// applyUserSkills is the transactional core. It requires explicit approval, a
+// plan whose digest matches its own content, and a plan digest that still
+// matches the filesystem. It snapshots every touched file (including the
+// ownership manifest) and every directory it creates (including the state
+// directory) for in-memory rollback, rechecks each action's reviewed
+// precondition at the mutation point, applies the safe actions, and writes the
+// manifest last with an atomic replacement. Any failure restores every earlier
+// file and the prior manifest; a rollback failure is combined with the
+// initiating error. The write seam is a private argument so tests can force a
+// failure without a production fault-injection interface.
 func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, write userWriter) (UserApplyResult, error) {
 	if !approved {
 		return UserApplyResult{}, ErrApprovalRequired
+	}
+	if plan.Digest == "" || plan.Digest != userPlanDigest(plan) {
+		return UserApplyResult{}, ErrUserPlanStale
 	}
 	fresh, err := PlanUserSkills(opts)
 	if err != nil {
@@ -414,17 +511,16 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 		return UserApplyResult{}, ErrUserPlanStale
 	}
 
+	anchor, manifestRel, err := stateManifestLocation(opts)
+	if err != nil {
+		return UserApplyResult{}, err
+	}
 	root, err := os.OpenRoot(opts.Home)
 	if err != nil {
 		return UserApplyResult{}, err
 	}
 	defer root.Close()
-
-	stateDir := userStateDir(opts)
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return UserApplyResult{}, err
-	}
-	stateRoot, err := os.OpenRoot(stateDir)
+	stateRoot, err := os.OpenRoot(anchor)
 	if err != nil {
 		return UserApplyResult{}, err
 	}
@@ -434,24 +530,34 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	if err != nil {
 		return UserApplyResult{}, err
 	}
+	records := recordIndex(prior)
 
-	contents := make(map[string]string)
+	byID := make(map[string]userCandidate)
 	for _, candidate := range buildUserCandidates(opts) {
-		contents[candidate.assetID] = candidate.content
+		byID[candidate.assetID] = candidate
 	}
 
 	txn := &userTxn{}
+	// Create the state directory chain inside the transaction so a failed apply
+	// removes only the directories it created and preserves pre-existing ones.
+	if err := ensureUserDirs(stateRoot, manifestRel, txn); err != nil {
+		return rollbackUser(txn, err)
+	}
 	// Snapshot the manifest first so rollback restores the prior ownership even
-	// if the very last write -- the manifest itself -- fails.
-	manifestSnapshot, err := snapshotUserFile(stateRoot, userStateFile)
+	// when the last write -- the manifest -- fails.
+	manifestSnapshot, err := snapshotUserFile(stateRoot, manifestRel)
 	if err != nil {
-		return UserApplyResult{}, err
+		return rollbackUser(txn, err)
 	}
 	txn.files = append(txn.files, manifestSnapshot)
 
 	for _, action := range fresh.Actions {
+		candidate := byID[action.AssetID]
 		switch action.Kind {
 		case UserActionInstall, UserActionUpdate:
+			if err := recheckAction(root, candidate, records, action); err != nil {
+				return rollbackUser(txn, err)
+			}
 			if err := ensureUserDirs(root, action.Destination, txn); err != nil {
 				return rollbackUser(txn, err)
 			}
@@ -460,16 +566,19 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 				return rollbackUser(txn, err)
 			}
 			txn.files = append(txn.files, snapshot)
-			if err := write(root, action.Destination, []byte(contents[action.AssetID]), 0o644); err != nil {
+			if err := write(root, action.Destination, []byte(candidate.content), 0o644); err != nil {
 				return rollbackUser(txn, err)
 			}
 		case UserActionRemove:
+			if err := recheckAction(root, candidate, records, action); err != nil {
+				return rollbackUser(txn, err)
+			}
 			snapshot, err := snapshotUserFile(root, action.Destination)
 			if err != nil {
 				return rollbackUser(txn, err)
 			}
 			txn.files = append(txn.files, snapshot)
-			if err := removeOwnedFile(root, action.Destination, contents[action.AssetID]); err != nil {
+			if err := removeOwnedFile(root, action.Destination, candidate.content); err != nil {
 				return rollbackUser(txn, err)
 			}
 		case UserActionUnchanged:
@@ -481,10 +590,27 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 	if err != nil {
 		return rollbackUser(txn, err)
 	}
-	if err := write(stateRoot, userStateFile, data, 0o644); err != nil {
+	if err := write(stateRoot, manifestRel, data, 0o644); err != nil {
 		return rollbackUser(txn, err)
 	}
 	return UserApplyResult{Version: opts.Version, Actions: fresh.Actions}, nil
+}
+
+// recheckAction re-derives the classification of a planned action's destination
+// at the mutation point. If the destination changed since the fresh plan was
+// computed -- so the reviewed precondition (install target still missing, update
+// bytes still the owned checksum, removal still the exact legacy body) no longer
+// holds -- it reports an error so apply aborts and rolls back instead of
+// overwriting.
+func recheckAction(root *os.Root, candidate userCandidate, records map[string]userManifestEntry, planned UserAction) error {
+	decision, err := classifyUserDest(root, candidate, records)
+	if err != nil {
+		return err
+	}
+	if decision.conflict != nil || decision.kind != planned.Kind || decision.checksum != planned.Checksum {
+		return fmt.Errorf("destination %s changed since planning", planned.Destination)
+	}
+	return nil
 }
 
 // mergeUserManifest folds the applied actions into the prior ownership record:
@@ -492,10 +618,7 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 // checksum, removals drop their record, and untouched entries (including
 // conflicts) are preserved.
 func mergeUserManifest(prior userManifest, opts UserInstallOptions, plan UserPlan) userManifest {
-	records := make(map[string]userManifestEntry, len(prior.Assets))
-	for _, entry := range prior.Assets {
-		records[entry.AssetID] = entry
-	}
+	records := recordIndex(prior)
 	for _, action := range plan.Actions {
 		switch action.Kind {
 		case UserActionInstall, UserActionUpdate, UserActionUnchanged:
@@ -526,17 +649,19 @@ func marshalUserManifest(m userManifest) ([]byte, error) {
 }
 
 // loadUserManifest reads the ownership manifest, returning an empty manifest
-// when the state directory or file does not yet exist.
+// when the state directory or file does not yet exist, and rejecting a
+// symlinked state path.
 func loadUserManifest(opts UserInstallOptions) (userManifest, error) {
-	root, err := os.OpenRoot(userStateDir(opts))
+	anchor, rel, err := stateManifestLocation(opts)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return userManifest{}, nil
-		}
+		return userManifest{}, err
+	}
+	root, err := os.OpenRoot(anchor)
+	if err != nil {
 		return userManifest{}, err
 	}
 	defer root.Close()
-	data, err := root.ReadFile(userStateFile)
+	data, err := readRootFile(root, rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return userManifest{}, nil
@@ -602,22 +727,36 @@ type userTxn struct {
 	dirs  []userDir
 }
 
-func (txn *userTxn) rollback() {
+// rollback restores every snapshotted file (rewriting prior bytes or removing a
+// newly created file) and removes the directories the apply created. File
+// restoration and removal failures are collected and returned so the caller can
+// surface that recovery is needed; directory removal is best-effort, because a
+// directory left non-empty by foreign or shared content is not a rollback
+// failure.
+func (txn *userTxn) rollback() error {
+	var errs []error
 	for i := len(txn.files) - 1; i >= 0; i-- {
 		snapshot := txn.files[i]
 		if snapshot.existed {
-			_ = writeAtomicInRoot(snapshot.root, snapshot.rel, snapshot.data, snapshot.mode)
+			if err := writeAtomicInRoot(snapshot.root, snapshot.rel, snapshot.data, snapshot.mode); err != nil {
+				errs = append(errs, fmt.Errorf("restore %s: %w", snapshot.rel, err))
+			}
 			continue
 		}
-		_ = snapshot.root.Remove(snapshot.rel)
+		if err := snapshot.root.Remove(snapshot.rel); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("remove %s: %w", snapshot.rel, err))
+		}
 	}
 	for i := len(txn.dirs) - 1; i >= 0; i-- {
 		_ = txn.dirs[i].root.Remove(txn.dirs[i].rel)
 	}
+	return errors.Join(errs...)
 }
 
 func rollbackUser(txn *userTxn, cause error) (UserApplyResult, error) {
-	txn.rollback()
+	if err := txn.rollback(); err != nil {
+		return UserApplyResult{}, fmt.Errorf("%w; rollback also failed: %v", cause, err)
+	}
 	return UserApplyResult{}, cause
 }
 

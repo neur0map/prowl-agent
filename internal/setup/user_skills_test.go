@@ -735,3 +735,261 @@ func allState(health UserHealth, want UserAssetState) bool {
 	}
 	return len(health.Assets) > 0
 }
+
+// writeTamperedManifest overwrites the on-disk ownership manifest with m, for
+// tests that corrupt or falsify an ownership record.
+func writeTamperedManifest(t *testing.T, opts UserInstallOptions, m userManifest) {
+	t.Helper()
+	data, err := marshalUserManifest(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(manifestPath(opts)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath(opts), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUserIntegrationApplyRejectsTamperedPlan proves apply refuses a plan whose
+// digest does not match its own canonical content -- Actions, Conflicts,
+// Version, or Digest tampered -- and writes nothing. (Finding 1)
+func TestUserIntegrationApplyRejectsTamperedPlan(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(UserPlan) UserPlan
+	}{
+		{"actions", func(p UserPlan) UserPlan { p.Actions[0].Checksum = "deadbeef"; return p }},
+		{"conflicts", func(p UserPlan) UserPlan {
+			p.Conflicts = append(p.Conflicts, UserConflict{Client: "claude", AssetID: "x", Destination: ".claude/x", Reason: "injected"})
+			return p
+		}},
+		{"version", func(p UserPlan) UserPlan { p.Version += "-tampered"; return p }},
+		{"digest", func(p UserPlan) UserPlan { p.Digest = "0000"; return p }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := newUserOpts(t)
+			plan := tc.mut(mustPlan(t, opts))
+			before := treeState(t, opts.Home)
+			if _, err := ApplyUserSkills(opts, plan, true); err == nil {
+				t.Errorf("tampered plan applied")
+			}
+			if after := treeState(t, opts.Home); after != before {
+				t.Errorf("tampered plan wrote assets")
+			}
+			if _, err := os.Stat(manifestPath(opts)); !os.IsNotExist(err) {
+				t.Errorf("tampered plan wrote a manifest")
+			}
+		})
+	}
+}
+
+// TestUserSkillPlanConflictsOnUnrecordedIdenticalFile proves a pre-existing file
+// byte-identical to the desired asset but with no ownership record is a
+// conflict, never adopted as unchanged. (Finding 2)
+func TestUserSkillPlanConflictsOnUnrecordedIdenticalFile(t *testing.T) {
+	opts := newUserOpts(t)
+	id := "omp:skills/code-search/SKILL.md"
+	var content string
+	for _, asset := range wantUserAssets(opts.Version, opts.Clients) {
+		if asset.AssetID == id {
+			content = asset.Content
+		}
+	}
+	dest := filepath.Join(opts.Home, ".omp", "agent", "skills", "code-search", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := mustPlan(t, opts)
+	if _, ok := conflictByAssetID(plan, id); !ok {
+		t.Fatalf("byte-identical unrecorded file not reported as a conflict")
+	}
+	if action, ok := actionByAssetID(plan, id); ok {
+		t.Fatalf("byte-identical unrecorded file planned as %q; want conflict", action.Kind)
+	}
+}
+
+// TestUserSkillPlanRejectsMismatchedOwnershipRecord proves ownership is
+// authorized only when AssetID, Client, and Destination all match the recorded
+// entry: a record with the right AssetID but wrong client or destination does
+// not authorize a write. (Finding 3)
+func TestUserSkillPlanRejectsMismatchedOwnershipRecord(t *testing.T) {
+	cases := []struct {
+		name   string
+		tamper func(*userManifestEntry)
+	}{
+		{"wrong-client", func(e *userManifestEntry) { e.Client = "omp" }},
+		{"wrong-destination", func(e *userManifestEntry) { e.Destination = ".claude/skills/prowl/elsewhere.json" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := newUserOpts(t)
+			opts.Version = "1.0.0"
+			mustApply(t, opts)
+
+			m, err := loadUserManifest(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range m.Assets {
+				if m.Assets[i].AssetID == "claude:.claude-plugin/plugin.json" {
+					tc.tamper(&m.Assets[i])
+				}
+			}
+			writeTamperedManifest(t, opts, m)
+
+			plan := mustPlan(t, opts)
+			id := "claude:.claude-plugin/plugin.json"
+			if _, ok := conflictByAssetID(plan, id); !ok {
+				t.Fatalf("mismatched ownership record not treated as a conflict")
+			}
+			if _, ok := actionByAssetID(plan, id); ok {
+				t.Fatalf("mismatched ownership record authorized a write")
+			}
+		})
+	}
+}
+
+// TestUserIntegrationRechecksActionPreconditionAtMutation proves that when a
+// destination changes after the fresh plan is computed but before its action
+// mutates, apply aborts and rolls back instead of overwriting. The write seam
+// plants a foreign file at a not-yet-applied target to simulate the race.
+// (Finding 4)
+func TestUserIntegrationRechecksActionPreconditionAtMutation(t *testing.T) {
+	opts := newUserOpts(t)
+	plan := mustPlan(t, opts)
+	first := filepath.Join(opts.Home, filepath.FromSlash(plan.Actions[0].Destination))
+	planted := filepath.Join(opts.Home, filepath.FromSlash(plan.Actions[1].Destination))
+
+	calls := 0
+	seam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+		if strings.HasSuffix(rel, "agent-assets.json") {
+			return writeAtomicInRoot(root, rel, data, mode)
+		}
+		calls++
+		if calls == 1 {
+			if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(planted, []byte("planted after planning\n"), 0o644); err != nil {
+				return err
+			}
+		}
+		return writeAtomicInRoot(root, rel, data, mode)
+	}
+
+	if _, err := applyUserSkills(opts, plan, true, seam); err == nil {
+		t.Fatal("apply overwrote a destination that changed after planning")
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatalf("first write not rolled back: %v", err)
+	}
+	if got, _ := os.ReadFile(planted); string(got) != "planted after planning\n" {
+		t.Fatalf("recheck abort destroyed foreign content at %s", plan.Actions[1].Destination)
+	}
+	if _, err := os.Stat(manifestPath(opts)); !os.IsNotExist(err) {
+		t.Fatalf("manifest written despite recheck abort: %v", err)
+	}
+}
+
+// TestUserIntegrationRejectsSymlinkedStateDir proves plan and apply refuse a
+// generated state directory that is a symlink, and write nothing through it.
+// (Finding 5)
+func TestUserIntegrationRejectsSymlinkedStateDir(t *testing.T) {
+	opts := newUserOpts(t)
+	plan := mustPlan(t, opts)
+
+	target := t.TempDir()
+	link := filepath.Join(opts.StateDir, "prowl-agent")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	if _, err := ApplyUserSkills(opts, plan, true); err == nil {
+		t.Fatal("apply wrote through a symlinked state directory")
+	}
+	if state := treeState(t, opts.Home); state != "" {
+		t.Fatalf("apply wrote assets through a symlinked state dir:\n%s", state)
+	}
+	if _, err := os.Stat(filepath.Join(target, "agent-assets.json")); !os.IsNotExist(err) {
+		t.Fatalf("apply wrote the manifest through the symlink: %v", err)
+	}
+	if _, err := PlanUserSkills(opts); err == nil {
+		t.Fatal("plan followed a symlinked state directory")
+	}
+}
+
+// TestUserIntegrationSurfacesRollbackFailure proves a rollback failure is
+// combined with the initiating error so the caller sees recovery is needed. The
+// seam writes the first asset, then replaces its path with a non-empty directory
+// and fails the second write, so rollback cannot remove the first file. (Finding 6)
+func TestUserIntegrationSurfacesRollbackFailure(t *testing.T) {
+	opts := newUserOpts(t)
+	plan := mustPlan(t, opts)
+	first := filepath.Join(opts.Home, filepath.FromSlash(plan.Actions[0].Destination))
+
+	calls := 0
+	seam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+		if strings.HasSuffix(rel, "agent-assets.json") {
+			return writeAtomicInRoot(root, rel, data, mode)
+		}
+		calls++
+		if calls == 1 {
+			return writeAtomicInRoot(root, rel, data, mode)
+		}
+		// Sabotage the first write's path so its rollback removal fails.
+		_ = os.Remove(first)
+		if err := os.MkdirAll(filepath.Join(first, "child"), 0o755); err != nil {
+			return err
+		}
+		return errors.New("injected asset write failure")
+	}
+
+	_, err := applyUserSkills(opts, plan, true, seam)
+	if err == nil {
+		t.Fatal("apply succeeded despite injected failure")
+	}
+	if !strings.Contains(err.Error(), "injected asset write failure") {
+		t.Errorf("initiating error not surfaced: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rollback") {
+		t.Errorf("rollback failure not surfaced: %v", err)
+	}
+}
+
+// TestUserIntegrationRollbackRemovesNewlyCreatedStateDir proves state-directory
+// creation is part of the transaction: a failed apply removes the newly created
+// state base and its prowl-agent leaf, preserving pre-existing directories.
+// (Finding 7)
+func TestUserIntegrationRollbackRemovesNewlyCreatedStateDir(t *testing.T) {
+	opts := newUserOpts(t)
+	// A nested, not-yet-existent state base the apply must create.
+	opts.StateDir = filepath.Join(t.TempDir(), "xdg-state")
+	plan := mustPlan(t, opts)
+
+	calls := 0
+	seam := func(root *os.Root, rel string, data []byte, mode os.FileMode) error {
+		if strings.HasSuffix(rel, "agent-assets.json") {
+			return writeAtomicInRoot(root, rel, data, mode)
+		}
+		calls++
+		if calls == 2 {
+			return errors.New("injected asset write failure")
+		}
+		return writeAtomicInRoot(root, rel, data, mode)
+	}
+
+	if _, err := applyUserSkills(opts, plan, true, seam); err == nil {
+		t.Fatal("apply succeeded despite injected failure")
+	}
+	if _, err := os.Stat(opts.StateDir); !os.IsNotExist(err) {
+		t.Fatalf("rolled-back apply left the newly created state base: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.StateDir, "prowl-agent")); !os.IsNotExist(err) {
+		t.Fatalf("rolled-back apply left the prowl-agent state dir")
+	}
+}

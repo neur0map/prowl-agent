@@ -46,8 +46,9 @@ var (
 	// and applying.
 	ErrUserPlanStale = errors.New("user install plan is stale; re-plan against current state")
 
-	errUserHomeRequired   = errors.New("user install requires a home directory")
-	errUserDestinationDir = errors.New("user install destination parent is not a directory")
+	errUserHomeRequired    = errors.New("user install requires a home directory")
+	errUserDestinationDir  = errors.New("user install destination parent is not a directory")
+	errUserManifestChanged = errors.New("ownership manifest changed since planning; aborting")
 )
 
 // UserInstallOptions configures one user-level install. Home and StateDir are
@@ -645,13 +646,33 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 				return rollbackUser(txn, err)
 			}
 		case UserActionUnchanged:
-			// Recheck before commit: an unchanged asset deleted or edited since
-			// the fresh plan must abort and roll back, never be committed as
-			// owned. It is not rewritten.
-			if err := recheckAction(root, candidate, records, action); err != nil {
-				return rollbackUser(txn, err)
-			}
+			// Unchanged assets are finalized in a single pass below, immediately
+			// before the manifest commit -- never in action order -- so drift
+			// after their position but before commit is still caught.
 		}
+	}
+
+	// Final pass: after every mutable action, revalidate all unchanged assets
+	// immediately before the manifest snapshot check and commit. An unchanged
+	// asset deleted or edited since the fresh plan aborts and rolls back rather
+	// than being committed as owned.
+	for _, action := range fresh.Actions {
+		if action.Kind != UserActionUnchanged {
+			continue
+		}
+		if err := recheckAction(root, byID[action.AssetID], records, action); err != nil {
+			return rollbackUser(txn, err)
+		}
+	}
+
+	// Manifest snapshot validation: reread the safely rooted manifest and
+	// confirm it still matches the snapshot exactly. If an external or older
+	// installer created, removed, replaced, symlinked, or changed it since the
+	// snapshot, abort and roll back rather than overwriting stale ownership.
+	if unchanged, err := manifestMatchesSnapshot(stateRoot, manifestRel, manifestSnapshot); err != nil {
+		return rollbackUser(txn, err)
+	} else if !unchanged {
+		return rollbackUser(txn, errUserManifestChanged)
 	}
 
 	data, err := marshalUserManifest(mergeUserManifest(prior, opts, fresh))
@@ -662,6 +683,24 @@ func applyUserSkills(opts UserInstallOptions, plan UserPlan, approved bool, writ
 		return rollbackUser(txn, err)
 	}
 	return UserApplyResult{Version: opts.Version, Actions: fresh.Actions}, nil
+}
+
+// manifestMatchesSnapshot rereads the ownership manifest through the safely
+// rooted state directory and reports whether it still matches the pre-apply
+// snapshot exactly -- same existence, a regular file (not a symlink or
+// directory), and identical bytes.
+func manifestMatchesSnapshot(stateRoot *os.Root, rel string, snapshot userFileSnapshot) (bool, error) {
+	data, kind, err := readUserDest(stateRoot, rel)
+	if err != nil {
+		return false, err
+	}
+	if !snapshot.existed {
+		return kind == destMissing, nil
+	}
+	if kind != destRegular {
+		return false, nil
+	}
+	return string(data) == string(snapshot.data), nil
 }
 
 // recheckAction re-derives the classification of a planned action's destination

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/prowl-agent/prowl-agent/internal/setup"
 )
 
@@ -51,6 +53,28 @@ func TestDoctorIntegrationsRunsOutsideProjectAndRendersJSON(t *testing.T) {
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatalf("doctor created state directory: %v", err)
+	}
+}
+
+func TestDoctorIntegrationsHonorsInheritedRootFormat(t *testing.T) {
+	integrationDoctorEnv(t)
+	cases := [][]string{{"--format=json"}, {"--format", "json"}, {"--json"}}
+	for _, flags := range cases {
+		t.Run(strings.Join(flags, "_"), func(t *testing.T) {
+			root := &cobra.Command{Use: "prowl-agent"}
+			Register(root, "v9.9.9")
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			root.SetArgs(append(flags, "doctor", "--integrations"))
+			if err := root.Execute(); err != nil {
+				t.Fatalf("root doctor: %v\n%s", err, out.String())
+			}
+			var report setup.UserIntegrationHealth
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("inherited %v did not produce JSON: %v\n%s", flags, err, out.String())
+			}
+		})
 	}
 }
 

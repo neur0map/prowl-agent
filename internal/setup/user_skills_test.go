@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -1324,5 +1326,63 @@ func TestUserIntegrationHealthStates(t *testing.T) {
 	}
 	if mismatch.CLI.Status != UserCLIStatusMismatch {
 		t.Fatalf("mismatched CLI: %+v", mismatch.CLI)
+	}
+}
+
+func TestUserIntegrationHealthProductionCLIProbe(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go tool unavailable")
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "main.go")
+	program := `package main
+import ("fmt"; "os"; "strings"; "time")
+func main() {
+	switch os.Getenv("PROWL_TEST_PROBE") {
+	case "valid": fmt.Println("prowl-agent version v9.9.9")
+	case "malformed": fmt.Println("prowl-agent v9.9.9")
+	case "overflow": fmt.Print(strings.Repeat("x", 5000))
+	case "nonzero": os.Exit(3)
+	case "slow": time.Sleep(3*time.Second); fmt.Println("prowl-agent version v9.9.9")
+	}
+}`
+	if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name := "prowl-agent"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(dir, name)
+	build := exec.Command(goBin, "build", "-o", binary, source)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake prowl-agent: %v\n%s", err, output)
+	}
+	t.Setenv("PATH", dir)
+
+	tests := []struct {
+		mode    string
+		version string
+		found   bool
+	}{
+		{"valid", "v9.9.9", true},
+		{"malformed", "", false},
+		{"overflow", "", false},
+		{"nonzero", "", false},
+		{"slow", "", false},
+	}
+	for _, test := range tests {
+		t.Run(test.mode, func(t *testing.T) {
+			t.Setenv("PROWL_TEST_PROBE", test.mode)
+			start := time.Now()
+			version, found := probeUserCLI()
+			if version != test.version || found != test.found {
+				t.Fatalf("probe = (%q, %v), want (%q, %v)", version, found, test.version, test.found)
+			}
+			if test.mode == "slow" && time.Since(start) >= 3*time.Second {
+				t.Fatalf("slow probe was not bounded: %s", time.Since(start))
+			}
+		})
 	}
 }

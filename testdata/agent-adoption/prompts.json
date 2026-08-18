@@ -1,0 +1,141 @@
+{
+  "tuning": [
+    {
+      "id": "tune-user-assets",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Where is the user-level skill installation plan assembled, and which function applies it?",
+      "class": "structural",
+      "expected_paths": ["internal/setup/user_skills.go"],
+      "expected_symbols": ["PlanUserSkills", "ApplyUserSkills"]
+    },
+    {
+      "id": "tune-health-rendering",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Explain how repository health findings are produced and rendered for terminal output.",
+      "class": "structural",
+      "expected_paths": ["internal/doctor/doctor.go", "internal/cli/doctor.go"],
+      "expected_symbols": ["Run", "renderDoctorCard"]
+    },
+    {
+      "id": "tune-harness-detection",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "What code determines which agent harnesses are installed on this machine?",
+      "class": "structural",
+      "expected_paths": ["internal/setup/harness.go"],
+      "expected_symbols": ["DetectInstalledHarnesses"]
+    },
+    {
+      "id": "tune-registration-impact",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "If the central subcommand registration signature changed, which function and callers would be affected?",
+      "class": "structural",
+      "expected_paths": ["internal/cli/cli.go"],
+      "expected_symbols": ["Register"]
+    },
+    {
+      "id": "tune-literal",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Find occurrences of the exact string `hookSpecificOutput`.",
+      "class": "literal",
+      "expected_paths": ["internal/cli/skills.go"],
+      "expected_symbols": ["HookSpecificOutput"]
+    },
+    {
+      "id": "tune-filename",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Which files match the name pattern `*statuscard*.go`?",
+      "class": "filename",
+      "expected_paths": ["internal/cli/statuscard.go"],
+      "expected_symbols": []
+    },
+    {
+      "id": "tune-known-file",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Summarize the declarations in `internal/cli/version.go`.",
+      "class": "known_file",
+      "expected_paths": ["internal/cli/version.go"],
+      "expected_symbols": ["newVersionCmd"]
+    }
+  ],
+  "held_out": [
+    {
+      "id": "held-query-rerank",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "How does semantic query rewriting feed into candidate reranking?",
+      "class": "structural",
+      "expected_paths": ["internal/query/query.go", "internal/mcp/rerank.go"],
+      "expected_symbols": ["rewriteQuery", "Scores"]
+    },
+    {
+      "id": "held-update-cache",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Where is the cached release channel validated before an update is reported?",
+      "class": "structural",
+      "expected_paths": ["internal/selfupdate/selfupdate.go"],
+      "expected_symbols": ["cachedLatest", "Check"]
+    },
+    {
+      "id": "held-user-rollback",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "How are user asset writes restored when an installation fails partway through?",
+      "class": "structural",
+      "expected_paths": ["internal/setup/user_skills.go"],
+      "expected_symbols": ["rollbackUser"]
+    },
+    {
+      "id": "held-secret-masking",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Which path removes credential-shaped values before indexed content is stored?",
+      "class": "structural",
+      "expected_paths": ["internal/redact/redact.go", "internal/index/index.go"],
+      "expected_symbols": ["Chunks"]
+    },
+    {
+      "id": "held-capability-discovery",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "How are discoverable workflows loaded and matched to an intent?",
+      "class": "structural",
+      "expected_paths": ["internal/capability"],
+      "expected_symbols": ["Manifest"]
+    },
+    {
+      "id": "held-literal",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Find occurrences of the exact string `agent-assets.json`.",
+      "class": "literal",
+      "expected_paths": ["internal/setup/user_skills.go"],
+      "expected_symbols": ["userStateFile"]
+    },
+    {
+      "id": "held-filename",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Which files match `internal/**/doctor*.go`?",
+      "class": "filename",
+      "expected_paths": ["internal/cli/doctor.go", "internal/doctor/doctor.go"],
+      "expected_symbols": []
+    },
+    {
+      "id": "held-known-file",
+      "fixture": "prowl-agent",
+      "source": ".",
+      "prompt": "Summarize `internal/setup/harness.go` and name its exported entry point.",
+      "class": "known_file",
+      "expected_paths": ["internal/setup/harness.go"],
+      "expected_symbols": ["DetectInstalledHarnesses"]
+    }
+  ]
+}

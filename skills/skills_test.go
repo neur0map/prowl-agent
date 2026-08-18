@@ -307,8 +307,9 @@ func TestNativeClaudeExposesCommandAgentAndHook(t *testing.T) {
 
 // The explicit /search command must delegate, not restate a routing table that
 // can drift from the canonical one: it keeps the $ARGUMENTS placeholder,
-// instructs Claude to load and follow the bundled code-search skill before
-// choosing a command, holds the grep/glob boundary, and enumerates none of the
+// instructs Claude to load and follow the bundled skill by its plugin-namespaced
+// name prowl:code-search (an unscoped "code-search" will not resolve to the
+// plugin's copy), holds the grep/glob boundary, and enumerates none of the
 // canonical CLI subcommands itself.
 func TestNativeSearchCommandDelegatesToCanonicalTable(t *testing.T) {
 	cmd := nativeAsset(t, "claude", "commands/search.md")
@@ -320,8 +321,8 @@ func TestNativeSearchCommandDelegatesToCanonicalTable(t *testing.T) {
 	if !strings.Contains(lower, "prowl-agent") {
 		t.Error("search command does not route through the prowl-agent CLI")
 	}
-	if !strings.Contains(lower, "code-search") {
-		t.Error("search command does not delegate to the canonical code-search skill")
+	if !strings.Contains(lower, "prowl:code-search") {
+		t.Error("search command does not name the plugin-namespaced skill prowl:code-search; an unscoped code-search may not load the plugin's copy")
 	}
 	if !strings.Contains(lower, "follow") && !strings.Contains(lower, "load") {
 		t.Error("search command does not instruct loading/following the code-search skill before choosing a command")

@@ -9,8 +9,9 @@ Answer this repository question by querying Prowl's index with the read-only
 
 $ARGUMENTS
 
-Before running anything, load and follow the bundled `code-search` skill. Its
-routing table is the single source of truth for which `prowl-agent` command
+Before running anything, load and follow the bundled `prowl:code-search` skill
+(the plugin installs it under the `prowl:` namespace, so use that exact name).
+Its routing table is the single source of truth for which `prowl-agent` command
 answers which question, so choose the command from there -- do not work from a
 table restated here.
 

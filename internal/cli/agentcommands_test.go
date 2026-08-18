@@ -45,6 +45,32 @@ func TestAgentFacingCommandsResolveAgainstTheCommandTree(t *testing.T) {
 	}
 }
 
+// TestAgentFacingCommandTreeIncludesSkills proves the installer surface is part of
+// the one command tree agents resolve against: `skills` is public (it appears in
+// help), while `_search-advisory` -- a Claude hook helper, never invoked by a
+// human -- is registered but hidden.
+func TestAgentFacingCommandTreeIncludesSkills(t *testing.T) {
+	root := &cobra.Command{Use: "prowl-agent"}
+	Register(root, "test")
+	commands := commandPaths(root)
+
+	skillsCmd, ok := commands["skills"]
+	if !ok {
+		t.Fatal("skills command is not registered")
+	}
+	if skillsCmd.Hidden {
+		t.Error("skills command must be visible in help")
+	}
+
+	advisory, ok := commands["_search-advisory"]
+	if !ok {
+		t.Fatal("_search-advisory command is not registered")
+	}
+	if !advisory.Hidden {
+		t.Error("_search-advisory command must stay hidden from help")
+	}
+}
+
 // commandPaths indexes every registered command, hidden ones included, by its
 // space-joined path. Hidden commands matter: `serve` and `lsp` are documented but
 // absent from --help, so a check that scraped help output would flag them

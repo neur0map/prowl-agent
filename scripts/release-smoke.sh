@@ -25,6 +25,8 @@ tmp=$(mktemp -d)
 export XDG_CACHE_HOME="$tmp/cache"
 export XDG_CONFIG_HOME="$tmp/config"
 export XDG_STATE_HOME="$tmp/state"
+export HOME="$tmp/home"
+mkdir -p "$HOME"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 project="$tmp/project"
 mkdir -p "$project/.cursor"
@@ -56,6 +58,16 @@ test -f AGENTS.md
 "$binary" overview --format json | python3 -m json.tool >/dev/null
 "$binary" status --json | python3 -m json.tool >/dev/null
 "$binary" update --help >/dev/null
+
+# The agent-skill installer is preview-only when non-interactive: even with the
+# Claude and OMP config roots present under an isolated HOME, a piped invocation
+# must render a plan and write nothing -- no assets, no ownership manifest.
+mkdir -p "$HOME/.claude" "$HOME/.omp/agent"
+"$binary" skills </dev/null > "$tmp/skills.txt"
+grep -q "nothing was written" "$tmp/skills.txt" || { echo "skills did not report a no-write preview" >&2; cat "$tmp/skills.txt" >&2; exit 1; }
+test ! -e "$HOME/.claude/skills" || { echo "skills wrote Claude assets in preview mode" >&2; exit 1; }
+test ! -e "$HOME/.omp/agent/skills" || { echo "skills wrote OMP assets in preview mode" >&2; exit 1; }
+test ! -e "$XDG_STATE_HOME/prowl-agent/agent-assets.json" || { echo "skills committed the ownership manifest in preview mode" >&2; exit 1; }
 
 "$binary" init --remove-integrations --no-input --json --integrations cursor,agents > "$tmp/remove.json"
 test ! -e AGENTS.md

@@ -13,12 +13,18 @@ import (
 
 //go:embed */SKILL.md
 //go:embed all:legacy
+//go:embed all:native
 var files embed.FS
 
 // legacyDir holds retired skill bodies. They exist only so setup can recognize
 // and remove an exact old installed copy during migration; they are never active
 // and never appear in All().
 const legacyDir = "legacy"
+
+// nativeDir holds harness-native integration assets (Claude plugin files, omp
+// agent and extension files) exposed through Native. They are not portable
+// skills, so they never appear in All().
+const nativeDir = "native"
 
 // Skill is one installable agent skill: a directory name and its SKILL.md body.
 type Skill struct {
@@ -34,7 +40,7 @@ func All() []Skill {
 	}
 	out := make([]Skill, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == legacyDir {
+		if !entry.IsDir() || entry.Name() == legacyDir || entry.Name() == nativeDir {
 			continue
 		}
 		data, err := files.ReadFile(entry.Name() + "/SKILL.md")
@@ -57,6 +63,46 @@ func Legacy(name string) (Skill, bool) {
 		return Skill{}, false
 	}
 	return Skill{Name: name, Content: string(data)}, true
+}
+
+// Asset is one embedded native integration file for a coding-agent client.
+// Client is the client name ("claude" or "omp"); Path is the install path
+// relative to that client's native root (e.g. ".claude-plugin/plugin.json");
+// Content is the file body; Executable marks files the installer must write
+// with the execute bit. Native assets are concrete embedded files, not a plugin
+// framework: the installer copies each Asset verbatim to its Path.
+type Asset struct {
+	Client     string
+	Path       string
+	Content    string
+	Executable bool
+}
+
+// Native returns the embedded native integration assets for client ("claude" or
+// "omp"), sorted by relative path so every consumer sees the same files in the
+// same order. It returns nil for an unknown client.
+func Native(client string) []Asset {
+	root := nativeDir + "/" + client
+	var out []Asset
+	fs.WalkDir(files, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := files.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(p, root+"/")
+		out = append(out, Asset{
+			Client:     client,
+			Path:       rel,
+			Content:    string(data),
+			Executable: strings.HasSuffix(rel, ".sh"),
+		})
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }
 
 // Names returns the skill names, sorted.

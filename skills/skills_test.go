@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -172,4 +173,204 @@ func openingSection(content string) string {
 		return body[:i]
 	}
 	return body
+}
+
+// Native assets are the harness-native integration files prowl installs beside
+// the portable skills: a Claude plugin (manifest, command, scout agent, and a
+// PreToolUse advisory hook) and omp's scout agent plus a routing extension.
+// Every consumer -- the installer and its tests -- reads the same files in the
+// same order, so Native(client) must return them sorted by relative path, with
+// unique paths, a stamped client, and non-empty content.
+func TestNativeAssetsAreOrderedAndUnique(t *testing.T) {
+	for _, client := range []string{"claude", "omp"} {
+		assets := Native(client)
+		if len(assets) == 0 {
+			t.Fatalf("Native(%q) returned no assets", client)
+		}
+		seen := make(map[string]bool, len(assets))
+		for i, asset := range assets {
+			if asset.Client != client {
+				t.Errorf("Native(%q)[%d] is stamped client %q", client, i, asset.Client)
+			}
+			if asset.Path == "" {
+				t.Errorf("Native(%q)[%d] has an empty relative path", client, i)
+			}
+			if asset.Content == "" {
+				t.Errorf("Native(%q) asset %q has empty content", client, asset.Path)
+			}
+			if asset.Executable {
+				t.Errorf("Native(%q) asset %q is marked executable; the bundle ships none", client, asset.Path)
+			}
+			if seen[asset.Path] {
+				t.Errorf("Native(%q) repeats relative path %q", client, asset.Path)
+			}
+			seen[asset.Path] = true
+			if i > 0 && assets[i-1].Path >= asset.Path {
+				t.Errorf("Native(%q) is not sorted: %q precedes %q", client, assets[i-1].Path, asset.Path)
+			}
+		}
+	}
+}
+
+// The Claude plugin manifest is the entry point Claude reads to load the
+// integration: it must be valid JSON, be named prowl, and carry the {{VERSION}}
+// template token so the installer stamps the shipping release instead of a
+// baked-in stale one.
+func TestNativeClaudeManifestParsesAndIsVersioned(t *testing.T) {
+	manifest := nativeAsset(t, "claude", ".claude-plugin/plugin.json")
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(manifest.Content), &parsed); err != nil {
+		t.Fatalf("plugin.json is not valid JSON: %v", err)
+	}
+	if parsed["name"] != "prowl" {
+		t.Errorf("plugin.json name = %v, want prowl", parsed["name"])
+	}
+	version, _ := parsed["version"].(string)
+	if !strings.Contains(version, "{{") || !strings.Contains(version, "}}") {
+		t.Errorf("plugin.json version %q must be a template placeholder, not a pinned release", version)
+	}
+}
+
+// Claude discovers the integration by its plugin layout: a slash command, a
+// scout subagent, and a hooks file whose PreToolUse rule fires the advisory on
+// the broad-search tools. The advisory must be exactly the prowl-agent binary
+// call, with no jq, Python, shell interpolation of tool input, or network hop.
+func TestNativeClaudeExposesCommandAgentAndHook(t *testing.T) {
+	nativeAsset(t, "claude", "commands/search.md")
+	nativeAsset(t, "claude", "agents/code-scout.md")
+	hooks := nativeAsset(t, "claude", "hooks/hooks.json")
+
+	var parsed struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(hooks.Content), &parsed); err != nil {
+		t.Fatalf("hooks.json is not valid JSON: %v", err)
+	}
+	pre := parsed.Hooks["PreToolUse"]
+	if len(pre) == 0 {
+		t.Fatal("hooks.json defines no PreToolUse hook")
+	}
+	var found bool
+	for _, matcher := range pre {
+		if matcher.Matcher != "Grep|Glob|Bash" {
+			continue
+		}
+		for _, h := range matcher.Hooks {
+			if h.Type == "command" && h.Command == "prowl-agent _search-advisory" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error(`hooks.json lacks a PreToolUse "Grep|Glob|Bash" hook running "prowl-agent _search-advisory"`)
+	}
+	lower := strings.ToLower(hooks.Content)
+	for _, banned := range []string{"jq", "python", "$(", "${", "curl", "http"} {
+		if strings.Contains(lower, banned) {
+			t.Errorf("hooks.json advisory depends on %q; it must call the prowl-agent binary directly", banned)
+		}
+	}
+}
+
+// The explicit /search command must not restate a routing table that can drift
+// from the canonical one: it delegates to the code-search skill's decision
+// table and enters through the prowl-agent CLI.
+func TestNativeSearchCommandDelegatesToCanonicalTable(t *testing.T) {
+	cmd := nativeAsset(t, "claude", "commands/search.md")
+	if !strings.Contains(cmd.Content, "prowl-agent ") {
+		t.Error("search command invokes no prowl-agent CLI command")
+	}
+	lower := strings.ToLower(cmd.Content)
+	if !strings.Contains(lower, "code-search") {
+		t.Error("search command does not delegate to the canonical code-search skill")
+	}
+	if !strings.Contains(lower, "routing table") && !strings.Contains(lower, "decision table") {
+		t.Error("search command does not point at the canonical routing/decision table")
+	}
+}
+
+// Both native scouts inherit the existing scout's contract: read-only (no write
+// or edit tool), and structural discovery leads with the prowl-agent CLI before
+// any grep fallback.
+func TestNativeScoutsAreReadOnlyAndCLIFirst(t *testing.T) {
+	for _, client := range []string{"claude", "omp"} {
+		scout := nativeAsset(t, client, "agents/code-scout.md")
+		content := scout.Content
+		lower := strings.ToLower(content)
+		if !strings.Contains(content, "prowl-agent") {
+			t.Errorf("%s code-scout never runs the prowl-agent CLI", client)
+		}
+		tools := strings.ToLower(frontmatterValue(content, "tools:"))
+		if tools == "" {
+			t.Errorf("%s code-scout declares no tools frontmatter", client)
+		}
+		for _, w := range []string{"write", "edit"} {
+			if strings.Contains(tools, w) {
+				t.Errorf("%s code-scout grants the state-changing tool %q: %q", client, w, tools)
+			}
+		}
+		if !strings.Contains(lower, "read-only") && !strings.Contains(lower, "read only") {
+			t.Errorf("%s code-scout does not declare a read-only contract", client)
+		}
+		body := strings.ToLower(openingSection(content))
+		p := strings.Index(body, "prowl-agent")
+		if g := strings.Index(body, "grep"); g >= 0 && p > g {
+			t.Errorf("%s code-scout reaches for grep before prowl-agent", client)
+		}
+	}
+}
+
+// The omp routing extension is advisory only: it observes tool_result for broad
+// searches and appends a reminder. It never intercepts tool_call (so it cannot
+// rewrite input), never returns a block decision, and only extends the existing
+// result content -- it never replaces it.
+func TestNativeOMPExtensionIsNonBlockingAppendOnly(t *testing.T) {
+	ext := nativeAsset(t, "omp", "extensions/prowl-routing.ts")
+	content := ext.Content
+	if !strings.Contains(content, `pi.on("tool_result"`) {
+		t.Error("routing extension does not observe tool_result")
+	}
+	if strings.Contains(content, `pi.on("tool_call"`) {
+		t.Error("routing extension intercepts tool_call; it must not rewrite input or block")
+	}
+	if strings.Contains(content, "block:") {
+		t.Error("routing extension returns a block decision; the advisory must never block")
+	}
+	if !strings.Contains(content, "...event.content") {
+		t.Error("routing extension replaces result content instead of appending to it")
+	}
+}
+
+// The CLI-first cutover removes MCP as a surface: no native asset may name an
+// MCP transport or a retired MCP tool, or an agent could route back to it.
+func TestNativeAssetsNameNoMCPTool(t *testing.T) {
+	for _, client := range []string{"claude", "omp"} {
+		for _, asset := range Native(client) {
+			lower := strings.ToLower(asset.Content)
+			for _, banned := range []string{"mcp", "search_context", "read_symbol"} {
+				if strings.Contains(lower, banned) {
+					t.Errorf("native %s asset %q names the MCP token %q", client, asset.Path, banned)
+				}
+			}
+		}
+	}
+}
+
+// nativeAsset returns the native asset for client at the given relative path, or
+// fails the test when the bundle omits it.
+func nativeAsset(t *testing.T, client, path string) Asset {
+	t.Helper()
+	for _, asset := range Native(client) {
+		if asset.Path == path {
+			return asset
+		}
+	}
+	t.Fatalf("native %s bundle is missing %q", client, path)
+	return Asset{}
 }

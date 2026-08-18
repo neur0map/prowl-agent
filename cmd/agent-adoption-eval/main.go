@@ -18,7 +18,7 @@ func main() {
 	flag.StringVar(&cfg.Model, "model", "", "model override passed to each client")
 	flag.IntVar(&cfg.Repetitions, "repetitions", 1, "fresh process repetitions per prompt and condition")
 	flag.StringVar(&cfg.Set, "set", "tuning", "prompt set: tuning or held_out")
-	flag.StringVar(&cfg.Fixture, "fixture", ".", "fixture repository to copy and index")
+	flag.StringVar(&cfg.Fixture, "fixture", "", "fixture repository override (default: manifest fixture)")
 	flag.StringVar(&cfg.OutputDir, "output", "", "required local relative artifact directory")
 	flag.StringVar(&cfg.ManifestPath, "manifest", "testdata/agent-adoption/prompts.json", "prompt manifest path")
 	flag.StringVar(&cfg.ProwlBinary, "prowl", "prowl-agent", "prowl-agent binary")

@@ -335,7 +335,7 @@ func firstField(v map[string]any, keys ...string) any {
 	return map[string]any{}
 }
 
-var prowlCommand = regexp.MustCompile(`(?:^|[|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*["']?(?:\S*[\\/])?prowl-agent(?:\.exe)?["']?(?:\s|$)`)
+var prowlCommand = regexp.MustCompile(`(?:^|[|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:"[^"]*(?i:prowl-agent(?:\.exe)?)"|'[^']*(?i:prowl-agent(?:\.exe)?)'|(?:\S*[\\/])?(?i:prowl-agent(?:\.exe)?))(?:\s|$)`)
 var citedPath = regexp.MustCompile(`[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+(?::\d+(?:-\d+)?)?`)
 
 func classifyTool(call *ToolCall) {
@@ -551,6 +551,13 @@ func median(values []float64) float64 {
 	return (copyValues[middle-1] + copyValues[middle]) / 2
 }
 
+func resolveFixture(configured, manifestFixture string) string {
+	if configured != "" {
+		return configured
+	}
+	return manifestFixture
+}
+
 func safePathSegment(value string) bool {
 	return value != "" && value != "." && value != ".." && !strings.ContainsAny(value, `/\`)
 }
@@ -623,10 +630,7 @@ func Run(ctx context.Context, cfg Config, manifest Manifest) (Report, error) {
 			return Report{}, fmt.Errorf("case %s selects fixture %q; runner fixture is %q", c.ID, c.Fixture, fixtureName)
 		}
 	}
-	fixture := cfg.Fixture
-	if fixture == "" {
-		fixture = "."
-	}
+	fixture := resolveFixture(cfg.Fixture, fixtureName)
 	temp, err := os.MkdirTemp("", "prowl-agent-adoption-")
 	if err != nil {
 		return Report{}, err

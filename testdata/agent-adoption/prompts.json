@@ -2,7 +2,7 @@
   "tuning": [
     {
       "id": "tune-user-assets",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Where is the user-level skill installation plan assembled, and which function applies it?",
       "class": "structural",
@@ -11,7 +11,7 @@
     },
     {
       "id": "tune-health-rendering",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Explain how repository health findings are produced and rendered for terminal output.",
       "class": "structural",
@@ -20,7 +20,7 @@
     },
     {
       "id": "tune-harness-detection",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "What code determines which agent harnesses are installed on this machine?",
       "class": "structural",
@@ -29,7 +29,7 @@
     },
     {
       "id": "tune-registration-impact",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "If the central subcommand registration signature changed, which function and callers would be affected?",
       "class": "structural",
@@ -38,7 +38,7 @@
     },
     {
       "id": "tune-literal",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Find occurrences of the exact string `hookSpecificOutput`.",
       "class": "literal",
@@ -47,7 +47,7 @@
     },
     {
       "id": "tune-filename",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Which files match the name pattern `*statuscard*.go`?",
       "class": "filename",
@@ -56,7 +56,7 @@
     },
     {
       "id": "tune-known-file",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Summarize the declarations in `internal/cli/version.go`.",
       "class": "known_file",
@@ -67,7 +67,7 @@
   "held_out": [
     {
       "id": "held-query-rerank",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "How does semantic query rewriting feed into candidate reranking?",
       "class": "structural",
@@ -76,7 +76,7 @@
     },
     {
       "id": "held-update-cache",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Where is the cached release channel validated before an update is reported?",
       "class": "structural",
@@ -85,7 +85,7 @@
     },
     {
       "id": "held-user-rollback",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "How are user asset writes restored when an installation fails partway through?",
       "class": "structural",
@@ -94,7 +94,7 @@
     },
     {
       "id": "held-secret-masking",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Which path removes credential-shaped values before indexed content is stored?",
       "class": "structural",
@@ -103,7 +103,7 @@
     },
     {
       "id": "held-capability-discovery",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "How are discoverable workflows loaded and matched to an intent?",
       "class": "structural",
@@ -112,7 +112,7 @@
     },
     {
       "id": "held-literal",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Find occurrences of the exact string `agent-assets.json`.",
       "class": "literal",
@@ -121,7 +121,7 @@
     },
     {
       "id": "held-filename",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Which files match `internal/**/doctor*.go`?",
       "class": "filename",
@@ -130,7 +130,7 @@
     },
     {
       "id": "held-known-file",
-      "fixture": "prowl-agent",
+      "fixture": ".",
       "source": ".",
       "prompt": "Summarize `internal/setup/harness.go` and name its exported entry point.",
       "class": "known_file",

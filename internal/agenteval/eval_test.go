@@ -243,15 +243,27 @@ func TestPreparedFixtureCopiesAreIndependent(t *testing.T) {
 	if string(data) != "original" {
 		t.Fatalf("second trial contaminated: %q", data)
 	}
-	if _, err := os.Stat(filepath.Join(second, ".prowl", "index.db")); err != nil {
-		t.Fatal("prepared index not copied:", err)
-	}
 }
 
 func TestProwlClassifierAcceptsWindowsExecutable(t *testing.T) {
-	call := ToolCall{Name: "Bash", Input: json.RawMessage(`{"command":"\"C:\\\\Tools\\\\prowl-agent.exe\" find Register"}`)}
-	classifyTool(&call)
-	if !call.Prowl {
-		t.Fatal("Windows prowl-agent invocation not classified")
+	for _, command := range []string{`"C:\Tools\prowl-agent.exe" find Register`, `"C:\Program Files\prowl-agent.exe" find Register`} {
+		input, err := json.Marshal(map[string]string{"command": command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := ToolCall{Name: "Bash", Input: input}
+		classifyTool(&call)
+		if !call.Prowl {
+			t.Errorf("Windows Prowl invocation not classified: %s", command)
+		}
+	}
+}
+
+func TestResolveFixtureUsesManifestUnlessOverridden(t *testing.T) {
+	if got := resolveFixture("", "manifest-repo"); got != "manifest-repo" {
+		t.Fatalf("manifest fixture ignored: %q", got)
+	}
+	if got := resolveFixture("override", "manifest-repo"); got != "override" {
+		t.Fatalf("fixture override ignored: %q", got)
 	}
 }

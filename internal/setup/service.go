@@ -369,7 +369,18 @@ func (service *Service) verifyInRoot(root *os.Root, ctx context.Context, plan Pl
 	}
 	for _, action := range plan.Actions {
 		if action.Integration == integrationLegacySkill {
-			continue // a removal leaves nothing to verify present
+			// A removal is verified only when the retired file is actually gone.
+			// A still-present copy (a pending or rematerialized migration) is a
+			// failure, not a success; other read errors -- including symlinked or
+			// unsafe paths -- propagate their project-relative cause.
+			switch _, err := readRootFile(root, action.Path); {
+			case os.IsNotExist(err):
+				continue
+			case err != nil:
+				return err
+			default:
+				return errors.New("setup verification failed")
+			}
 		}
 		data, err := readRootFile(root, action.Path)
 		if err != nil || (!strings.Contains(string(data), "prowl-agent") && !strings.Contains(string(data), "prowl_agent")) {

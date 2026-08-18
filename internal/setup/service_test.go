@@ -699,6 +699,60 @@ func TestSetupGeneratedRoutingIsCLIFirst(t *testing.T) {
 	}
 }
 
+// Verify must not pass a migration plan whose retired skill copy is still on
+// disk: a legacy-removal action is satisfied only once the exact old file is
+// gone. Otherwise Verify could green-light a pending or rematerialized plan
+// while prowl-repo-exploration still shadows code-search.
+func TestSetupVerifyRejectsPendingLegacyRemoval(t *testing.T) {
+	legacy, ok := skills.Legacy("prowl-repo-exploration")
+	if !ok || legacy.Content == "" {
+		t.Fatal("legacy prowl-repo-exploration bytes are not embedded")
+	}
+	const legacyRel = ".omp/skills/prowl-repo-exploration/SKILL.md"
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, filepath.FromSlash(legacyRel))
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(legacy.Content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := service.Plan(context.Background(), []string{IntegrationOMP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !planHasAction(plan, integrationLegacySkill, legacyRel) {
+		t.Fatalf("plan does not schedule the exact legacy removal: %+v", plan.Actions)
+	}
+	// Apply installs the CLI-first assets and removes the retired copy, so the
+	// fully-migrated tree verifies clean against its own plan.
+	if _, err := service.Apply(context.Background(), ApplyRequest{
+		Integrations: plan.Integrations, PlanHash: plan.Hash,
+		ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "verify-legacy",
+	}); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
+		t.Fatalf("retired skill survived apply: %v", statErr)
+	}
+	if err := service.Verify(context.Background(), plan); err != nil {
+		t.Fatalf("verify rejected the fully-migrated tree: %v", err)
+	}
+	// Rematerialize the retired copy (a pending or reappeared migration): every
+	// install destination is still present, so only the legacy removal is
+	// unsatisfied. Verify must reject rather than green-light the shadowed skill.
+	if err := os.WriteFile(legacyPath, []byte(legacy.Content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Verify(context.Background(), plan); err == nil {
+		t.Fatal("verify accepted a plan whose retired skill copy still exists")
+	}
+}
+
 // planBlocks reports whether the plan refuses to write path.
 func planBlocks(plan Plan, path string) bool {
 	for _, blocked := range plan.Blocked {

@@ -9,17 +9,12 @@ Answer this repository question by querying Prowl's index with the read-only
 
 $ARGUMENTS
 
-Route the request through the canonical `code-search` skill's routing table --
-do not restate a separate one. That decision table is the single source of
-truth for which command answers which question:
+Before running anything, load and follow the bundled `code-search` skill. Its
+routing table is the single source of truth for which `prowl-agent` command
+answers which question, so choose the command from there -- do not work from a
+table restated here.
 
-- semantic "where is / how does this work" -> `prowl-agent search "<question>"`
-- a named symbol, component, or setting -> `prowl-agent find <name>`
-- read one definition -> `prowl-agent def <name-or-id>`
-- a file's shape -> `prowl-agent outline <path>`
-- callers or references -> `prowl-agent references <name-or-id>`
-- change blast radius -> `prowl-agent impact <path>`
-
-Reserve native grep for an exact literal or regex match and native glob for
-filename patterns; every semantic or structural question starts with a
-`prowl-agent` command. Report each answer with its file:line citation.
+Keep the boundary the skill defines: reserve native grep for an exact literal or
+regex match and native glob for filename patterns; every semantic or structural
+question is answered by a `prowl-agent` command. Report each answer with its
+file:line citation.

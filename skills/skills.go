@@ -78,10 +78,17 @@ type Asset struct {
 	Executable bool
 }
 
-// Native returns the embedded native integration assets for client ("claude" or
-// "omp"), sorted by relative path so every consumer sees the same files in the
-// same order. It returns nil for an unknown client.
+// Native returns the embedded native integration assets for client, sorted by
+// relative path so every consumer sees the same files in the same order. Only
+// the immediate supported clients "claude" and "omp" resolve; any other name --
+// unknown, nested (e.g. "claude/agents"), or traversal-like -- returns nil, so a
+// caller can never walk an arbitrary embedded subtree.
 func Native(client string) []Asset {
+	switch client {
+	case "claude", "omp":
+	default:
+		return nil
+	}
 	root := nativeDir + "/" + client
 	var out []Asset
 	fs.WalkDir(files, root, func(p string, d fs.DirEntry, err error) error {

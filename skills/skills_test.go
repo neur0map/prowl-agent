@@ -212,6 +212,21 @@ func TestNativeAssetsAreOrderedAndUnique(t *testing.T) {
 	}
 }
 
+// Native must resolve only immediate, supported clients. A nested pseudo-client
+// ("claude/agents"), a traversal-like name, an unsupported harness, or an empty
+// string would otherwise let a caller walk an arbitrary embedded subtree or a
+// partial slice of one client's assets; every such name must return nil.
+func TestNativeRejectsUnknownAndNestedClients(t *testing.T) {
+	for _, client := range []string{
+		"", "unknown", "Claude", "OMP", "claude/agents", "omp/extensions",
+		"claude/", "/claude", "../legacy", "native", "claude/../omp", ".",
+	} {
+		if assets := Native(client); assets != nil {
+			t.Errorf("Native(%q) returned %d assets; unsupported clients must return nil", client, len(assets))
+		}
+	}
+}
+
 // The Claude plugin manifest is the entry point Claude reads to load the
 // integration: it must be valid JSON, be named prowl, and carry the {{VERSION}}
 // template token so the installer stamps the shipping release instead of a
@@ -226,8 +241,20 @@ func TestNativeClaudeManifestParsesAndIsVersioned(t *testing.T) {
 		t.Errorf("plugin.json name = %v, want prowl", parsed["name"])
 	}
 	version, _ := parsed["version"].(string)
-	if !strings.Contains(version, "{{") || !strings.Contains(version, "}}") {
-		t.Errorf("plugin.json version %q must be a template placeholder, not a pinned release", version)
+	if version != "{{VERSION}}" {
+		t.Errorf("plugin.json version = %q, want the exact template token {{VERSION}}", version)
+	}
+	// The template token is the manifest's alone; if it leaked into another
+	// asset the installer would rewrite a file that must ship verbatim.
+	for _, client := range []string{"claude", "omp"} {
+		for _, asset := range Native(client) {
+			if asset.Path == ".claude-plugin/plugin.json" {
+				continue
+			}
+			if strings.Contains(asset.Content, "{{VERSION}}") {
+				t.Errorf("native %s asset %q contains the {{VERSION}} token; only the manifest may", client, asset.Path)
+			}
+		}
 	}
 }
 
@@ -278,20 +305,35 @@ func TestNativeClaudeExposesCommandAgentAndHook(t *testing.T) {
 	}
 }
 
-// The explicit /search command must not restate a routing table that can drift
-// from the canonical one: it delegates to the code-search skill's decision
-// table and enters through the prowl-agent CLI.
+// The explicit /search command must delegate, not restate a routing table that
+// can drift from the canonical one: it keeps the $ARGUMENTS placeholder,
+// instructs Claude to load and follow the bundled code-search skill before
+// choosing a command, holds the grep/glob boundary, and enumerates none of the
+// canonical CLI subcommands itself.
 func TestNativeSearchCommandDelegatesToCanonicalTable(t *testing.T) {
 	cmd := nativeAsset(t, "claude", "commands/search.md")
-	if !strings.Contains(cmd.Content, "prowl-agent ") {
-		t.Error("search command invokes no prowl-agent CLI command")
+	content := cmd.Content
+	lower := strings.ToLower(content)
+	if !strings.Contains(content, "$ARGUMENTS") {
+		t.Error("search command drops the $ARGUMENTS placeholder")
 	}
-	lower := strings.ToLower(cmd.Content)
+	if !strings.Contains(lower, "prowl-agent") {
+		t.Error("search command does not route through the prowl-agent CLI")
+	}
 	if !strings.Contains(lower, "code-search") {
 		t.Error("search command does not delegate to the canonical code-search skill")
 	}
-	if !strings.Contains(lower, "routing table") && !strings.Contains(lower, "decision table") {
-		t.Error("search command does not point at the canonical routing/decision table")
+	if !strings.Contains(lower, "follow") && !strings.Contains(lower, "load") {
+		t.Error("search command does not instruct loading/following the code-search skill before choosing a command")
+	}
+	// Delegation means it must not carry its own copy of the routing table.
+	for _, dup := range []string{"prowl-agent find", "prowl-agent def", "prowl-agent outline", "prowl-agent references", "prowl-agent impact", "prowl-agent overview"} {
+		if strings.Contains(content, dup) {
+			t.Errorf("search command duplicates the canonical routing table (names %q); it must delegate to code-search", dup)
+		}
+	}
+	if !strings.Contains(lower, "grep") || !strings.Contains(lower, "glob") {
+		t.Error("search command drops the grep/glob boundary")
 	}
 }
 
@@ -326,25 +368,110 @@ func TestNativeScoutsAreReadOnlyAndCLIFirst(t *testing.T) {
 	}
 }
 
-// The omp routing extension is advisory only: it observes tool_result for broad
-// searches and appends a reminder. It never intercepts tool_call (so it cannot
-// rewrite input), never returns a block decision, and only extends the existing
-// result content -- it never replaces it.
+// The omp routing extension is advisory only. Without standing up a Node/Bun
+// runtime (CONTRIBUTING forbids making Go tests require an interpreter; live OMP
+// smoke comes later), this asserts the static contract of the source: it
+// registers only a tool_result observer, classifies the lowercase grep/glob
+// tools and search-shell bash commands, returns early on errors, and patches
+// the result by appending exactly one text chunk after the spread of existing
+// content -- with no block, input, details, or isError override.
 func TestNativeOMPExtensionIsNonBlockingAppendOnly(t *testing.T) {
 	ext := nativeAsset(t, "omp", "extensions/prowl-routing.ts")
 	content := ext.Content
+
+	// (a) Only tool_result is registered -- no tool_call, so it cannot block or
+	// rewrite tool input.
+	if got := strings.Count(content, "pi.on("); got != 1 {
+		t.Errorf("routing extension registers %d handlers; it must register exactly one (tool_result)", got)
+	}
 	if !strings.Contains(content, `pi.on("tool_result"`) {
 		t.Error("routing extension does not observe tool_result")
 	}
 	if strings.Contains(content, `pi.on("tool_call"`) {
 		t.Error("routing extension intercepts tool_call; it must not rewrite input or block")
 	}
-	if strings.Contains(content, "block:") {
-		t.Error("routing extension returns a block decision; the advisory must never block")
+
+	// (b) Lowercase grep/glob are classified as broad searches.
+	for _, positive := range []string{`toolName === "grep"`, `toolName === "glob"`} {
+		if !strings.Contains(content, positive) {
+			t.Errorf("routing extension does not classify %s as a broad search", positive)
+		}
 	}
-	if !strings.Contains(content, "...event.content") {
-		t.Error("routing extension replaces result content instead of appending to it")
+
+	// (c) A bash call is classified by extracting its command and testing it
+	// against the TREE_SEARCH utility set.
+	if !strings.Contains(content, `toolName === "bash"`) {
+		t.Error("routing extension does not classify bash calls")
 	}
+	if !strings.Contains(content, "input?.command") {
+		t.Error("routing extension does not extract the bash command from tool input")
+	}
+	if !strings.Contains(content, "TREE_SEARCH.test(") {
+		t.Error("routing extension does not test bash commands against TREE_SEARCH")
+	}
+	treeSearch := lineContaining(content, "const TREE_SEARCH")
+	for _, util := range []string{"rg", "grep", "egrep", "fgrep", "ag", "ack", "find", "fd"} {
+		if !strings.Contains(treeSearch, util) {
+			t.Errorf("TREE_SEARCH omits the search utility %q: %q", util, treeSearch)
+		}
+	}
+
+	// (d) A non-search tool call (and a non-matching bash command) falls through
+	// to an explicit negative.
+	if !strings.Contains(content, "return false") {
+		t.Error("routing extension has no explicit non-matching fallthrough (return false)")
+	}
+
+	// (e) Error results return early, before any reminder is appended.
+	if !strings.Contains(content, "if (event.isError) return") {
+		t.Error("routing extension does not return early on error results")
+	}
+
+	// (f)/(g) The single object return is a content patch: it spreads the
+	// existing content and appends exactly one text chunk, with no other keys.
+	ret := returnObject(content)
+	if ret == "" {
+		t.Fatal("routing extension has no object return to inspect")
+	}
+	if !strings.Contains(ret, "...event.content") {
+		t.Error("returned patch does not spread the existing result content; it must be append-only")
+	}
+	if got := strings.Count(ret, `type: "text"`); got != 1 {
+		t.Errorf("returned patch appends %d text chunks; it must append exactly one", got)
+	}
+	if !strings.Contains(ret, "content:") {
+		t.Error("returned patch does not set content")
+	}
+	for _, forbidden := range []string{"block", "input", "details", "isError"} {
+		if strings.Contains(ret, forbidden) {
+			t.Errorf("returned patch carries a %q field; it must only patch content", forbidden)
+		}
+	}
+}
+
+// lineContaining returns the first line of s that contains sub, or "".
+func lineContaining(s, sub string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, sub) {
+			return line
+		}
+	}
+	return ""
+}
+
+// returnObject returns the text of the first object-literal return in s -- from
+// "return {" through its terminating "};" -- so a test can inspect only the
+// fields the handler actually returns.
+func returnObject(s string) string {
+	start := strings.Index(s, "return {")
+	if start < 0 {
+		return ""
+	}
+	rest := s[start:]
+	if end := strings.Index(rest, "};"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }
 
 // The CLI-first cutover removes MCP as a surface: no native asset may name an

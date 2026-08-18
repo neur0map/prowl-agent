@@ -28,8 +28,16 @@ func TestEnsureAgentsBlockRefreshesInPlace(t *testing.T) {
 	if strings.Contains(s, "old guidance: use prowl-agent serve only") {
 		t.Errorf("stale block content not replaced:\n%s", s)
 	}
-	if !strings.Contains(s, "query Prowl first") {
-		t.Errorf("current guidance missing:\n%s", s)
+	// The refreshed block equals the canonical block setup writes into a fresh
+	// file -- derived behaviorally, never by hard-coding the guidance prose.
+	fresh := filepath.Join(t.TempDir(), "AGENTS.md")
+	if err := setup.EnsureAgentsBlock(fresh); err != nil {
+		t.Fatal(err)
+	}
+	freshContent, _ := os.ReadFile(fresh)
+	want := markedRegion(t, string(freshContent))
+	if !strings.Contains(s, want) {
+		t.Errorf("refreshed guidance does not match the canonical block:\nwant:\n%s\n\ngot:\n%s", want, s)
 	}
 	// The user's surrounding content is preserved.
 	if !strings.Contains(s, "Some house rules.") || !strings.Contains(s, "## Other section") {
@@ -42,6 +50,19 @@ func TestEnsureAgentsBlockRefreshesInPlace(t *testing.T) {
 	if n := strings.Count(s, setup.AgentsEndMarker); n != 1 {
 		t.Errorf("expected exactly one end marker, got %d:\n%s", n, s)
 	}
+}
+
+// markedRegion returns the inclusive prowl-marked block from content, so tests
+// can compare against the canonical block setup emits without restating its
+// prose.
+func markedRegion(t *testing.T, content string) string {
+	t.Helper()
+	start := strings.Index(content, setup.AgentsMarker)
+	end := strings.Index(content, setup.AgentsEndMarker)
+	if start < 0 || end < start {
+		t.Fatalf("no prowl-marked block found in:\n%s", content)
+	}
+	return content[start : end+len(setup.AgentsEndMarker)]
 }
 
 func TestEnsureAgentsBlockAppendsWhenAbsent(t *testing.T) {

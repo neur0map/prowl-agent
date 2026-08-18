@@ -55,7 +55,7 @@ func TestCheckUsesCachedLatest(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	// A cached "latest" that differs from this build means an update is available,
 	// computed without any network call.
-	writeCache(cache{CheckedAt: time.Now().Unix(), Latest: "0000000000000000000000000000000000000000"})
+	writeCache(cache{CheckedAt: time.Now().Unix(), Latest: "0000000000000000000000000000000000000000", Channel: Stable.Name})
 	if r := Check("v9.9.9-deadbee"); !r.Available || !r.Checked {
 		t.Fatalf("should report available from cached latest without network: %+v", r)
 	}

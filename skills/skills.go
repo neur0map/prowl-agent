@@ -12,7 +12,13 @@ import (
 )
 
 //go:embed */SKILL.md
+//go:embed all:legacy
 var files embed.FS
+
+// legacyDir holds retired skill bodies. They exist only so setup can recognize
+// and remove an exact old installed copy during migration; they are never active
+// and never appear in All().
+const legacyDir = "legacy"
 
 // Skill is one installable agent skill: a directory name and its SKILL.md body.
 type Skill struct {
@@ -28,7 +34,7 @@ func All() []Skill {
 	}
 	out := make([]Skill, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || entry.Name() == legacyDir {
 			continue
 		}
 		data, err := files.ReadFile(entry.Name() + "/SKILL.md")
@@ -39,6 +45,18 @@ func All() []Skill {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// Legacy returns the retired skill body once shipped under name, for
+// ownership-safe migration. The bytes are the exact historical SKILL.md, so
+// setup can confirm a prior Prowl install before removing it. Legacy skills are
+// never active and never appear in All().
+func Legacy(name string) (Skill, bool) {
+	data, err := files.ReadFile(legacyDir + "/" + name + "/SKILL.md")
+	if err != nil {
+		return Skill{}, false
+	}
+	return Skill{Name: name, Content: string(data)}, true
 }
 
 // Names returns the skill names, sorted.

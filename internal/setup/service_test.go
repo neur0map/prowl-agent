@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+
+	"github.com/prowl-agent/prowl-agent/skills"
 )
 
 func TestSetupDetectAndPlanDoNotWrite(t *testing.T) {
@@ -530,7 +532,7 @@ func TestSetupApplyInstallsAndRemovesEmbeddedSkills(t *testing.T) {
 	if !outcome.Verified {
 		t.Fatal("apply installing skills was not verified")
 	}
-	const skill = "prowl-repo-exploration"
+	const skill = "code-search"
 	want, ok := skillContent(skill)
 	if !ok || want == "" {
 		t.Fatalf("embedded skill %q missing", skill)
@@ -553,8 +555,10 @@ func TestSetupApplyInstallsAndRemovesEmbeddedSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .omp/RULES.md: %v", err)
 	}
-	if !strings.Contains(string(rules), "<!-- prowl-agent -->") || !strings.Contains(string(rules), "search_context") {
-		t.Fatalf(".omp/RULES.md missing prowl sticky rule: %q", rules)
+	if !strings.Contains(string(rules), "<!-- prowl-agent -->") ||
+		!strings.Contains(string(rules), "prowl-agent") ||
+		strings.Contains(string(rules), "search_context") {
+		t.Fatalf(".omp/RULES.md is not the CLI-first sticky rule: %q", rules)
 	}
 	// Removing the integrations takes their installed skill files back out.
 	if err := service.removeIntegrations([]string{IntegrationOMP, IntegrationClaude}); err != nil {
@@ -569,6 +573,150 @@ func TestSetupApplyInstallsAndRemovesEmbeddedSkills(t *testing.T) {
 	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
 		t.Fatalf(".omp/RULES.md survived removal: %v", err)
 	}
+}
+
+// Migration must move a repository off the retired prowl-repo-exploration skill
+// without ever destroying user work: an exact Prowl-owned copy is removed, a
+// locally edited copy is preserved and reported as a conflict, and the new
+// code-search skill installs alongside whatever is left. An absent copy is a
+// no-op.
+func TestSetupMigratesLegacyExplorationSkill(t *testing.T) {
+	legacy, ok := skills.Legacy("prowl-repo-exploration")
+	if !ok || legacy.Content == "" {
+		t.Fatal("legacy prowl-repo-exploration bytes are not embedded")
+	}
+	const legacyRel = ".omp/skills/prowl-repo-exploration/SKILL.md"
+	const codeRel = ".omp/skills/code-search/SKILL.md"
+	cases := []struct {
+		name          string
+		seed          string // pre-existing legacy file content ("" = none)
+		wantBlocked   bool
+		wantPreserved bool // legacy file survives apply with its seed content
+	}{
+		{"exact prowl-owned copy is removed", legacy.Content, false, false},
+		{"locally edited copy is preserved and blocked", legacy.Content + "\n\n<!-- local edit -->\n", true, true},
+		{"absent copy needs no migration", "", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".omp"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			legacyPath := filepath.Join(root, filepath.FromSlash(legacyRel))
+			if tc.seed != "" {
+				if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(legacyPath, []byte(tc.seed), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			service, err := NewService(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := service.Plan(context.Background(), []string{IntegrationOMP})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := planBlocks(plan, legacyRel); got != tc.wantBlocked {
+				t.Errorf("plan blocks %s = %v, want %v (blocked=%+v)", legacyRel, got, tc.wantBlocked, plan.Blocked)
+			}
+			// An exact owned copy is scheduled for removal; a preserved or absent
+			// copy is not.
+			removalPlanned := planHasAction(plan, integrationLegacySkill, legacyRel)
+			wantRemoval := tc.seed == legacy.Content
+			if removalPlanned != wantRemoval {
+				t.Errorf("plan schedules legacy removal = %v, want %v", removalPlanned, wantRemoval)
+			}
+			if _, err := service.Apply(context.Background(), ApplyRequest{
+				Integrations: plan.Integrations, PlanHash: plan.Hash,
+				ExpectedProjectConfigVersion: plan.ProjectConfigVersion, Approved: true, IdempotencyKey: "migrate",
+			}); err != nil {
+				t.Fatalf("apply failed: %v", err)
+			}
+			if tc.wantPreserved {
+				got, err := os.ReadFile(legacyPath)
+				if err != nil {
+					t.Fatalf("preserved legacy copy was removed: %v", err)
+				}
+				if string(got) != tc.seed {
+					t.Errorf("preserved legacy copy was modified: %q", got)
+				}
+			} else if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+				t.Fatalf("legacy copy survived migration: %v", err)
+			}
+			// The canonical skill installs regardless of the conflict.
+			want, _ := skillContent("code-search")
+			got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(codeRel)))
+			if err != nil {
+				t.Fatalf("code-search was not installed: %v", err)
+			}
+			if string(got) != want {
+				t.Errorf("installed code-search content mismatch")
+			}
+		})
+	}
+}
+
+// Every generated routing surface -- the AGENTS.md block, the sticky .omp
+// RULES.md, and the project scout override -- must lead with the read-only
+// prowl-agent CLI and must not advertise MCP tools as the way to search. The
+// scout additionally keeps its read-only, @smol contract while dropping MCP tool
+// names for bash-run CLI commands.
+func TestSetupGeneratedRoutingIsCLIFirst(t *testing.T) {
+	surfaces := map[string]string{
+		"AGENTS.md block":     agentsBlock,
+		".omp/RULES.md block": rulesBlock,
+		"omp scout override":  ompScoutAgent,
+	}
+	for name, body := range surfaces {
+		core := strings.ReplaceAll(strings.ReplaceAll(body, agentsMarker, ""), agentsEndMarker, "")
+		if !strings.Contains(core, "prowl-agent") {
+			t.Errorf("%s names no prowl-agent CLI command outside its markers", name)
+		}
+		lower := strings.ToLower(core)
+		for _, banned := range []string{"search_context", "read_symbol", "mcp__"} {
+			if strings.Contains(lower, banned) {
+				t.Errorf("%s still advertises the MCP tool %q as a search transport", name, banned)
+			}
+		}
+	}
+	// The scout override drops MCP tool names entirely, runs the CLI via bash, and
+	// keeps its read-only output contract and @smol model.
+	if strings.Contains(strings.ToLower(ompScoutAgent), "mcp") {
+		t.Error("scout override still references MCP")
+	}
+	if !strings.Contains(ompScoutAgent, "bash") {
+		t.Error("scout override no longer runs prowl-agent through bash")
+	}
+	if !strings.Contains(ompScoutAgent, `model: "@smol"`) {
+		t.Error("scout override lost its @smol model contract")
+	}
+	if !strings.Contains(ompScoutAgent, "read-only") {
+		t.Error("scout override lost its read-only contract")
+	}
+}
+
+// planBlocks reports whether the plan refuses to write path.
+func planBlocks(plan Plan, path string) bool {
+	for _, blocked := range plan.Blocked {
+		if blocked.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// planHasAction reports whether the plan schedules the given integration action.
+func planHasAction(plan Plan, integration, path string) bool {
+	for _, action := range plan.Actions {
+		if action.Integration == integration && action.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(values []string, want string) bool {
@@ -640,7 +788,7 @@ func TestSetupAgentSkillsInstallsToStandardLocation(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("apply agent-skills failed: %v", err)
 	}
-	const skill = "prowl-repo-exploration"
+	const skill = "code-search"
 	want, _ := skillContent(skill)
 	path := filepath.Join(root, ".agents", "skills", skill, "SKILL.md")
 	got, err := os.ReadFile(path)

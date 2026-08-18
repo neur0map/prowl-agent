@@ -47,6 +47,10 @@ const (
 	// definition (the scout override), so delegated exploration uses Prowl
 	// instead of grepping the whole tree.
 	integrationAgent = "agent"
+	// integrationLegacySkill marks an Action that migrates a repository off a
+	// retired skill: it removes an exact Prowl-owned copy at the old install path
+	// and, when the copy was edited locally, leaves it in place as a conflict.
+	integrationLegacySkill = "legacy-skill"
 
 	maxIdempotencyKeyBytes = 128
 	replayPath             = ".prowl/setup-applies.json"
@@ -364,6 +368,9 @@ func (service *Service) verifyInRoot(root *os.Root, ctx context.Context, plan Pl
 		return err
 	}
 	for _, action := range plan.Actions {
+		if action.Integration == integrationLegacySkill {
+			continue // a removal leaves nothing to verify present
+		}
 		data, err := readRootFile(root, action.Path)
 		if err != nil || (!strings.Contains(string(data), "prowl-agent") && !strings.Contains(string(data), "prowl_agent")) {
 			return errors.New("setup verification failed")
@@ -422,6 +429,19 @@ func partitionActions(root *os.Root, actions []Action) ([]Action, []BlockedActio
 	writable := make([]Action, 0, len(actions))
 	var blocked []BlockedAction
 	for _, action := range actions {
+		if action.Integration == integrationLegacySkill {
+			keep, block, err := planLegacyRemoval(root, action)
+			if err != nil {
+				return nil, nil, err
+			}
+			switch {
+			case block != nil:
+				blocked = append(blocked, *block)
+			case keep:
+				writable = append(writable, action)
+			}
+			continue
+		}
 		switch _, err := validateRootPath(root, action.Path); {
 		case err == nil:
 			writable = append(writable, action)
@@ -470,6 +490,7 @@ func actionsFor(integrations []string) []Action {
 		}
 		if dir, ok := skillRoots[integration]; ok {
 			actions = append(actions, skillActions(dir)...)
+			actions = append(actions, legacySkillActions(dir)...)
 		}
 		if integration == IntegrationOMP {
 			actions = append(actions, Action{Integration: integrationRules, Path: ".omp/RULES.md", Description: "install prowl sticky rule (re-injected each turn)"})
@@ -492,6 +513,62 @@ func skillActions(dir string) []Action {
 		})
 	}
 	return actions
+}
+
+// legacySkillNames lists retired skills that setup migrates off the install
+// path. prowl-repo-exploration was superseded by the CLI-first code-search skill.
+var legacySkillNames = []string{"prowl-repo-exploration"}
+
+// legacySkillActions emits a removal Action for each retired skill under dir, so
+// planning can migrate an old Prowl-owned copy off the install path. Whether a
+// copy is actually removed, preserved, or absent is decided during planning
+// against the real file bytes (see planLegacyRemoval); actionsFor cannot read
+// the filesystem, so it emits the candidates unconditionally.
+func legacySkillActions(dir string) []Action {
+	actions := make([]Action, 0, len(legacySkillNames))
+	for _, name := range legacySkillNames {
+		actions = append(actions, Action{
+			Integration: integrationLegacySkill,
+			Path:        dir + "/" + name + "/SKILL.md",
+			Description: "remove superseded prowl agent skill",
+		})
+	}
+	return actions
+}
+
+// planLegacyRemoval decides how a retired skill copy at action.Path is handled.
+// A missing file is nothing to migrate (omitted). An exact Prowl-owned legacy
+// body is safe to remove (kept as an action). Anything else -- a locally edited
+// copy, a symlink, or a path that cannot be verified -- is preserved and
+// reported as blocked, so setup never deletes user work.
+func planLegacyRemoval(root *os.Root, action Action) (keep bool, blocked *BlockedAction, err error) {
+	legacy, ok := skills.Legacy(skillNameFromPath(action.Path))
+	if !ok {
+		return false, nil, nil
+	}
+	data, readErr := readRootFile(root, action.Path)
+	switch {
+	case os.IsNotExist(readErr):
+		return false, nil, nil
+	case errors.Is(readErr, errSymlinkDestination):
+		return false, &BlockedAction{Integration: action.Integration, Path: action.Path, Reason: readErr.Error()}, nil
+	case readErr != nil:
+		return false, &BlockedAction{Integration: action.Integration, Path: action.Path, Reason: "cannot verify retired skill ownership; left in place"}, nil
+	case string(data) == legacy.Content:
+		return true, nil, nil
+	default:
+		return false, &BlockedAction{Integration: action.Integration, Path: action.Path, Reason: "locally modified; left in place"}, nil
+	}
+}
+
+// removeLegacySkill deletes a retired skill copy only when its bytes still match
+// the exact body Prowl once installed, so a user edit is never destroyed.
+func removeLegacySkill(root *os.Root, rel string) error {
+	legacy, ok := skills.Legacy(skillNameFromPath(rel))
+	if !ok {
+		return nil
+	}
+	return removeOwnedFile(root, rel, legacy.Content)
 }
 
 // skillContent returns the embedded body for the named skill.
@@ -569,6 +646,10 @@ func (service *Service) applyActionsInRoot(root *os.Root, actions []Action, pend
 			}
 		case integrationAgent:
 			if err := writeRootFile(root, action.Path, []byte(ompScoutAgent), 0o644); err != nil {
+				return err
+			}
+		case integrationLegacySkill:
+			if err := removeLegacySkill(root, action.Path); err != nil {
 				return err
 			}
 		default:
@@ -1099,6 +1180,8 @@ func (service *Service) removeIntegrations(integrations []string) error {
 			err = removeAgentsBlock(root, action.Path)
 		case integrationAgent:
 			err = removeOwnedFile(root, action.Path, ompScoutAgent)
+		case integrationLegacySkill:
+			err = removeLegacySkill(root, action.Path)
 		}
 		if err != nil {
 			return safeError(err)
@@ -1155,27 +1238,29 @@ const AgentsMapEndMarker = "<!-- /prowl-agent:map -->"
 const agentsBlock = agentsMarker + `
 ## Prowl project context
 
-This repo has a Prowl index of its files, symbols, and how they connect. To find
-code, read one symbol, trace who calls it, or check what a change touches,
-**query Prowl first** -- do not grep or read whole files just to locate things.
-Prowl reindexes what changed before each query, so answers stay current, and it
-returns ranked, cited file:line results in one call instead of a grep hit list
-you then open files to disambiguate.
+This repo has a Prowl index of its files, symbols, and how they connect. For any
+semantic or structural question -- where code is, what it does, who calls it, or
+what a change touches -- **run the read-only prowl-agent CLI first**; do not grep
+or read whole files just to locate things. Prowl reindexes what changed before
+each query, so answers stay current and are cited to file:line, returned in one
+call instead of a grep hit list you then open files to disambiguate.
 
-The same index is reachable two ways, and every agent should know both:
+| Question | First command |
+|---|---|
+| Map the repository | ` + "`prowl-agent overview`" + ` |
+| Locate a feature or concept | ` + "`prowl-agent search \"<question>\"`" + ` |
+| Locate a named symbol | ` + "`prowl-agent find <name>`" + ` |
+| Read one symbol's source | ` + "`prowl-agent def <name-or-id>`" + ` |
+| Inspect a file's structure | ` + "`prowl-agent outline <path>`" + ` |
+| Trace who uses a symbol | ` + "`prowl-agent references <name-or-id>`" + ` |
+| Size a change's blast radius | ` + "`prowl-agent impact <path>`" + ` |
+| Inspect uncommitted work | ` + "`prowl-agent wip`" + ` / ` + "`prowl-agent changed`" + ` |
+| Read a located line range | ` + "`prowl-agent peek <file:start-end>`" + ` |
 
-- **Preferred -- Prowl MCP tools** (they appear in your tool list when your
-  harness wires Prowl as an MCP server): search_context (where/how does X work),
-  read_symbol (one symbol's source), outline (a file's structure, no bodies),
-  find_references (call sites), analyze_change (blast radius before an edit), and
-  sketch_ui (how a UI looks, from source).
-- **Opt-in -- the prowl-agent CLI** (same capabilities, for when MCP is not
-  wired): overview, find <name>, outline <path>, def <name>, references <name>,
-  callers|callees|relations <path>, impact <path>, search <text>, wip, and
-  changed / doctor after edits.
-
-Keep grep and glob for literal-string and filename scans only. CLI output is
-token-lean TOON by default; add --format human|toon|json|markdown.
+Keep grep for exact literal or regex text and glob for filename patterns. CLI
+output is token-lean TOON by default; add --format human|toon|json|markdown. If
+your harness also wires Prowl as an MCP server, the same index is reachable
+there; the CLI needs no server and is the first choice.
 <!-- /prowl-agent -->`
 
 // rulesBlock is Prowl's sticky rule, installed as .omp/RULES.md for the omp
@@ -1184,12 +1269,13 @@ token-lean TOON by default; add --format human|toon|json|markdown.
 // even in long sessions. It shares the AGENTS.md markers so the same ensure/strip
 // helpers manage it and it merges with any user-authored RULES.md.
 const rulesBlock = agentsMarker + `
-Prowl indexes this repo. To locate, read, trace, or understand code -- where a
+Prowl indexes this repo. For any semantic or structural question -- where a
 symbol, setting, or component is defined, who calls or imports it, how a feature
-works, or a change's blast radius -- use the Prowl MCP tools (search_context,
-find_references, read_symbol, outline, analyze_change) or the prowl-agent CLI
-before grep/glob and reading files. Use grep and glob only for literal-string or
-filename scans.
+works, or a change's blast radius -- run the read-only prowl-agent CLI first:
+overview, find <name>, def <name-or-id>, outline <path>, references <name-or-id>,
+impact <path>, search "<question>", peek <file:start-end>. It answers from a
+cited index (reindexed before each query) in one call. Use grep only for exact
+literal or regex text and glob only for filename patterns.
 ` + agentsEndMarker
 
 type mcpServer struct {

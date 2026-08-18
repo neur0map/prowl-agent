@@ -81,6 +81,12 @@ func TestClassifiersKeepBoundedAndControlOperationsNative(t *testing.T) {
 	if !broad.Broad {
 		t.Fatal("repository-wide glob not classified broad")
 	}
+
+	flagFiltered := ToolCall{Name: "Bash", Input: json.RawMessage(`{"command":"rg -g '*.go' Register"}`)}
+	classifyTool(&flagFiltered)
+	if !flagFiltered.Broad {
+		t.Fatal("repository-wide rg with a glob filter not classified broad")
+	}
 }
 
 func TestScoreRequiresGroundTruthAndProwlBeforeBroadSearch(t *testing.T) {
@@ -174,5 +180,78 @@ func TestRunRejectsNonLocalOutputBeforeLaunching(t *testing.T) {
 	_, err := Run(t.Context(), Config{OutputDir: filepath.Join(string(filepath.Separator), "tmp", "outside")}, Manifest{})
 	if err == nil {
 		t.Fatal("absolute output accepted")
+	}
+}
+
+func TestManifestRejectsUnsafeArtifactCaseID(t *testing.T) {
+	manifest, err := LoadManifest(filepath.Join("..", "..", "testdata", "agent-adoption", "prompts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Tuning[0].ID = "../escape"
+	if err := ValidateManifest(manifest); err == nil {
+		t.Fatal("path-traversing case ID accepted")
+	}
+}
+
+func TestClientAndSourceValidation(t *testing.T) {
+	if err := validateClients([]string{"claude", "../outside"}); err == nil {
+		t.Fatal("unknown/path-traversing client accepted")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "setup"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := caseWorkDir(root, "../outside"); err == nil {
+		t.Fatal("source escape accepted")
+	}
+	got, err := caseWorkDir(root, "internal/setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(root, "internal", "setup") {
+		t.Fatalf("source dir=%q", got)
+	}
+}
+
+func TestPreparedFixtureCopiesAreIndependent(t *testing.T) {
+	source := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, ".prowl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "source.go"), []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".prowl", "index.db"), []byte("index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	if err := copyPreparedFixture(source, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyPreparedFixture(source, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(first, "source.go"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(second, "source.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "original" {
+		t.Fatalf("second trial contaminated: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(second, ".prowl", "index.db")); err != nil {
+		t.Fatal("prepared index not copied:", err)
+	}
+}
+
+func TestProwlClassifierAcceptsWindowsExecutable(t *testing.T) {
+	call := ToolCall{Name: "Bash", Input: json.RawMessage(`{"command":"\"C:\\\\Tools\\\\prowl-agent.exe\" find Register"}`)}
+	classifyTool(&call)
+	if !call.Prowl {
+		t.Fatal("Windows prowl-agent invocation not classified")
 	}
 }

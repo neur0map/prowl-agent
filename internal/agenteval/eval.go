@@ -131,6 +131,9 @@ func ValidateManifest(manifest Manifest) error {
 			if c.ID == "" || c.Fixture == "" || c.Source == "" || c.Prompt == "" {
 				return fmt.Errorf("%s case has an empty required field", set)
 			}
+			if !safePathSegment(c.ID) {
+				return fmt.Errorf("case id %q is not a safe artifact path segment", c.ID)
+			}
 			if seen[c.ID] {
 				return fmt.Errorf("duplicate case id %q", c.ID)
 			}
@@ -332,7 +335,7 @@ func firstField(v map[string]any, keys ...string) any {
 	return map[string]any{}
 }
 
-var prowlCommand = regexp.MustCompile(`(?:^|[|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:\S*/)?prowl-agent(?:\s|$)`)
+var prowlCommand = regexp.MustCompile(`(?:^|[|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*["']?(?:\S*[\\/])?prowl-agent(?:\.exe)?["']?(?:\s|$)`)
 var citedPath = regexp.MustCompile(`[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+(?::\d+(?:-\d+)?)?`)
 
 func classifyTool(call *ToolCall) {
@@ -375,22 +378,58 @@ func shellBroad(command string) bool {
 			}
 			continue
 		}
-		operands := 0
-		root := false
-		for _, field := range fields[1:] {
-			if strings.HasPrefix(field, "-") {
-				continue
-			}
-			operands++
-			if operands > 1 && (field == "." || field == "./" || field == "/") {
-				root = true
-			}
-		}
-		if operands <= 1 || root {
+		paths := searchPaths(fields[1:])
+		if len(paths) == 0 {
 			return true
+		}
+		for _, path := range paths {
+			if path == "." || path == "./" || path == "/" {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func searchPaths(fields []string) []string {
+	patternSeen := false
+	var paths []string
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
+		if field == "-e" || field == "--regexp" || field == "-f" || field == "--file" {
+			patternSeen = true
+			i++
+			continue
+		}
+		if strings.HasPrefix(field, "--regexp=") || strings.HasPrefix(field, "--file=") {
+			patternSeen = true
+			continue
+		}
+		if searchFlagTakesValue(field) {
+			i++
+			continue
+		}
+		if strings.HasPrefix(field, "-") {
+			continue
+		}
+		if !patternSeen {
+			patternSeen = true
+			continue
+		}
+		paths = append(paths, strings.Trim(field, `"'`))
+	}
+	return paths
+}
+
+func searchFlagTakesValue(field string) bool {
+	switch field {
+	case "-g", "--glob", "--iglob", "--include", "--exclude", "--exclude-dir",
+		"-t", "--type", "--type-add", "--encoding", "--engine", "--pre", "--pre-glob",
+		"-m", "--max-count", "--max-depth", "--sort", "--sortr":
+		return true
+	default:
+		return false
+	}
 }
 
 func citations(answer string) []string {
@@ -512,6 +551,35 @@ func median(values []float64) float64 {
 	return (copyValues[middle-1] + copyValues[middle]) / 2
 }
 
+func safePathSegment(value string) bool {
+	return value != "" && value != "." && value != ".." && !strings.ContainsAny(value, `/\`)
+}
+
+func validateClients(clients []string) error {
+	for _, client := range clients {
+		if client != "claude" && client != "omp" {
+			return fmt.Errorf("unknown client %q", client)
+		}
+	}
+	return nil
+}
+
+func caseWorkDir(root, source string) (string, error) {
+	clean := filepath.Clean(source)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("source %q escapes its fixture", source)
+	}
+	path := filepath.Join(root, clean)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("source %q is not a directory", source)
+	}
+	return path, nil
+}
+
 func Run(ctx context.Context, cfg Config, manifest Manifest) (Report, error) {
 	if cfg.OutputDir == "" || filepath.IsAbs(cfg.OutputDir) || strings.HasPrefix(filepath.Clean(cfg.OutputDir), "..") {
 		return Report{}, errors.New("output must be an explicit local relative directory")
@@ -534,11 +602,26 @@ func Run(ctx context.Context, cfg Config, manifest Manifest) (Report, error) {
 	if len(cfg.Clients) == 0 {
 		cfg.Clients = []string{"claude", "omp"}
 	}
+	if err := validateClients(cfg.Clients); err != nil {
+		return Report{}, err
+	}
+	if cfg.Set == "" {
+		cfg.Set = "tuning"
+	}
 	cases := manifest.Tuning
 	if cfg.Set == "held_out" {
 		cases = manifest.HeldOut
 	} else if cfg.Set != "" && cfg.Set != "tuning" {
 		return Report{}, fmt.Errorf("unknown prompt set %q", cfg.Set)
+	}
+	if len(cases) == 0 {
+		return Report{}, errors.New("selected prompt set is empty")
+	}
+	fixtureName := cases[0].Fixture
+	for _, c := range cases {
+		if c.Fixture != fixtureName {
+			return Report{}, fmt.Errorf("case %s selects fixture %q; runner fixture is %q", c.ID, c.Fixture, fixtureName)
+		}
 	}
 	fixture := cfg.Fixture
 	if fixture == "" {
@@ -562,7 +645,11 @@ func Run(ctx context.Context, cfg Config, manifest Manifest) (Report, error) {
 		return Report{}, fmt.Errorf("initialize fixture: %w: %s", initErr, initOutput)
 	}
 	removeRouting(work)
-	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+	outputRoot, err := filepath.Abs(cfg.OutputDir)
+	if err != nil {
+		return Report{}, err
+	}
+	if err := os.MkdirAll(outputRoot, 0o755); err != nil {
 		return Report{}, err
 	}
 	var trials []Trial
@@ -571,12 +658,23 @@ func Run(ctx context.Context, cfg Config, manifest Manifest) (Report, error) {
 		for _, c := range cases {
 			for _, client := range cfg.Clients {
 				for _, condition := range []string{"control", "treatment"} {
+					trialWork := filepath.Join(temp, "fixtures", c.ID, client, condition, fmt.Sprintf("%02d", repetition))
+					if err := copyPreparedFixture(work, trialWork); err != nil {
+						return Report{}, err
+					}
+					caseDir, err := caseWorkDir(trialWork, c.Source)
+					if err != nil {
+						return Report{}, fmt.Errorf("case %s source: %w", c.ID, err)
+					}
 					clientRoot := filepath.Join(temp, "clients", c.ID, client, condition, fmt.Sprintf("%02d", repetition))
-					stdout, stderr, elapsed, processErr := runClient(ctx, cfg, work, clientRoot, client, condition, c.Prompt)
+					stdout, stderr, elapsed, processErr := runClient(ctx, cfg, caseDir, clientRoot, client, condition, c.Prompt)
 					parsed := ParseStream(client, stdout, stderr, elapsed)
 					trial := Score(c, client, condition, repetition, parsed, processErr)
 					trials = append(trials, trial)
-					dir := filepath.Join(cfg.OutputDir, cfg.Set, c.ID, client, condition, fmt.Sprintf("%02d", repetition))
+					if err := os.RemoveAll(trialWork); err != nil {
+						return Report{}, err
+					}
+					dir := filepath.Join(outputRoot, cfg.Set, c.ID, client, condition, fmt.Sprintf("%02d", repetition))
 					if err := writeTrial(dir, trial); err != nil {
 						return Report{}, err
 					}
@@ -589,10 +687,10 @@ func Run(ctx context.Context, cfg Config, manifest Manifest) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	if err := os.WriteFile(filepath.Join(cfg.OutputDir, "report.json"), append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outputRoot, "report.json"), append(data, '\n'), 0o644); err != nil {
 		return Report{}, err
 	}
-	if err := os.WriteFile(filepath.Join(cfg.OutputDir, "report.txt"), []byte(RenderTable(report)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outputRoot, "report.txt"), []byte(RenderTable(report)), 0o644); err != nil {
 		return Report{}, err
 	}
 	return report, nil
@@ -730,14 +828,28 @@ func writeTrial(dir string, trial Trial) error {
 }
 
 func copyFixture(source, destination, output string) error {
+	absoluteOutput, _ := filepath.Abs(output)
+	return copyTree(source, destination, func(path string, entry fs.DirEntry) bool {
+		name := entry.Name()
+		return entry.IsDir() && (name == ".git" || name == ".worktrees" || name == ".prowl" || name == "bin" || (absoluteOutput != "" && path == absoluteOutput))
+	})
+}
+
+func copyPreparedFixture(source, destination string) error {
+	return copyTree(source, destination, nil)
+}
+
+func copyTree(source, destination string, skip func(string, fs.DirEntry) bool) error {
 	absoluteSource, err := filepath.Abs(source)
 	if err != nil {
 		return err
 	}
-	absoluteOutput, _ := filepath.Abs(output)
 	return filepath.WalkDir(absoluteSource, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if skip != nil && skip(path, entry) {
+			return filepath.SkipDir
 		}
 		rel, err := filepath.Rel(absoluteSource, path)
 		if err != nil {
@@ -747,10 +859,6 @@ func copyFixture(source, destination, output string) error {
 			return os.MkdirAll(destination, 0o755)
 		}
 		if entry.IsDir() {
-			name := entry.Name()
-			if name == ".git" || name == ".worktrees" || name == ".prowl" || name == "bin" || (absoluteOutput != "" && path == absoluteOutput) {
-				return filepath.SkipDir
-			}
 			return os.MkdirAll(filepath.Join(destination, rel), 0o755)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {

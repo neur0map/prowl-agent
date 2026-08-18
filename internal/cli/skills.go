@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/prowl-agent/prowl-agent/internal/setup"
@@ -222,16 +223,16 @@ func streamsInteractive(in io.Reader, out io.Writer) bool {
 	return fileIsTerminal(in) && fileIsTerminal(out)
 }
 
-// fileIsTerminal reports whether a stream is a character device. A non-*os.File
-// stream (a bytes.Buffer, a net pipe) is never a terminal, and an *os.File that
-// is a regular file or an anonymous pipe (FIFO) is not a character device.
+// fileIsTerminal reports whether a stream is a real terminal. A non-*os.File
+// stream (a bytes.Buffer, a net pipe) is never a terminal, and an *os.File is
+// tested with a real terminal predicate (an isatty ioctl), so a regular file, an
+// anonymous pipe, or a character device that is not a tty (/dev/null) is false.
 func fileIsTerminal(stream any) bool {
 	f, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(f.Fd())
 }
 
 // searchAdvisoryContext is the constant guidance the hook injects for a
@@ -428,13 +429,16 @@ func patternAttachedToFlag(args []string) bool {
 // -e/-f (no trailing value) does not match.
 var attachedShortPattern = regexp.MustCompile(`^-[A-Za-z]*[ef].+`)
 
-// findIsRepoWide reports whether a find invocation scans the whole repository:
-// its leading operands (before the first -expression, `(`, or `!`) are the start
-// paths. No start path (find defaults to the working directory) or a
-// repository-root path is repo-wide; a named subdirectory bounds it.
+// findIsRepoWide reports whether a find invocation scans the whole repository.
+// find's grammar is `find [global-options] [start-paths] [expression]`, so the
+// pre-path global options (-H/-L/-P, -D value, -O[level], --) are skipped first;
+// the leading operands that follow, before the first expression token (`-...`,
+// `(`, `!`), are the start paths. No start path (find defaults to the working
+// directory) or a repository-root path is repo-wide; a named subdirectory bounds
+// it.
 func findIsRepoWide(args []string) bool {
 	var paths []string
-	for _, arg := range args {
+	for _, arg := range skipFindGlobals(args) {
 		if strings.HasPrefix(arg, "-") || arg == "(" || arg == "!" {
 			break
 		}
@@ -444,6 +448,30 @@ func findIsRepoWide(args []string) bool {
 		return true
 	}
 	return pathsRepoWide(paths)
+}
+
+// skipFindGlobals returns args with find's recognized pre-path global options
+// removed, conservatively consuming the values of -D and -O. `--` ends option
+// parsing. An unrecognized leading token (a start path or an expression) stops
+// the skip so classification proceeds on the remainder.
+func skipFindGlobals(args []string) []string {
+	i := 0
+	for i < len(args) {
+		switch arg := args[i]; {
+		case arg == "-H", arg == "-L", arg == "-P":
+			i++
+		case arg == "--":
+			i++
+			return args[min(i, len(args)):]
+		case arg == "-D", arg == "-O":
+			i += 2 // separate-form value (debug flags / optimisation level)
+		case strings.HasPrefix(arg, "-D"), strings.HasPrefix(arg, "-O"):
+			i++ // attached value, e.g. -O3
+		default:
+			return args[i:]
+		}
+	}
+	return args[min(i, len(args)):]
 }
 
 func nonFlagOperands(args []string) []string {
@@ -532,6 +560,17 @@ func shellSegments(command string) [][]string {
 				i++
 			}
 			flushSegment()
+		case '#':
+			if started {
+				buf.WriteRune(c) // an embedded '#' (foo#bar) is data, not a comment
+				break
+			}
+			// A '#' at a word boundary begins a comment: skip through end of line.
+			// The newline itself is left for the next iteration to flush a segment,
+			// so parsing resumes after the comment.
+			for i+1 < len(runes) && runes[i+1] != '\n' {
+				i++
+			}
 		case '\\':
 			if i+1 >= len(runes) {
 				return nil // dangling escape: unparseable -> fail closed (silent)

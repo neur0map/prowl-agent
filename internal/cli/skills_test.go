@@ -279,10 +279,13 @@ func TestSearchAdvisoryNeverEchoesInput(t *testing.T) {
 	}
 }
 
-// TestStreamsInteractive proves interactivity is judged from the exact streams
-// runSkills is handed, not process-global stdio: buffers and pipes are never
-// interactive even on a host that owns a TTY, while a real character device
-// (here /dev/null) still reads as a terminal so live behavior is preserved.
+// TestStreamsInteractive proves interactivity is judged by a real terminal
+// predicate on the exact streams runSkills is handed, not process-global stdio
+// and not a char-device heuristic: buffers, pipes, regular files, and /dev/null
+// are all non-interactive. /dev/null is the key case -- it is a character device
+// but not a terminal, so a TTY-in + /dev/null-out combination must never accept a
+// blind write. A live positive is covered by the controller's supervised PTY
+// smoke, not reproducible in a unit test.
 func TestStreamsInteractive(t *testing.T) {
 	if streamsInteractive(&bytes.Buffer{}, &bytes.Buffer{}) {
 		t.Error("byte buffers classified as an interactive terminal")
@@ -295,7 +298,7 @@ func TestStreamsInteractive(t *testing.T) {
 	defer r.Close()
 	defer w.Close()
 	if streamsInteractive(r, w) {
-		t.Error("an os.Pipe (a *os.File that is not a char device) classified as interactive")
+		t.Error("an os.Pipe classified as interactive")
 	}
 
 	reg, err := os.CreateTemp(t.TempDir(), "regular")
@@ -312,8 +315,8 @@ func TestStreamsInteractive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dev.Close()
-	if !streamsInteractive(dev, dev) {
-		t.Error("a character device was not classified as interactive")
+	if streamsInteractive(dev, dev) {
+		t.Error("/dev/null (a char device that is not a terminal) classified as interactive")
 	}
 }
 
@@ -422,6 +425,66 @@ func TestSearchAdvisoryShellEdgeCases(t *testing.T) {
 		{"attached long pattern is bounded", "rg --regexp=TODO internal/cli/skills.go", false},
 		{"attached pattern repo-wide still advises", "grep -eTODO .", true},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := `{"tool_name":"Bash","tool_input":{"command":` + mustJSON(t, tc.command) + `}}`
+			var out bytes.Buffer
+			if err := runSearchAdvisory(strings.NewReader(payload), &out); err != nil {
+				t.Fatalf("runSearchAdvisory: %v", err)
+			}
+			emitted := strings.TrimSpace(out.String()) != ""
+			if emitted != tc.advise {
+				t.Errorf("advise=%v, want %v (output=%q)", emitted, tc.advise, out.String())
+			}
+		})
+	}
+}
+
+// TestSearchAdvisoryFindTraversalOptions proves find's leading traversal options
+// are skipped before start-path classification, so a bounded search behind
+// -H/-L/-P (and value-bearing -D/-O) stays silent while a repo-root one advises.
+func TestSearchAdvisoryFindTraversalOptions(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		advise  bool
+	}{
+		{"logical follow bounded", "find -L internal/cli -name '*.go'", false},
+		{"logical follow repo-wide", "find -L . -name '*.go'", true},
+		{"stacked traversal flags bounded", "find -H -P internal/cli", false},
+		{"debug option value bounded", "find -D tree internal/cli", false},
+		{"optimize attached bounded", "find -O3 internal/cli", false},
+		{"double dash then bounded path", "find -- internal/cli", false},
+		{"traversal then repo root advises", "find -P . -type f", true},
+	}
+	runShellAdviseCases(t, cases)
+}
+
+// TestSearchAdvisoryShellComments proves an unquoted token-boundary '#' starts a
+// comment through newline, so a search hidden behind a comment never runs, while
+// quoted/embedded hashes stay data and a real search before a trailing comment
+// still advises.
+func TestSearchAdvisoryShellComments(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		advise  bool
+	}{
+		{"commented grep is inert", "printf done # ; grep TODO .", false},
+		{"comment before newline then real search", "echo hi #note\ngrep -r TODO .", true},
+		{"real search then trailing comment", "grep -r TODO . # done", true},
+		{"quoted hash is data and bounds", "grep '#' internal/cli/skills.go", false},
+		{"embedded hash is data", "grep foo#bar .", true},
+	}
+	runShellAdviseCases(t, cases)
+}
+
+func runShellAdviseCases(t *testing.T, cases []struct {
+	name    string
+	command string
+	advise  bool
+}) {
+	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := `{"tool_name":"Bash","tool_input":{"command":` + mustJSON(t, tc.command) + `}}`

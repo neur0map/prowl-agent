@@ -14,12 +14,46 @@ const ROUTING_REMINDER =
 // approximate are the ones prowl-agent answers in a single cited call.
 const TREE_SEARCH = /(^|[|&;\s])(rg|grep|egrep|fgrep|ag|ack|find|fd|fdfind)\b/;
 
-// isBroadSearch reports whether a completed tool call was a wide repository
-// search worth reminding about: the dedicated grep/glob tools always are, and a
-// bash call is when its command shells out to a tree-search utility.
+function repoWidePath(input: Record<string, unknown>): boolean {
+  const path = String(input?.path ?? "").trim();
+  return path === "" || path === "." || path === "./" || path === "/";
+}
+
+// Be conservative: ambiguity suppresses the advisory. Grep-family commands are
+// wide only when they have no operand after the pattern; find/fd are wide only
+// when their search root is absent or the repository root.
+function bashIsRepoWide(command: string): boolean {
+  for (const segment of command.split(/[|&;\n]+/)) {
+    const match = TREE_SEARCH.exec(segment);
+    if (!match) continue;
+    const utility = match[2];
+    const words =
+      segment
+        .slice((match.index ?? 0) + match[0].length)
+        .match(/"[^"]*"|'[^']*'|[^\s]+/g)
+        ?.filter((word) => !word.startsWith("-")) ?? [];
+    if (utility === "find") {
+      if (words.length === 0 || [".", "./", "/"].includes(words[0])) return true;
+      continue;
+    }
+    if (utility === "fd" || utility === "fdfind") {
+      if (words.length <= 1 || [".", "./", "/"].includes(words[1])) return true;
+      continue;
+    }
+    if (words.length <= 1) return true;
+  }
+  return false;
+}
+
+// isBroadSearch reports whether a completed tool call was a repository-wide
+// search worth reminding about. File- and directory-bounded native controls
+// remain untouched.
 function isBroadSearch(toolName: string, input: Record<string, unknown>): boolean {
-  if (toolName === "grep" || toolName === "glob") return true;
-  if (toolName === "bash") return TREE_SEARCH.test(String(input?.command ?? ""));
+  if (toolName === "grep" || toolName === "glob") return repoWidePath(input);
+  if (toolName === "bash") {
+    const command = String(input?.command ?? "");
+    return TREE_SEARCH.test(command) && bashIsRepoWide(command);
+  }
   return false;
 }
 

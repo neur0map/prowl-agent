@@ -174,13 +174,13 @@
       "expected_symbols": ["mapResult"]
     },
     {
-      "id": "held-mcp-context",
+      "id": "held-incremental-index",
       "fixture": ".",
       "source": ".",
-      "prompt": "Where is the MCP context-search tool registered and handled? Cite the exact repository-relative path and both entry points.",
+      "prompt": "How does incremental indexing decide whether a source file must be parsed again? Cite the exact repository-relative implementation path and decision function.",
       "class": "structural",
-      "expected_paths": ["internal/mcp/core_tools.go"],
-      "expected_symbols": ["registerCoreTools", "searchContext"]
+      "expected_paths": ["internal/index/index.go"],
+      "expected_symbols": ["parseFile"]
     },
     {
       "id": "held-approval-literal",

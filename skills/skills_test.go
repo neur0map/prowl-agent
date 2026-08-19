@@ -408,6 +408,17 @@ func TestNativeOMPExtensionIsNonBlockingAppendOnly(t *testing.T) {
 		}
 	}
 
+	// Native grep/glob and shell searches must be narrowed by path/operands
+	// before the advisory fires; exact or file-bounded controls remain native.
+	for _, classifier := range []string{"repoWidePath(", "bashIsRepoWide("} {
+		if !strings.Contains(content, classifier) {
+			t.Errorf("routing extension omits bounded-search classifier %q", classifier)
+		}
+	}
+	if strings.Contains(content, `if (toolName === "grep" || toolName === "glob") return true`) {
+		t.Error("routing extension treats every native grep/glob as repository-wide")
+	}
+
 	// (c) A bash call is classified by extracting its command and testing it
 	// against the TREE_SEARCH utility set.
 	if !strings.Contains(content, `toolName === "bash"`) {

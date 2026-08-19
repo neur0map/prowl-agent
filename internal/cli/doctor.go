@@ -170,6 +170,16 @@ func renderDoctorIntegrations(report setup.UserIntegrationHealth) string {
 		}
 		b.WriteByte('\n')
 	}
+	for _, asset := range report.Assets {
+		if asset.State == setup.UserAssetCurrent {
+			continue
+		}
+		fmt.Fprintf(&b, "asset %s: %s %s", asset.Client, asset.State, asset.Destination)
+		if asset.AssetID != "" {
+			fmt.Fprintf(&b, " (%s)", asset.AssetID)
+		}
+		b.WriteByte('\n')
+	}
 	return b.String()
 }
 

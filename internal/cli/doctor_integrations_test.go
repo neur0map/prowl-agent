@@ -101,8 +101,16 @@ func TestDoctorIntegrationsHumanNamesStatuses(t *testing.T) {
 			{Client: setup.IntegrationClaude, Status: setup.UserIntegrationCurrent, Activation: setup.UserActivationRestartRequired},
 			{Client: setup.IntegrationOMP, Status: setup.UserIntegrationCurrent, Activation: setup.UserActivationReloadRequired},
 		},
+		Assets: []setup.UserAssetHealth{
+			{Client: setup.IntegrationClaude, AssetID: "claude:commands/search.md", Destination: ".claude/skills/prowl/commands/search.md", State: setup.UserAssetMissing},
+			{Client: setup.IntegrationOMP, AssetID: "omp:extensions/prowl-routing.ts", Destination: ".omp/agent/extensions/prowl-routing.ts", State: setup.UserAssetConflict},
+		},
 	})
-	for _, want := range []string{"claude: current", "restart required", "omp: current", "reload required"} {
+	for _, want := range []string{
+		"claude: current", "restart required", "omp: current", "reload required",
+		"missing .claude/skills/prowl/commands/search.md",
+		"conflict .omp/agent/extensions/prowl-routing.ts",
+	} {
 		if !strings.Contains(strings.ToLower(current), want) {
 			t.Errorf("current human report missing %q:\n%s", want, current)
 		}

@@ -62,20 +62,18 @@
       "class": "known_file",
       "expected_paths": ["internal/cli/version.go"],
       "expected_symbols": ["newVersionCmd"]
-    }
-  ],
-  "held_out": [
-    {
-      "id": "held-query-rerank",
-      "fixture": ".",
-      "source": ".",
-      "prompt": "How does semantic query rewriting feed into candidate reranking?",
-      "class": "structural",
-      "expected_paths": ["internal/query/query.go", "internal/mcp/rerank.go"],
-      "expected_symbols": ["rewriteQuery", "Scores"]
     },
     {
-      "id": "held-update-cache",
+      "id": "tune-query-rerank",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "How does semantic query rewriting feed into candidate reranking? Cite the exact repository-relative paths and entry points that implement the pipeline.",
+      "class": "structural",
+      "expected_paths": ["internal/query/query.go"],
+      "expected_symbols": ["rewriteQuery", "SmartSearch"]
+    },
+    {
+      "id": "tune-update-cache",
       "fixture": ".",
       "source": ".",
       "prompt": "Where is the cached release channel validated before an update is reported?",
@@ -84,25 +82,25 @@
       "expected_symbols": ["cachedLatest", "Check"]
     },
     {
-      "id": "held-user-rollback",
+      "id": "tune-user-rollback",
       "fixture": ".",
       "source": ".",
-      "prompt": "How are user asset writes restored when an installation fails partway through?",
+      "prompt": "How are user asset writes restored when an installation fails partway through? Cite the exact repository-relative path and rollback entry point.",
       "class": "structural",
       "expected_paths": ["internal/setup/user_skills.go"],
       "expected_symbols": ["rollbackUser"]
     },
     {
-      "id": "held-secret-masking",
+      "id": "tune-secret-masking",
       "fixture": ".",
       "source": ".",
-      "prompt": "Which path removes credential-shaped values before indexed content is stored?",
+      "prompt": "Which path removes credential-shaped values before indexed content is stored? Cite exact repository-relative file paths.",
       "class": "structural",
       "expected_paths": ["internal/redact/redact.go", "internal/index/index.go"],
       "expected_symbols": ["Chunks"]
     },
     {
-      "id": "held-capability-discovery",
+      "id": "tune-capability-discovery",
       "fixture": ".",
       "source": ".",
       "prompt": "How are discoverable workflows loaded and matched to an intent?",
@@ -111,16 +109,16 @@
       "expected_symbols": ["Manifest"]
     },
     {
-      "id": "held-literal",
+      "id": "tune-agent-assets-literal",
       "fixture": ".",
       "source": ".",
       "prompt": "Find occurrences of the exact string `agent-assets.json`.",
       "class": "literal",
       "expected_paths": ["internal/setup/user_skills.go"],
-      "expected_symbols": ["userStateFile"]
+      "expected_symbols": []
     },
     {
-      "id": "held-filename",
+      "id": "tune-doctor-filename",
       "fixture": ".",
       "source": ".",
       "prompt": "Which files match `internal/**/doctor*.go`?",
@@ -129,13 +127,87 @@
       "expected_symbols": []
     },
     {
-      "id": "held-known-file",
+      "id": "tune-harness-known-file",
       "fixture": ".",
       "source": ".",
       "prompt": "Summarize `internal/setup/harness.go`, include that exact repository-relative path, and name its exported entry point.",
       "class": "known_file",
       "expected_paths": ["internal/setup/harness.go"],
       "expected_symbols": ["DetectInstalledHarnesses"]
+    }
+  ],
+  "held_out": [
+    {
+      "id": "held-edge-resolution",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "Explain how raw dependency edges are resolved into connected graph edges, citing the exact repository-relative implementation path and exported entry point.",
+      "class": "structural",
+      "expected_paths": ["internal/graph/resolve.go"],
+      "expected_symbols": ["Resolve"]
+    },
+    {
+      "id": "held-context-packet",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "Trace the entry point that retrieves and assembles a bounded context packet, citing its exact repository-relative path.",
+      "class": "structural",
+      "expected_paths": ["internal/context/service.go"],
+      "expected_symbols": ["Search"]
+    },
+    {
+      "id": "held-anchor-relocation",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "How does durable knowledge detect and repair an anchor whose source lines moved without changing? Cite exact repository-relative paths and entry points.",
+      "class": "structural",
+      "expected_paths": ["internal/knowledge/anchor.go", "internal/knowledge/anchor_repair.go"],
+      "expected_symbols": ["CheckAnchorResolved", "RepairAnchors"]
+    },
+    {
+      "id": "held-index-chunks",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "How are parsed source chunks converted into records for index storage? Cite the exact repository-relative implementation path and conversion function.",
+      "class": "structural",
+      "expected_paths": ["internal/index/index.go"],
+      "expected_symbols": ["mapResult"]
+    },
+    {
+      "id": "held-mcp-context",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "Where is the MCP context-search tool registered and handled? Cite the exact repository-relative path and both entry points.",
+      "class": "structural",
+      "expected_paths": ["internal/mcp/core_tools.go"],
+      "expected_symbols": ["registerCoreTools", "searchContext"]
+    },
+    {
+      "id": "held-approval-literal",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "Find occurrences of the exact string `ErrApprovalRequired`.",
+      "class": "literal",
+      "expected_paths": ["internal/setup/service.go"],
+      "expected_symbols": []
+    },
+    {
+      "id": "held-trace-filename",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "Which files match `internal/context/*trace*.go`?",
+      "class": "filename",
+      "expected_paths": ["internal/context/trace.go"],
+      "expected_symbols": []
+    },
+    {
+      "id": "held-resolve-known-file",
+      "fixture": ".",
+      "source": ".",
+      "prompt": "Summarize `internal/graph/resolve.go`, include that exact repository-relative path, and name its exported entry point.",
+      "class": "known_file",
+      "expected_paths": ["internal/graph/resolve.go"],
+      "expected_symbols": ["Resolve"]
     }
   ]
 }

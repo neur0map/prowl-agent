@@ -255,18 +255,27 @@ func eventTool(v map[string]any, typeName string) (ToolCall, bool) {
 	return ToolCall{ID: id, Name: name, Input: data}, true
 }
 func uniqueToolCalls(calls []ToolCall) []ToolCall {
-	seen := map[string]bool{}
+	indexByID := map[string]int{}
 	out := make([]ToolCall, 0, len(calls))
 	for _, call := range calls {
 		if call.ID != "" {
-			if seen[call.ID] {
+			if index, seen := indexByID[call.ID]; seen {
+				if !hasToolInput(out[index].Input) && hasToolInput(call.Input) {
+					out[index].Name = call.Name
+					out[index].Input = call.Input
+				}
 				continue
 			}
-			seen[call.ID] = true
+			indexByID[call.ID] = len(out)
 		}
 		out = append(out, call)
 	}
 	return out
+}
+
+func hasToolInput(input json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(input))
+	return trimmed != "" && trimmed != "null" && trimmed != "{}" && trimmed != "[]"
 }
 
 func isAnswerEvent(v map[string]any, typeName string) bool {

@@ -62,6 +62,18 @@ func TestParseOMPAndMalformedEvidence(t *testing.T) {
 	}
 }
 
+func TestParseOMPUsesCompletedArgumentsForDuplicateCall(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"message_start","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"bash","arguments":{}}]}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","toolCall":{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"prowl-agent search harness"}}}}`,
+		`{"type":"agent_end","message":{"role":"assistant","content":"internal/setup/harness.go DetectInstalledHarnesses"}}`,
+	}, "\n")
+	parsed := ParseStream("omp", []byte(stream), nil, time.Millisecond)
+	if len(parsed.Tools) != 1 || !parsed.Tools[0].Prowl {
+		t.Fatalf("completed tool arguments not retained: %+v", parsed.Tools)
+	}
+}
+
 func TestClassifiersKeepBoundedAndControlOperationsNative(t *testing.T) {
 	calls := []ToolCall{
 		{Name: "Grep", Input: json.RawMessage(`{"pattern":"x","path":"internal/cli"}`)},

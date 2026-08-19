@@ -418,6 +418,9 @@ func TestNativeOMPExtensionIsNonBlockingAppendOnly(t *testing.T) {
 	if strings.Contains(content, `if (toolName === "grep" || toolName === "glob") return true`) {
 		t.Error("routing extension treats every native grep/glob as repository-wide")
 	}
+	if !strings.Contains(content, "words.slice(1).every") {
+		t.Error("routing extension does not recognize explicit repository-root grep operands")
+	}
 
 	// (c) A bash call is classified by extracting its command and testing it
 	// against the TREE_SEARCH utility set.

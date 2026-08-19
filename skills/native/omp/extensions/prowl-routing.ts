@@ -40,7 +40,11 @@ function bashIsRepoWide(command: string): boolean {
       if (words.length <= 1 || [".", "./", "/"].includes(words[1])) return true;
       continue;
     }
-    if (words.length <= 1) return true;
+    if (
+      words.length <= 1 ||
+      words.slice(1).every((path) => [".", "./", "/"].includes(path))
+    )
+      return true;
   }
   return false;
 }

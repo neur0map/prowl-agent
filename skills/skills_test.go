@@ -101,12 +101,18 @@ func TestCodeSearchBodyRoutesThroughTheCLINotMCP(t *testing.T) {
 		t.Error("code-search body invokes no prowl-agent CLI command")
 	}
 	lower := strings.ToLower(skill.Content)
+	compact := strings.Join(strings.Fields(lower), " ")
 	if strings.Contains(lower, "mcp") {
 		t.Error("code-search body still presents MCP as a transport choice")
 	}
 	for _, banned := range []string{"search_context", "read_symbol", "mcp__"} {
 		if strings.Contains(lower, banned) {
 			t.Errorf("code-search body still names the MCP tool %q", banned)
+		}
+	}
+	for _, required := range []string{"do not launch an exploration agent", "do not repeat", "repository-relative paths"} {
+		if !strings.Contains(compact, required) {
+			t.Errorf("code-search body omits evidence-driven guard %q", required)
 		}
 	}
 }

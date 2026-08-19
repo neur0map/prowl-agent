@@ -13,6 +13,13 @@ does, who uses it, or what a change touches -- through `prowl-agent`. Prowl
 reindexes the files that changed before each query, so answers stay current and
 are cited to file:line.
 
+Treat Prowl's cited results as the discovery evidence. Do not launch an
+exploration agent to verify them, and do not repeat the query with tree-wide
+grep, glob, or whole-file reads. If more context is needed, stay in the index
+with `def`, `outline`, `references`, or `peek`. In the final answer, preserve
+the exact repository-relative paths from Prowl's citations rather than
+shortening them.
+
 ## Routing table
 
 | Question | First command |

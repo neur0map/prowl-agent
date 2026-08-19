@@ -58,7 +58,7 @@
       "id": "tune-known-file",
       "fixture": ".",
       "source": ".",
-      "prompt": "Summarize the declarations in `internal/cli/version.go`.",
+      "prompt": "Summarize the declarations in `internal/cli/version.go`; include that exact repository-relative path in the answer.",
       "class": "known_file",
       "expected_paths": ["internal/cli/version.go"],
       "expected_symbols": ["newVersionCmd"]
@@ -132,7 +132,7 @@
       "id": "held-known-file",
       "fixture": ".",
       "source": ".",
-      "prompt": "Summarize `internal/setup/harness.go` and name its exported entry point.",
+      "prompt": "Summarize `internal/setup/harness.go`, include that exact repository-relative path, and name its exported entry point.",
       "class": "known_file",
       "expected_paths": ["internal/setup/harness.go"],
       "expected_symbols": ["DetectInstalledHarnesses"]

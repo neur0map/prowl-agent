@@ -76,6 +76,9 @@ func TestCodeSearchDescriptionNamesItsTriggers(t *testing.T) {
 		t.Errorf("code-search frontmatter name = %q, want it to match the directory", name)
 	}
 	description := strings.ToLower(Description(skill.Content))
+	if !strings.HasPrefix(description, "must use as the first") {
+		t.Errorf("code-search description does not make first-step routing mandatory: %q", description)
+	}
 	for _, trigger := range []string{"search", "symbol", "caller", "structure", "architecture", "impact"} {
 		if !strings.Contains(description, trigger) {
 			t.Errorf("code-search description omits the %q trigger: %q", trigger, description)

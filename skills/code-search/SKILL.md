@@ -1,6 +1,6 @@
 ---
 name: code-search
-description: Use for repository and code search -- locating a feature, concept, symbol, component, setting, or keybind; reading a definition; tracing callers or references; mapping a file's structure or the project architecture; or estimating the impact of a change. Runs the prowl-agent CLI to answer these structural questions from a cited index instead of grepping and reading many files; keep grep for exact literal or regex text and glob for filename patterns.
+description: MUST use as the first discovery step for repository and code search -- locating a feature, concept, symbol, component, setting, or keybind; reading a definition; tracing callers or references; mapping a file's structure or the project architecture; or estimating the impact of a change. Runs the prowl-agent CLI to answer these structural questions from a cited index instead of grepping and reading many files; keep grep for exact literal or regex text and glob for filename patterns.
 ---
 
 # Code search

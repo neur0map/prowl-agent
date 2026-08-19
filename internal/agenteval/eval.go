@@ -710,15 +710,8 @@ func runClient(parent context.Context, cfg Config, work, clientRoot, client, con
 	var command *exec.Cmd
 	switch client {
 	case "claude":
-		args := []string{"-p", "--verbose", "--no-session-persistence", "--output-format", "stream-json", "--include-hook-events", "--setting-sources", "project", "--permission-mode", "dontAsk", "--disallowedTools", "Edit,Write,Notebook"}
-		if cfg.Model != "" {
-			args = append(args, "--model", cfg.Model)
-		}
-		if condition == "treatment" {
-			home, _ := os.UserHomeDir()
-			args = append(args, "--plugin-dir", filepath.Join(home, ".claude", "skills", "prowl"))
-		}
-		args = append(args, prompt)
+		home, _ := os.UserHomeDir()
+		args := claudeArgs(cfg, condition, home, prompt)
 		command = exec.CommandContext(ctx, cfg.ClaudeBinary, args...)
 	case "omp":
 		args := []string{"-p", "--mode", "json", "--no-session", "--no-title", "--tools", "read,bash,grep,glob,lsp"}
@@ -744,6 +737,23 @@ func runClient(parent context.Context, cfg Config, work, clientRoot, client, con
 	start := time.Now()
 	err = command.Run()
 	return []byte(stdout.String()), []byte(stderr.String()), time.Since(start), err
+}
+
+func claudeArgs(cfg Config, condition, home, prompt string) []string {
+	args := []string{
+		"-p", "--verbose", "--no-session-persistence",
+		"--output-format", "stream-json", "--include-hook-events",
+		"--setting-sources", "project", "--permission-mode", "dontAsk",
+		"--allowedTools", "Bash,Read,Grep,Glob,Agent,Skill",
+		"--disallowedTools", "Edit,Write,Notebook",
+	}
+	if cfg.Model != "" {
+		args = append(args, "--model", cfg.Model)
+	}
+	if condition == "treatment" {
+		args = append(args, "--plugin-dir", filepath.Join(home, ".claude", "skills", "prowl"))
+	}
+	return append(args, prompt)
 }
 func clientEnvironment(root, client, condition string) ([]string, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {

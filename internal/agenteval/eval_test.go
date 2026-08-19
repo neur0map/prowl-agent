@@ -267,3 +267,18 @@ func TestResolveFixtureUsesManifestUnlessOverridden(t *testing.T) {
 		t.Fatalf("fixture override ignored: %q", got)
 	}
 }
+
+func TestClaudeArgsPreapproveReadOnlyDiscoveryTools(t *testing.T) {
+	args := claudeArgs(Config{Model: "model"}, "control", "/home/test", "question")
+	joined := strings.Join(args, " ")
+	for _, required := range []string{"--allowedTools Bash,Read,Grep,Glob,Agent,Skill", "--disallowedTools Edit,Write,Notebook", "--no-session-persistence"} {
+		if !strings.Contains(joined, required) {
+			t.Errorf("Claude args omit %q: %v", required, args)
+		}
+	}
+	for _, forbidden := range []string{"--system-prompt", "--append-system-prompt"} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("Claude args contain prompt override %q: %v", forbidden, args)
+		}
+	}
+}

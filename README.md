@@ -101,16 +101,28 @@ Setup is transactional: a malformed client config aborts the run and restores an
 file it already touched. The optional `AGENTS.md` guidance sits between markers,
 so re-running setup refreshes only Prowl's block.
 
-When you use a harness with a skill system -- omp or Claude, detected by its
-config directory or launcher even when this repo has no skill dir yet -- `init`
-also installs a few prowl skills into it (`.omp/skills/`, `.claude/skills/`) so
-the agent knows when to reach for prowl and when to stay on grep. The skill files
-are prowl-owned and excluded from the index.
+Project setup installs Prowl's `code-search` skill for detected harnesses so
+structural repository questions start with the read-only CLI rather than a broad
+tree scan. To install the same release-matched routing assets in your user-level
+Claude and OMP configuration, run:
 
-There is no server to keep running. Each query re-indexes incrementally first
+```sh
+prowl-agent skills
+```
+
+`skills` first prints every destination and action, defaults to **No**, and
+writes only after an interactive confirmation. A piped or otherwise
+non-interactive invocation is always a read-only preview. Prowl records ownership
+per asset, refuses to overwrite foreign files, and removes only files it owns.
+The installed `code-search` skill handles natural repository questions;
+Claude also gets `/prowl:search` as an explicit entry point. Verify the CLI,
+assets, and whether either client needs a restart or reload with
+`prowl-agent doctor --integrations`.
+
+There is no server to keep running. Each CLI query re-indexes incrementally first
 (only what changed, in tens of milliseconds), so the agent never reads stale data
-and you never run a watcher by hand. Everything is a read-only CLI query or an MCP
-tool call.
+and you never run a watcher by hand. The CLI is the canonical, lowest-overhead
+agent path; MCP remains available as an optional compatibility transport.
 
 ## What your agent can ask
 
@@ -214,17 +226,20 @@ of the whole docs, no crawl); pass `--no-llms` to force a plain crawl.
 
 ## One index, three ways to use it
 
-The same `.prowl/index.db` is served three ways, so you pick the integration that
-fits and the answers stay identical and cited:
+The same `.prowl/index.db` is available three ways, with the CLI as the canonical
+agent path:
 
 - **Shell commands (recommended).** Any agent that can run a command can use
-  prowl. Nothing to start, and none of MCP's upfront per-call tool-schema cost.
-- **MCP server.** For agents that prefer typed tools, select the standard
-  `.mcp.json`, Cursor, VS Code, Oh My Pi, Factory droid, or OpenCode integration
-  during setup. The compatibility surface exposes 20 tools; MCP Resources and
-  Prompts are additive on every surface. Use `prowl-agent serve --mcp-surface
-  core` for eleven intent-oriented tools, or `--mcp-surface all` during migration.
-  Point any other agent at one command, `prowl-agent serve`.
+  Prowl. Nothing needs to stay running, and no MCP tool schemas consume context
+  on every request. The installed `code-search` skill and Claude's
+  `/prowl:search` command route both natural and explicit structural questions
+  here.
+- **MCP server (optional compatibility).** Select the standard `.mcp.json`,
+  Cursor, VS Code, Oh My Pi, Factory droid, or OpenCode integration during
+  project setup when a client requires typed tools. MCP Resources and Prompts
+  remain additive on every surface. Use `prowl-agent serve --mcp-surface core`
+  for eleven intent-oriented tools, or `--mcp-surface all` during migration.
+  Point any other MCP client at `prowl-agent serve`.
 - **Editor language server.** `prowl-agent lsp` gives a human go-to-definition,
   find-references, hover (with use counts), document and workspace symbols, code
   lens, completion, and inline `doctor` diagnostics. Neovim attaches it

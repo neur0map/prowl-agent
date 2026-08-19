@@ -7,6 +7,18 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Added a CLI-first adoption package for Claude and OMP. `prowl-agent skills`
+  previews release-matched user assets, defaults to No, never writes from a
+  non-interactive session, refuses foreign-file conflicts, and tracks each owned
+  file for safe updates and removals. The installed `code-search` skill,
+  Claude `/prowl:search` command, and bounded fail-open advisories steer
+  structural repository questions to the low-overhead Prowl CLI while leaving
+  exact literal and filename work to native tools. `doctor --integrations`
+  reports CLI and asset health plus required restart or reload actions. A blind
+  control/treatment harness now measures Prowl-first routing, broad-search
+  reduction, grounded correctness, and native control behavior across both
+  clients; measured rates are retained in its generated reports rather than
+  claimed here. MCP remains available as an optional compatibility transport.
 - Secrets are masked before they are stored, not filtered on the way out. prowl
   indexes whatever a repository contains, credentials committed in source
   included, and every retrieval path emits stored text into an agent's context,

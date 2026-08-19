@@ -13,7 +13,7 @@
       "id": "tune-health-rendering",
       "fixture": ".",
       "source": ".",
-      "prompt": "Explain how repository health findings are produced and rendered for terminal output.",
+      "prompt": "Explain how repository health findings are produced and rendered for terminal output, citing exact repository-relative file paths.",
       "class": "structural",
       "expected_paths": ["internal/doctor/doctor.go", "internal/cli/doctor.go"],
       "expected_symbols": ["Run", "renderDoctorCard"]
